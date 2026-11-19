@@ -123,7 +123,7 @@ crc = "3.4.0"
 cynic = { version = "3" }
 cynic-codegen = { version = "3", features = ["rkyv"] }
 dashmap = "6.1.0"
-derive_more = "0.99.17"
+derive_more = "2.1.1"
 diesel = { version = "2.3.8", default-features = false }
 directories = "6.0"
 dunce = "1.0.1"
