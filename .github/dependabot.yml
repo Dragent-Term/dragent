@@ -1,38 +1,98 @@
 version: 2
 
+# One grouped pull request per area each week for minor and patch updates.
+# Major upgrades change behaviour and are planned by hand, so they're not
+# opened here. Security updates are separate from this file and still
+# arrive on their own (Settings → Code security → Dependabot security
+# updates).
+
 updates:
-  # Go backend
+  # Go server
   - package-ecosystem: gomod
     directory: /server
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels: [dependencies, go]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
 
-  # Rust workspaces (Tauri app + crates)
+  # Desktop app (Rust workspace)
   - package-ecosystem: cargo
     directory: /dragent
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels: [dependencies, rust]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
 
-  # Web frontend
+  # Sign-in portal
   - package-ecosystem: npm
     directory: /auth-portal
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels: [dependencies, javascript]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
 
-  # Pinned CI actions in this repo
+  # Website
+  - package-ecosystem: npm
+    directory: /marketing
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    labels: [dependencies, javascript]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # Phone app (pnpm)
+  - package-ecosystem: npm
+    directory: /mobile
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    labels: [dependencies, javascript]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # The pinned actions in the workflows
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels: [dependencies, ci]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
