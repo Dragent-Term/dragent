@@ -1,0 +1,35 @@
+[package]
+name = "dragent_web_viewer"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "WASM web viewer for shared Dragent sessions — the desktop UI rendered on a browser canvas"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# The web viewer is a wasm-only artifact. Depending on warpui with the wgpu
+# renderer forces the real desktop renderer through the wasm toolchain — this
+# crate is the browser entry point (the winit App + canvas bootstrap live here).
+[dependencies]
+warpui = { workspace = true, features = ["experimental-wgpu-renderer"] }
+warpui_core = { workspace = true }
+dragent_assets = { workspace = true }
+dragent_viewer = { workspace = true }
+# The app lib is fully `#[cfg(wasm)]`-gated, so the viewer links it and runs the
+# REAL desktop views (`RootView` → `WorkspaceView`/`TerminalView`) on canvas.
+dragent = { workspace = true }
+wasm-bindgen = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+web-sys = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+console_error_panic_hook = "0.1"
+wasm-logger = "0.2"
+# Standard wasm RNG backend for `getrandom` 0.2 (pulled in transitively by uuid
+# / wgpu). Without the `js` feature the wasm build fails to link a source of
+# randomness. getrandom 0.3+ instances use the `getrandom_backend` cfg set in
+# `.cargo/config.toml`.
+getrandom = { version = "0.2", features = ["js"] }

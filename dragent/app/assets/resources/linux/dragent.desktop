@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dragent
+GenericName=Terminal
+Comment=Self-healing developer terminal
+Exec=dragent %u
+Icon=dragent
+Categories=Development;System;TerminalEmulator;
+Keywords=terminal;shell;developer;
+StartupWMClass=dragent
+Terminal=false
+MimeType=x-scheme-handler/dragent;

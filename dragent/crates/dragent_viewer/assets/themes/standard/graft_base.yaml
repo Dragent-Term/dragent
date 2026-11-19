@@ -1,0 +1,25 @@
+# Graft Base — original Dragent theme.
+# Botanical grafting: deep greenhouse charcoal-green, warm wax-amber accent.
+accent: "#e8932e"
+background: "#1a201c"
+details: darker
+foreground: "#dfe5d8"
+terminal_colors:
+  bright:
+    black: "#5a665c"
+    blue: "#8fb5c9"
+    cyan: "#93c9b4"
+    green: "#a9c47a"
+    magenta: "#c79ac9"
+    red: "#e88a76"
+    white: "#eef2e4"
+    yellow: "#e8c05e"
+  normal:
+    black: "#1a201c"
+    blue: "#6f9fb8"
+    cyan: "#7fb8a4"
+    green: "#8fae5d"
+    magenta: "#b07ab8"
+    red: "#d95f4b"
+    white: "#c3ccb4"
+    yellow: "#d9a441"

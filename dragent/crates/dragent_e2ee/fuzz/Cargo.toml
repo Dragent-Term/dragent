@@ -1,0 +1,16 @@
+[package]
+name = "e2ee-fuzz"
+version = "0.1.0"
+edition = "2021"
+description = "Mutational fuzz drivers for the dragent_e2ee codecs (E1b). No third-party fuzzing harness: std-only drivers that run on stable, plus the same entry points CI can wire to cargo-fuzz (E11)."
+publish = false
+
+[workspace]
+
+[dependencies]
+dragent_e2ee = { path = ".." }
+
+[profile.release]
+opt-level = 3
+debug = false
+overflow-checks = true

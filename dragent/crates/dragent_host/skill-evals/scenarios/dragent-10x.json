@@ -1,0 +1,13 @@
+[
+  {
+    "id": "10x-onboard-improvement",
+    "request": "I keep losing track of my agents. What am I missing, and set up one small improvement if there's an obvious one.",
+    "expected_skill": "dragent-10x",
+    "must_not_use_skills": ["dragent-orchestrate", "dragent-automate"],
+    "fixture": "team-context",
+    "expect": ["capabilities", "standup"],
+    "forbid": ["team create", "automations create", "integrations comment", "msg send"],
+    "success": "what was inspected with evidence; the improvement proposed with trade-offs; how to undo it and what stays manual",
+    "notes": "Positive case: audit the current setup from the setup report, anchor on the friction described, propose little with trade-offs, and implement only what was asked without reconfiguring anything else."
+  }
+]

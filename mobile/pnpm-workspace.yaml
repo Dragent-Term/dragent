@@ -1,0 +1,7 @@
+# Isolated workspace root: keeps mobile/ self-contained so pnpm never links
+# ../../server or ../../dragent sources, and declares approved build scripts.
+packages:
+  - "."
+
+allowBuilds:
+  esbuild: true

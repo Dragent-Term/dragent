@@ -1,0 +1,18 @@
+# Host-only generator for the §8 push fixtures the Notification Service
+# Extension and Android messaging-service tests read (E9a). It seals with the
+# real dragent_e2ee crate (the phone binding has no seal: phones only open).
+# Run: cargo run --manifest-path plugins/e2ee-nse/fixtures/gen/Cargo.toml --offline > plugins/e2ee-nse/fixtures/push-fixtures.json
+# Cargo.lock is a copy of modules/dragent-e2ee/rust/Cargo.lock (same pins).
+[package]
+name = "dragent_push_fixtures"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-Proprietary"
+
+[dependencies]
+dragent_e2ee = { path = "../../../../../dragent/crates/dragent_e2ee" }
+sha2 = "=0.10.9"
+serde_json = "1"
+
+[workspace]

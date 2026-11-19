@@ -1,0 +1,25 @@
+# Graft Base Solid — opaque variant of Graft Base (no background image).
+background: "#131313"
+terminal_colors:
+  normal:
+    black: "#262626"
+    red: "#d95f4b"
+    green: "#8fae5d"
+    yellow: "#d9a441"
+    blue: "#358dde"
+    magenta: "#b07ab8"
+    cyan: "#7fb8a4"
+    white: "#f1f1f1"
+  bright:
+    blue: "#c1e3fe"
+    black: "#8e8e8e"
+    magenta: "#ffb1fe"
+    cyan: "#e5e6fe"
+    green: "#d6fcb9"
+    yellow: "#fefdd5"
+    red: "#ffc4bd"
+    white: "#feffff"
+details: "darker"
+foreground: "#ffffff"
+accent: "#0d5961"
+

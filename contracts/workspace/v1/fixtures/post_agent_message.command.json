@@ -1,0 +1,31 @@
+{
+  "command_id": "10000000-0000-4000-8000-000000000031",
+  "schema_version": 1,
+  "project_id": "20000000-0000-4000-8000-000000000001",
+  "work_item_id": "30000000-0000-4000-8000-000000000001",
+  "actor_id": "40000000-0000-4000-8000-000000000002",
+  "correlation_id": "50000000-0000-4000-8000-000000000001",
+  "timestamp_unix_ms": 1700000000031,
+  "payload": {
+    "type": "post_message",
+    "message": {
+      "id": "b0000000-0000-4000-8000-000000000031",
+      "thread_id": "b1000000-0000-4000-8000-000000000001",
+      "work_item_id": "30000000-0000-4000-8000-000000000001",
+      "sender_id": "40000000-0000-4000-8000-000000000002",
+      "kind": "handoff",
+      "body": "Implementation is ready for Principal review.",
+      "reply_to": null,
+      "artifact_ids": [],
+      "evidence_ids": [],
+      "delivery_state": "local_only",
+      "created_at_unix_ms": 1700000000031,
+      "updated_at_unix_ms": 1700000000031
+    },
+    "routing": {
+      "recipient_ids": ["40000000-0000-4000-8000-000000000001"],
+      "task_id": "70000000-0000-4000-8000-000000000001",
+      "execution_attempt_id": "a1000000-0000-4000-8000-000000000001"
+    }
+  }
+}

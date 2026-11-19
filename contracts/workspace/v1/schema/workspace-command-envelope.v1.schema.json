@@ -1,0 +1,2759 @@
+{
+  "$defs": {
+    "AcceptanceCriterion": {
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "description": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "$ref": "#/$defs/EvidenceId"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/AcceptanceCriterionId"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/AcceptanceStatus"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "waived_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActorId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "waiver_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "description",
+        "status",
+        "evidence_ids",
+        "provenance",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "AcceptanceCriterionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "AcceptanceStatus": {
+      "enum": [
+        "pending",
+        "satisfied",
+        "failed",
+        "waived"
+      ],
+      "type": "string"
+    },
+    "ActorId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "AgentInstanceId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "AgentMessage": {
+      "properties": {
+        "artifact_ids": {
+          "items": {
+            "$ref": "#/$defs/ArtifactId"
+          },
+          "type": "array"
+        },
+        "body": {
+          "type": "string"
+        },
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "delivery_state": {
+          "$ref": "#/$defs/MessageDeliveryState"
+        },
+        "evidence_ids": {
+          "items": {
+            "$ref": "#/$defs/EvidenceId"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/AgentMessageId"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentMessageKind"
+        },
+        "reply_to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentMessageId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review_finding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StructuredReviewFinding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sender_id": {
+          "$ref": "#/$defs/ActorId"
+        },
+        "thread_id": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "thread_id",
+        "work_item_id",
+        "sender_id",
+        "kind",
+        "body",
+        "artifact_ids",
+        "evidence_ids",
+        "delivery_state",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "AgentMessageId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "AgentMessageKind": {
+      "enum": [
+        "discussion",
+        "handoff",
+        "blocker",
+        "decision_request",
+        "status_update",
+        "review_finding",
+        "revision_request",
+        "approval"
+      ],
+      "type": "string"
+    },
+    "AgentMessageRouting": {
+      "description": "Optional delivery and work targeting for operational agent communication.\nLegacy shaping discussion remains valid without routing metadata.",
+      "properties": {
+        "execution_attempt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionAttemptId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recipient_ids": {
+          "items": {
+            "$ref": "#/$defs/ActorId"
+          },
+          "type": "array"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanTaskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "recipient_ids"
+      ],
+      "type": "object"
+    },
+    "AgentRoleKind": {
+      "description": "Semantic responsibility of a role. This is explicit rather than inferred\nfrom a display name so authority, routing, and model prompts agree on who\nmay produce independent review findings.",
+      "enum": [
+        "worker",
+        "reviewer"
+      ],
+      "type": "string"
+    },
+    "ArtifactId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "ArtifactKind": {
+      "enum": [
+        "product_brief",
+        "requirements",
+        "decision",
+        "technical_plan",
+        "test_plan",
+        "review",
+        "design",
+        "other"
+      ],
+      "type": "string"
+    },
+    "ArtifactRef": {
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ArtifactId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "relative_path": {
+          "type": "string"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "relative_path",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "AttentionItem": {
+      "properties": {
+        "assigned_to": {
+          "items": {
+            "$ref": "#/$defs/ActorId"
+          },
+          "type": "array"
+        },
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "execution_attempt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionAttemptId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/AttentionItemId"
+        },
+        "kind": {
+          "$ref": "#/$defs/AttentionKind"
+        },
+        "requested_by": {
+          "$ref": "#/$defs/ActorId"
+        },
+        "resolution": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resolution_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AttentionResolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolved_at_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/AttentionStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanTaskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_call_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "kind",
+        "status",
+        "summary",
+        "requested_by",
+        "assigned_to",
+        "created_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "AttentionItemId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "AttentionKind": {
+      "enum": [
+        "decision",
+        "approval",
+        "permission",
+        "conflict",
+        "budget",
+        "failure",
+        "review"
+      ],
+      "type": "string"
+    },
+    "AttentionResolution": {
+      "enum": [
+        "approved",
+        "rejected",
+        "answered",
+        "dismissed"
+      ],
+      "type": "string"
+    },
+    "AttentionStatus": {
+      "enum": [
+        "open",
+        "acknowledged",
+        "resolved",
+        "dismissed"
+      ],
+      "type": "string"
+    },
+    "BillingOperationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "CapabilityGrant": {
+      "properties": {
+        "capability": {
+          "type": "string"
+        },
+        "scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "capability"
+      ],
+      "type": "object"
+    },
+    "CapabilityRequirement": {
+      "properties": {
+        "capability": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "capability",
+        "reason",
+        "required"
+      ],
+      "type": "object"
+    },
+    "ChargingAuthorization": {
+      "properties": {
+        "billing_operation_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BillingOperationId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Platform-credit execution cites its durable billing preflight hold.\nLocal compute and BYOK never masquerade as platform-billed work."
+        },
+        "mode": {
+          "$ref": "#/$defs/ChargingMode"
+        },
+        "owner_id": {
+          "$ref": "#/$defs/ActorId"
+        }
+      },
+      "required": [
+        "owner_id",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "ChargingMode": {
+      "enum": [
+        "local_compute",
+        "bring_your_own_key",
+        "platform_credits"
+      ],
+      "type": "string"
+    },
+    "Constraint": {
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/ConstraintId"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/StructuredRecordStatus"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "description",
+        "status",
+        "provenance",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "ConstraintId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "CorrelationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "Decision": {
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "decided_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActorId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/DecisionId"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          },
+          "type": "array"
+        },
+        "question": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resolution": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/DecisionStatus"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "question",
+        "status",
+        "provenance",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "DecisionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "DecisionStatus": {
+      "enum": [
+        "open",
+        "resolved",
+        "superseded"
+      ],
+      "type": "string"
+    },
+    "DeviceId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "DocumentId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "Evidence": {
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "id": {
+          "$ref": "#/$defs/EvidenceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/EvidenceKind"
+        },
+        "produced_by": {
+          "$ref": "#/$defs/ActorId"
+        },
+        "source": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanTaskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "kind",
+        "summary",
+        "source",
+        "produced_by",
+        "created_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "EvidenceId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "EvidenceKind": {
+      "enum": [
+        "file_change",
+        "command",
+        "test",
+        "review",
+        "artifact",
+        "user_confirmation",
+        "external_reference"
+      ],
+      "type": "string"
+    },
+    "ExecutionAttemptId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "ExecutionAttemptStatus": {
+      "enum": [
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "paused"
+      ],
+      "type": "string"
+    },
+    "ExecutionChangeSummary": {
+      "properties": {
+        "base_revision": {
+          "type": "string"
+        },
+        "captured_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/ExecutionFileChange"
+          },
+          "type": "array"
+        },
+        "isolation_id": {
+          "$ref": "#/$defs/ExecutionIsolationId"
+        }
+      },
+      "required": [
+        "isolation_id",
+        "base_revision",
+        "files",
+        "captured_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "ExecutionFileChange": {
+      "properties": {
+        "added_lines": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "deleted_lines": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/ExecutionFileChangeKind"
+        },
+        "relative_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "relative_path",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ExecutionFileChangeKind": {
+      "enum": [
+        "added",
+        "modified",
+        "deleted",
+        "renamed",
+        "binary"
+      ],
+      "type": "string"
+    },
+    "ExecutionIsolation": {
+      "properties": {
+        "base_revision": {
+          "description": "Immutable Git commit from which this execution's changes are measured.\nRequired for Git worktrees and absent for a shared read-only checkout.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/ExecutionIsolationId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ExecutionIsolationKind"
+        },
+        "source_attempt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionAttemptId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present only for `review_candidate`; points to the exact immutable\nattempt identity whose candidate filesystem is being reviewed."
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ExecutionIsolationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "ExecutionIsolationKind": {
+      "description": "Canonical identity of the filesystem namespace assigned to one execution.\nAbsolute paths deliberately stay in the host runtime: this descriptor is\nsafe to persist and synchronize across desktop and cloud authorities.",
+      "oneOf": [
+        {
+          "const": "shared_project",
+          "description": "Read-only agents may inspect the shared project checkout.",
+          "type": "string"
+        },
+        {
+          "const": "git_worktree",
+          "description": "Writable agents execute in a detached Git worktree.",
+          "type": "string"
+        },
+        {
+          "const": "review_candidate",
+          "description": "A read-only reviewer is attached to one unresolved writable attempt's\ncheckout. The worker remains its sole owner.",
+          "type": "string"
+        }
+      ]
+    },
+    "ExecutionLeaseId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "ExecutionLocation": {
+      "enum": [
+        "local",
+        "cloud",
+        "hybrid"
+      ],
+      "type": "string"
+    },
+    "ExecutionReviewResolution": {
+      "enum": [
+        "accepted",
+        "integrated",
+        "revision_requested",
+        "discarded"
+      ],
+      "type": "string"
+    },
+    "MessageDeliveryState": {
+      "enum": [
+        "local_only",
+        "pending",
+        "delivered",
+        "read",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "OrganizationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "PermissionGrant": {
+      "properties": {
+        "permission": {
+          "type": "string"
+        },
+        "requires_approval": {
+          "type": "boolean"
+        },
+        "scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "permission",
+        "requires_approval"
+      ],
+      "type": "object"
+    },
+    "Plan": {
+      "properties": {
+        "approved_at_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "approved_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActorId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "id": {
+          "$ref": "#/$defs/PlanId"
+        },
+        "status": {
+          "$ref": "#/$defs/PlanStatus"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/PlanTask"
+          },
+          "type": "array"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "version",
+        "status",
+        "tasks",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "PlanId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "PlanStatus": {
+      "enum": [
+        "draft",
+        "approved",
+        "superseded"
+      ],
+      "type": "string"
+    },
+    "PlanTask": {
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "$ref": "#/$defs/AcceptanceCriterionId"
+          },
+          "type": "array"
+        },
+        "assigned_contract_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkContractId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depends_on": {
+          "items": {
+            "$ref": "#/$defs/PlanTaskId"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/PlanTaskId"
+        },
+        "plan_id": {
+          "$ref": "#/$defs/PlanId"
+        },
+        "review_target_task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanTaskId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For an independent review task, identifies the dependency whose\nunresolved candidate checkout must be inspected. This is explicit so\nscheduling never guesses from titles, role names, or dependency order."
+        },
+        "status": {
+          "$ref": "#/$defs/PlanTaskStatus"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "plan_id",
+        "title",
+        "description",
+        "status",
+        "depends_on",
+        "acceptance_criteria"
+      ],
+      "type": "object"
+    },
+    "PlanTaskId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "PlanTaskStatus": {
+      "enum": [
+        "proposed",
+        "ready",
+        "running",
+        "blocked",
+        "reviewing",
+        "verifying",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "type": "string"
+    },
+    "ProjectId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "ProposedTeam": {
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "created_by": {
+          "$ref": "#/$defs/ActorId"
+        },
+        "id": {
+          "$ref": "#/$defs/TeamId"
+        },
+        "roles": {
+          "items": {
+            "$ref": "#/$defs/ProposedTeamRole"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/StructuredRecordStatus"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "version",
+        "roles",
+        "status",
+        "created_by",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "ProposedTeamRole": {
+      "properties": {
+        "rationale": {
+          "type": "string"
+        },
+        "role_definition_id": {
+          "$ref": "#/$defs/RoleDefinitionId"
+        },
+        "work_contract_id": {
+          "$ref": "#/$defs/WorkContractId"
+        }
+      },
+      "required": [
+        "role_definition_id",
+        "work_contract_id",
+        "rationale"
+      ],
+      "type": "object"
+    },
+    "Provenance": {
+      "properties": {
+        "recorded_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "recorded_by": {
+          "$ref": "#/$defs/ActorId"
+        },
+        "source": {
+          "$ref": "#/$defs/ProvenanceSource"
+        }
+      },
+      "required": [
+        "source",
+        "recorded_by",
+        "recorded_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "ProvenanceSource": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "manual_edit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message_id": {
+              "$ref": "#/$defs/AgentMessageId"
+            },
+            "thread_id": {
+              "$ref": "#/$defs/ThreadId"
+            },
+            "type": {
+              "const": "user_message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "thread_id",
+            "message_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message_id": {
+              "$ref": "#/$defs/AgentMessageId"
+            },
+            "thread_id": {
+              "$ref": "#/$defs/ThreadId"
+            },
+            "type": {
+              "const": "agent_message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "thread_id",
+            "message_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "document_id": {
+              "$ref": "#/$defs/DocumentId"
+            },
+            "relative_path": {
+              "type": "string"
+            },
+            "type": {
+              "const": "document",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "document_id",
+            "relative_path"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "evidence_id": {
+              "$ref": "#/$defs/EvidenceId"
+            },
+            "type": {
+              "const": "evidence",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "evidence_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "decision_id": {
+              "$ref": "#/$defs/DecisionId"
+            },
+            "type": {
+              "const": "decision",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "decision_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "actor_id": {
+              "$ref": "#/$defs/ActorId"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "type": {
+              "const": "agent_finding",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "actor_id",
+            "summary"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Requirement": {
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "details": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/RequirementId"
+        },
+        "priority": {
+          "$ref": "#/$defs/RequirementPriority"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/StructuredRecordStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "summary",
+        "details",
+        "priority",
+        "status",
+        "provenance",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "RequirementId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "RequirementPriority": {
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "critical"
+      ],
+      "type": "string"
+    },
+    "ReviewFindingItem": {
+      "properties": {
+        "line": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "relative_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "severity": {
+          "$ref": "#/$defs/ReviewFindingSeverity"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "severity",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "ReviewFindingSeverity": {
+      "enum": [
+        "note",
+        "warning",
+        "error",
+        "critical"
+      ],
+      "type": "string"
+    },
+    "ReviewVerdict": {
+      "enum": [
+        "pass",
+        "needs_revision",
+        "blocked"
+      ],
+      "type": "string"
+    },
+    "Risk": {
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "id": {
+          "$ref": "#/$defs/RiskId"
+        },
+        "mitigation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          },
+          "type": "array"
+        },
+        "severity": {
+          "$ref": "#/$defs/RiskSeverity"
+        },
+        "status": {
+          "$ref": "#/$defs/RiskStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "summary",
+        "severity",
+        "status",
+        "provenance",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "RiskId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "RiskSeverity": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "type": "string"
+    },
+    "RiskStatus": {
+      "enum": [
+        "open",
+        "mitigated",
+        "accepted",
+        "materialized"
+      ],
+      "type": "string"
+    },
+    "RoleDefinition": {
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityRequirement"
+          },
+          "type": "array"
+        },
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "created_by": {
+          "$ref": "#/$defs/ActorId"
+        },
+        "id": {
+          "$ref": "#/$defs/RoleDefinitionId"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentRoleKind"
+        },
+        "mission": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "preferred_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "$ref": "#/$defs/RoleDefinitionScope"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "scope",
+        "name",
+        "mission",
+        "capabilities",
+        "preferred_tools",
+        "created_by",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "RoleDefinitionId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "RoleDefinitionScope": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "built_in",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/ProjectId"
+            },
+            "type": {
+              "const": "project",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/OrganizationId"
+            },
+            "type": {
+              "const": "organization",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ShapingMemoryKind": {
+      "enum": [
+        "decision",
+        "approval",
+        "preference",
+        "change",
+        "rejected",
+        "note"
+      ],
+      "type": "string"
+    },
+    "ShapingMemoryNote": {
+      "description": "One durable fact in the Principal's work-item brain: a decision reached,\nan approval granted, a user preference, a revision change with its reason,\nor an option considered and rejected with cause. Append-only — entries are\nnever edited or removed, only rotated out past the bound.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ShapingMemoryNoteId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ShapingMemoryKind"
+        },
+        "recorded_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "kind",
+        "text",
+        "recorded_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "ShapingMemoryNoteId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "ShapingProposal": {
+      "description": "Latest structured result of a Principal shaping turn. This is a bounded\ndesktop projection record, not executable authority: it can describe a\nplan, but it cannot create agents, grant permissions, or start tasks.",
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "open_decisions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "plan_summary": {
+          "type": "string"
+        },
+        "requirements": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision",
+        "outcome",
+        "requirements",
+        "open_decisions",
+        "acceptance_criteria",
+        "plan_summary"
+      ],
+      "type": "object"
+    },
+    "ShapingRecords": {
+      "description": "Complete normalized shaping knowledge for one proposal revision. Records\nretain stable identities when their normalized text is unchanged, making\nthem safe targets for later plans, contracts, assignments, and reviews.",
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "$ref": "#/$defs/AcceptanceCriterion"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/Decision"
+          },
+          "type": "array"
+        },
+        "proposal_revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requirements": {
+          "items": {
+            "$ref": "#/$defs/Requirement"
+          },
+          "type": "array"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "work_item_id",
+        "proposal_revision",
+        "requirements",
+        "decisions",
+        "acceptance_criteria"
+      ],
+      "type": "object"
+    },
+    "StructuredRecordStatus": {
+      "enum": [
+        "draft",
+        "accepted",
+        "rejected",
+        "superseded"
+      ],
+      "type": "string"
+    },
+    "StructuredReviewFinding": {
+      "properties": {
+        "candidate_attempt_id": {
+          "$ref": "#/$defs/ExecutionAttemptId"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/ReviewFindingItem"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "verdict": {
+          "$ref": "#/$defs/ReviewVerdict"
+        }
+      },
+      "required": [
+        "candidate_attempt_id",
+        "verdict",
+        "summary",
+        "findings"
+      ],
+      "type": "object"
+    },
+    "TeamId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "ThreadId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "WorkBrief": {
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "created_by": {
+          "$ref": "#/$defs/ActorId"
+        },
+        "id": {
+          "$ref": "#/$defs/WorkBriefId"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/StructuredRecordStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "updated_by": {
+          "$ref": "#/$defs/ActorId"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "version",
+        "outcome",
+        "summary",
+        "status",
+        "created_by",
+        "updated_by",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "WorkBriefId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "WorkBudget": {
+      "properties": {
+        "maximum_cost_micros": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maximum_duration_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maximum_input_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maximum_output_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maximum_tool_calls": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "WorkContract": {
+      "properties": {
+        "agent_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentInstanceId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Draft and proposed contracts deliberately have no runtime agent."
+        },
+        "budget": {
+          "$ref": "#/$defs/WorkBudget"
+        },
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityGrant"
+          },
+          "type": "array"
+        },
+        "created_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "created_by": {
+          "$ref": "#/$defs/ActorId"
+        },
+        "escalation_rules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "execution_location": {
+          "$ref": "#/$defs/ExecutionLocation"
+        },
+        "expected_outputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/WorkContractId"
+        },
+        "input_artifact_ids": {
+          "items": {
+            "$ref": "#/$defs/ArtifactId"
+          },
+          "type": "array"
+        },
+        "mission": {
+          "type": "string"
+        },
+        "permissions": {
+          "items": {
+            "$ref": "#/$defs/PermissionGrant"
+          },
+          "type": "array"
+        },
+        "preferred_model_route": {
+          "description": "Optional per-role model route. `None` delegates selection to the\nworkspace launch policy; explicit routes remain bound to this contract.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role_definition_id": {
+          "$ref": "#/$defs/RoleDefinitionId"
+        },
+        "status": {
+          "$ref": "#/$defs/WorkContractStatus"
+        },
+        "success_criteria": {
+          "items": {
+            "$ref": "#/$defs/AcceptanceCriterionId"
+          },
+          "type": "array"
+        },
+        "task_ids": {
+          "items": {
+            "$ref": "#/$defs/PlanTaskId"
+          },
+          "type": "array"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "updated_at_unix_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "updated_by": {
+          "$ref": "#/$defs/ActorId"
+        },
+        "version": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "work_item_id": {
+          "$ref": "#/$defs/WorkItemId"
+        },
+        "write_scope": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "work_item_id",
+        "role_definition_id",
+        "version",
+        "status",
+        "mission",
+        "task_ids",
+        "input_artifact_ids",
+        "expected_outputs",
+        "success_criteria",
+        "write_scope",
+        "capabilities",
+        "tools",
+        "permissions",
+        "budget",
+        "escalation_rules",
+        "execution_location",
+        "created_by",
+        "updated_by",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "WorkContractId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "WorkContractStatus": {
+      "enum": [
+        "draft",
+        "proposed",
+        "approved",
+        "active",
+        "completed",
+        "revoked"
+      ],
+      "type": "string"
+    },
+    "WorkItemId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "WorkStatus": {
+      "enum": [
+        "draft",
+        "understanding",
+        "waiting_for_decision",
+        "ready_to_plan",
+        "planning",
+        "ready_to_execute",
+        "executing",
+        "reviewing",
+        "verifying",
+        "needs_user_approval",
+        "completed",
+        "blocked",
+        "paused",
+        "cancelled"
+      ],
+      "type": "string"
+    },
+    "WorkspaceCommandId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "WorkspaceCommandPayload": {
+      "description": "Commands initially required by the shaping flow. New variants require a\nschema-version compatibility decision; clients must not infer commands from\nconversational text.",
+      "oneOf": [
+        {
+          "properties": {
+            "execution_location": {
+              "$ref": "#/$defs/ExecutionLocation"
+            },
+            "title": {
+              "type": "string"
+            },
+            "type": {
+              "const": "create_work_item",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "title",
+            "execution_location"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "status": {
+              "$ref": "#/$defs/WorkStatus"
+            },
+            "type": {
+              "const": "transition_work",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "status": {
+              "$ref": "#/$defs/PlanTaskStatus"
+            },
+            "task_id": {
+              "$ref": "#/$defs/PlanTaskId"
+            },
+            "type": {
+              "const": "transition_plan_task",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "task_id",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "agent_instance_id": {
+              "$ref": "#/$defs/AgentInstanceId"
+            },
+            "contract_id": {
+              "$ref": "#/$defs/WorkContractId"
+            },
+            "model_route": {
+              "type": "string"
+            },
+            "type": {
+              "const": "provision_agent_instance",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "agent_instance_id",
+            "contract_id",
+            "model_route"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "agent_instance_id": {
+              "$ref": "#/$defs/AgentInstanceId"
+            },
+            "charging": {
+              "$ref": "#/$defs/ChargingAuthorization"
+            },
+            "effective_model_route": {
+              "type": "string"
+            },
+            "lease_expires_at_unix_ms": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "lease_id": {
+              "$ref": "#/$defs/ExecutionLeaseId"
+            },
+            "type": {
+              "const": "activate_agent_instance",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "agent_instance_id",
+            "lease_id",
+            "effective_model_route",
+            "charging",
+            "lease_expires_at_unix_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "lease_expires_at_unix_ms": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "lease_id": {
+              "$ref": "#/$defs/ExecutionLeaseId"
+            },
+            "type": {
+              "const": "renew_execution_lease",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "lease_id",
+            "lease_expires_at_unix_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "agent_instance_id": {
+              "$ref": "#/$defs/AgentInstanceId"
+            },
+            "attempt_id": {
+              "$ref": "#/$defs/ExecutionAttemptId"
+            },
+            "isolation": {
+              "$ref": "#/$defs/ExecutionIsolation"
+            },
+            "lease_id": {
+              "$ref": "#/$defs/ExecutionLeaseId"
+            },
+            "task_id": {
+              "$ref": "#/$defs/PlanTaskId"
+            },
+            "type": {
+              "const": "start_agent_execution",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "attempt_id",
+            "task_id",
+            "agent_instance_id",
+            "lease_id",
+            "isolation"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "attempt_id": {
+              "$ref": "#/$defs/ExecutionAttemptId"
+            },
+            "change_summary": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExecutionChangeSummary"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "outcome": {
+              "$ref": "#/$defs/ExecutionAttemptStatus"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "type": {
+              "const": "finish_agent_execution",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "attempt_id",
+            "outcome",
+            "summary"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Record cancellation intent before the execution host stops the\nprovider. Authority terminalizes the attempt atomically; hosts react to\nthe resulting `AgentExecutionFinished` event.",
+          "properties": {
+            "attempt_id": {
+              "$ref": "#/$defs/ExecutionAttemptId"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "type": {
+              "const": "cancel_agent_execution",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "attempt_id",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "attempt_id": {
+              "$ref": "#/$defs/ExecutionAttemptId"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "type": {
+              "const": "pause_agent_execution",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "attempt_id",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "failed_attempt_id": {
+              "$ref": "#/$defs/ExecutionAttemptId"
+            },
+            "lease_expires_at_unix_ms": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "lease_id": {
+              "$ref": "#/$defs/ExecutionLeaseId"
+            },
+            "type": {
+              "const": "prepare_agent_execution_retry",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "failed_attempt_id",
+            "lease_id",
+            "lease_expires_at_unix_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "attempt_id": {
+              "$ref": "#/$defs/ExecutionAttemptId"
+            },
+            "resolution": {
+              "$ref": "#/$defs/ExecutionReviewResolution"
+            },
+            "type": {
+              "const": "resolve_agent_execution_review",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "attempt_id",
+            "resolution"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "upsert_work_brief",
+              "type": "string"
+            },
+            "work_brief": {
+              "$ref": "#/$defs/WorkBrief"
+            }
+          },
+          "required": [
+            "type",
+            "work_brief"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "requirement": {
+              "$ref": "#/$defs/Requirement"
+            },
+            "type": {
+              "const": "upsert_requirement",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "requirement"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "decision": {
+              "$ref": "#/$defs/Decision"
+            },
+            "type": {
+              "const": "upsert_decision",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "decision"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "acceptance_criterion": {
+              "$ref": "#/$defs/AcceptanceCriterion"
+            },
+            "type": {
+              "const": "upsert_acceptance_criterion",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "acceptance_criterion"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "artifact": {
+              "$ref": "#/$defs/ArtifactRef"
+            },
+            "type": {
+              "const": "upsert_artifact",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "artifact"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Replace the complete user-editable shaping record set. This is used by\nexplicit add/remove controls; authority rejects removals that would\nleave plan or contract references dangling.",
+          "properties": {
+            "records": {
+              "$ref": "#/$defs/ShapingRecords"
+            },
+            "type": {
+              "const": "replace_shaping_records",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "records"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Replace the complete repository-artifact set for the work item.",
+          "properties": {
+            "artifacts": {
+              "items": {
+                "$ref": "#/$defs/ArtifactRef"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "replace_artifacts",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "artifacts"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "constraint": {
+              "$ref": "#/$defs/Constraint"
+            },
+            "type": {
+              "const": "upsert_constraint",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "constraint"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "risk": {
+              "$ref": "#/$defs/Risk"
+            },
+            "type": {
+              "const": "upsert_risk",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "risk"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "plan": {
+              "$ref": "#/$defs/Plan"
+            },
+            "type": {
+              "const": "upsert_plan",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "plan"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Publish a user-edited dependency-plan revision and its derived role\nassignments as one authority transaction.",
+          "properties": {
+            "plan": {
+              "$ref": "#/$defs/Plan"
+            },
+            "type": {
+              "const": "revise_plan",
+              "type": "string"
+            },
+            "work_contracts": {
+              "items": {
+                "$ref": "#/$defs/WorkContract"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "plan",
+            "work_contracts"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "role_definition": {
+              "$ref": "#/$defs/RoleDefinition"
+            },
+            "type": {
+              "const": "upsert_role_definition",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "role_definition"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "upsert_work_contract",
+              "type": "string"
+            },
+            "work_contract": {
+              "$ref": "#/$defs/WorkContract"
+            }
+          },
+          "required": [
+            "type",
+            "work_contract"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "proposed_team": {
+              "$ref": "#/$defs/ProposedTeam"
+            },
+            "type": {
+              "const": "upsert_proposed_team",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "proposed_team"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "type": {
+              "const": "describe_role",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "description"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message": {
+              "$ref": "#/$defs/AgentMessage"
+            },
+            "routing": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentMessageRouting"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "const": "post_message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "delivery_state": {
+              "$ref": "#/$defs/MessageDeliveryState"
+            },
+            "message_id": {
+              "$ref": "#/$defs/AgentMessageId"
+            },
+            "type": {
+              "const": "update_message_delivery",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message_id",
+            "delivery_state"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "evidence": {
+              "$ref": "#/$defs/Evidence"
+            },
+            "type": {
+              "const": "record_evidence",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Append one turn's work-item memory notes to the Principal's brain.\nAppend-only: notes are never edited or removed once recorded.",
+          "properties": {
+            "notes": {
+              "items": {
+                "$ref": "#/$defs/ShapingMemoryNote"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "record_shaping_memory",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "notes"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "artifacts": {
+              "items": {
+                "$ref": "#/$defs/ArtifactRef"
+              },
+              "type": "array"
+            },
+            "message": {
+              "$ref": "#/$defs/AgentMessage"
+            },
+            "plan": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Plan"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "proposal": {
+              "$ref": "#/$defs/ShapingProposal"
+            },
+            "proposed_team": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ProposedTeam"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "records": {
+              "$ref": "#/$defs/ShapingRecords"
+            },
+            "role_definitions": {
+              "items": {
+                "$ref": "#/$defs/RoleDefinition"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "complete_shaping_turn",
+              "type": "string"
+            },
+            "work_contracts": {
+              "items": {
+                "$ref": "#/$defs/WorkContract"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "message",
+            "proposal",
+            "records"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "attention_item": {
+              "$ref": "#/$defs/AttentionItem"
+            },
+            "type": {
+              "const": "raise_attention",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "attention_item"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "attention_item_id": {
+              "$ref": "#/$defs/AttentionItemId"
+            },
+            "outcome": {
+              "$ref": "#/$defs/AttentionResolution"
+            },
+            "resolution": {
+              "type": "string"
+            },
+            "type": {
+              "const": "resolve_attention",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "attention_item_id",
+            "outcome",
+            "resolution"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One retry-safe request to mutate authoritative workspace state.",
+  "properties": {
+    "actor_id": {
+      "$ref": "#/$defs/ActorId"
+    },
+    "command_id": {
+      "$ref": "#/$defs/WorkspaceCommandId"
+    },
+    "correlation_id": {
+      "$ref": "#/$defs/CorrelationId"
+    },
+    "device_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DeviceId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "expected_revision": {
+      "description": "Optimistic concurrency guard for commands that update existing work.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "payload": {
+      "$ref": "#/$defs/WorkspaceCommandPayload"
+    },
+    "project_id": {
+      "$ref": "#/$defs/ProjectId"
+    },
+    "schema_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "timestamp_unix_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "work_item_id": {
+      "$ref": "#/$defs/WorkItemId"
+    }
+  },
+  "required": [
+    "command_id",
+    "schema_version",
+    "project_id",
+    "work_item_id",
+    "actor_id",
+    "correlation_id",
+    "timestamp_unix_ms",
+    "payload"
+  ],
+  "title": "WorkspaceCommandEnvelope",
+  "type": "object"
+}

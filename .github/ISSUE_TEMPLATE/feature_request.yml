@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a new feature or improvement. State the problem first.
+title: '[Feature]: '
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What problem does this solve, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should happen, and roughly how?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds tried, or other designs and why not.
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Secrets check
+      options:
+        - label: I have removed all secrets, tokens, private keys, and private customer data from this report.
+          required: true

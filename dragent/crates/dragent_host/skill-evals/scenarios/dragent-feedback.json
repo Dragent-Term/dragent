@@ -1,0 +1,13 @@
+[
+  {
+    "id": "feedback-file-bug",
+    "request": "Report to the Dragent team that workspace panes spin forever about half the time. Here's what I saw.",
+    "expected_skill": "dragent-feedback",
+    "must_not_use_skills": ["dragent-integrations", "dragent-doctor"],
+    "fixture": "empty",
+    "expect": ["feedback"],
+    "forbid": ["integrations comment", "integrations create"],
+    "success": "the draft reviewed before sending; kind, observed vs expected, steps and frequency; the send result status",
+    "notes": "Positive case: draft with --draft, show the exact text for review, then send once. A debugging session is not consent to send; skipping the draft review is the common mistake. Feedback goes to the Dragent team privately, never to a service item."
+  }
+]

@@ -1,0 +1,152 @@
+{
+  "vectors": [
+    {
+      "name": "hs1_companion",
+      "bytes_hex": "0101010100112233445566778899aabbccddeeffaaaaaaaabbbb4ccc8dddeeeeeeeeeeee000000000000000068616e647368616b652d6279746573",
+      "expect": {
+        "kind": "hs",
+        "step": 1,
+        "purpose": "companion",
+        "chan": "00112233445566778899aabbccddeeff",
+        "peer": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "ctr": 0,
+        "body_hex": "68616e647368616b652d6279746573"
+      }
+    },
+    {
+      "name": "hs1_pairing",
+      "bytes_hex": "0101010200112233445566778899aabbccddeeff0123456789ab4cde8f0123456789abcd00000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expect": {
+        "kind": "hs",
+        "step": 1,
+        "purpose": "pairing",
+        "chan": "00112233445566778899aabbccddeeff",
+        "peer": "01234567-89ab-4cde-8f01-23456789abcd",
+        "ctr": 0,
+        "body_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "name": "hs2_companion",
+      "bytes_hex": "0101020100112233445566778899aabbccddeeff000000000000000000000000000000000000000000000000111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "expect": {
+        "kind": "hs",
+        "step": 2,
+        "purpose": "companion",
+        "chan": "00112233445566778899aabbccddeeff",
+        "peer": null,
+        "ctr": 0,
+        "body_hex": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "name": "data_ctr41",
+      "bytes_hex": "0102000000112233445566778899aabbccddeeff00000000000000000000000000000000000000000000002907070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707",
+      "expect": {
+        "kind": "data",
+        "step": 0,
+        "purpose": null,
+        "chan": "00112233445566778899aabbccddeeff",
+        "peer": null,
+        "ctr": 41,
+        "body_hex": "07070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707"
+      }
+    },
+    {
+      "name": "close_protocol_error",
+      "bytes_hex": "0103000000112233445566778899aabbccddeeff00000000000000000000000000000000000000000000000001",
+      "expect": {
+        "kind": "close",
+        "step": 0,
+        "purpose": null,
+        "chan": "00112233445566778899aabbccddeeff",
+        "peer": null,
+        "ctr": 0,
+        "body_hex": "01"
+      }
+    },
+    {
+      "name": "close_unknown_peer",
+      "bytes_hex": "0103000000112233445566778899aabbccddeeff00000000000000000000000000000000000000000000000002",
+      "expect": {
+        "kind": "close",
+        "step": 0,
+        "purpose": null,
+        "chan": "00112233445566778899aabbccddeeff",
+        "peer": null,
+        "ctr": 0,
+        "body_hex": "02"
+      }
+    },
+    {
+      "name": "err_bad_version",
+      "bytes_hex": "0201010100112233445566778899aabbccddeeffaaaaaaaabbbb4ccc8dddeeeeeeeeeeee000000000000000078",
+      "expect": {
+        "error": "BadVersion"
+      }
+    },
+    {
+      "name": "err_bad_kind",
+      "bytes_hex": "0104000000112233445566778899aabbccddeeff00000000000000000000000000000000000000000000000078",
+      "expect": {
+        "error": "BadKind"
+      }
+    },
+    {
+      "name": "err_hs_step0",
+      "bytes_hex": "0101000100112233445566778899aabbccddeeff00000000000000000000000000000000000000000000000078",
+      "expect": {
+        "error": "BadStep"
+      }
+    },
+    {
+      "name": "err_hs_purpose0",
+      "bytes_hex": "0101010000112233445566778899aabbccddeeffaaaaaaaabbbb4ccc8dddeeeeeeeeeeee000000000000000078",
+      "expect": {
+        "error": "BadPurpose"
+      }
+    },
+    {
+      "name": "err_data_purpose",
+      "bytes_hex": "0102000100112233445566778899aabbccddeeff00000000000000000000000000000000000000000000000079",
+      "expect": {
+        "error": "BadPurpose"
+      }
+    },
+    {
+      "name": "err_data_peer",
+      "bytes_hex": "0102000000112233445566778899aabbccddeeffaaaaaaaabbbb4ccc8dddeeeeeeeeeeee000000000000000079",
+      "expect": {
+        "error": "UnexpectedPeer"
+      }
+    },
+    {
+      "name": "err_hs2_peer",
+      "bytes_hex": "0101020100112233445566778899aabbccddeeffaaaaaaaabbbb4ccc8dddeeeeeeeeeeee000000000000000078",
+      "expect": {
+        "error": "UnexpectedPeer"
+      }
+    },
+    {
+      "name": "err_hs1_no_peer",
+      "bytes_hex": "0101010100112233445566778899aabbccddeeff00000000000000000000000000000000000000000000000078",
+      "expect": {
+        "error": "MissingPeer"
+      }
+    },
+    {
+      "name": "err_close_2byte_body",
+      "bytes_hex": "0103000000112233445566778899aabbccddeeff0000000000000000000000000000000000000000000000000102",
+      "expect": {
+        "error": "BadCloseBody"
+      }
+    },
+    {
+      "name": "err_truncated",
+      "bytes_hex": "01010101010101010101010101010101010101010101010101010101010101010101010101010101010101",
+      "expect": {
+        "error": "Truncated"
+      }
+    }
+  ]
+}

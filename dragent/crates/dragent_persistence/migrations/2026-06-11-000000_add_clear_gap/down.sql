@@ -1,0 +1,1 @@
+-- Down migrations for SQLite column drops are complicated, we just leave them.

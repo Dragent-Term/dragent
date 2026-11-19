@@ -1,0 +1,26 @@
+# Ember Dawn — original Dragent theme.
+# Solar-flare spirit without copying it: dark ember-brown sky, sunrise-amber
+# accent, warm earthy terminal palette. All values designed in-house.
+accent: "#ff7a1a"
+background: "#1f130c"
+details: darker
+foreground: "#f2e4cf"
+terminal_colors:
+  bright:
+    black: "#5c4a38"
+    blue: "#9abdd4"
+    cyan: "#8fc9b8"
+    green: "#b5cc76"
+    magenta: "#d694b8"
+    red: "#f27d72"
+    white: "#faefe0"
+    yellow: "#f2bd5e"
+  normal:
+    black: "#1f130c"
+    blue: "#7aa5c4"
+    cyan: "#6fb5a8"
+    green: "#9db85a"
+    magenta: "#c47aa5"
+    red: "#e5484d"
+    white: "#d8c6ac"
+    yellow: "#e8a13c"

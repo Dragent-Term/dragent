@@ -1,0 +1,54 @@
+[package]
+name = "dragent_index_engine"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The web viewer never indexes code. On wasm this crate is a tiny stub (see
+# `wasm_stub`) with no dependencies; the entire real engine — ONNX embeddings,
+# the SQLite vector store, the filesystem walker/watcher — is native-only below.
+[dependencies]
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+dragent_resource_lifecycle = { workspace = true }
+dragent_paths = { workspace = true }
+libc = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+walkdir = { workspace = true }
+ignore = "0.4.22"
+bincode = { workspace = true }
+hex = { workspace = true }
+log = { workspace = true }
+dirs = { workspace = true }
+dunce = "1.0.1"
+once_cell = { workspace = true }
+rayon = { workspace = true }
+bytemuck = { workspace = true }
+notify-debouncer-full = { workspace = true }
+
+# Embedding model — downloads bge-small-en-v1.5 (~130MB) on first use to the
+# Dragent model cache (native-only). The session is now lazily leased and idle-
+# evicted by `dragent_resource_lifecycle`; see manager.rs.
+fastembed = { version = "4", features = ["ort-download-binaries", "hf-hub-native-tls"] }
+# `ort` (ONNX Runtime) is pulled transitively by fastembed. Declare it directly to
+# enable `load-dynamic`, which loads ONNX Runtime at *runtime* instead of linking it
+# at build time. Static linking fails on aarch64-pc-windows-msvc with an unresolved
+# `OrtGetApiBase`, and load-dynamic is the portable choice across Intel/ARM on
+# Windows, Linux, and macOS. Cargo unifies this with fastembed's `ort` so the same
+# crate gets `load-dynamic` alongside `download-binaries` (the latter still fetches
+# the shared library that load-dynamic then loads at runtime).
+# `directml`/`qnn` only compile in the EP *registration* code — whether the EP
+# actually engages depends on the onnxruntime library loaded at runtime, and
+# the embedder falls back to CPU when it doesn't (see Embedder::execution_providers).
+ort = { version = "2.0.0-rc.9", default-features = false, features = ["load-dynamic", "directml", "qnn", "coreml"] }
+
+# Vector store
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

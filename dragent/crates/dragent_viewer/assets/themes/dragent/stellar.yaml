@@ -1,0 +1,27 @@
+accent: "#6fa8dc"
+background: "#05070e"
+details: darker
+foreground: "#dfe7f2"
+background_image:
+  # background image credit: Photo by 0xk on Unsplash (0xk-zQAPhRyrMVc)
+  path: dragent/stellar_bg.jpg
+  opacity: 50
+terminal_colors:
+  normal:
+    black: "#1a1f2e"
+    red: "#e06c75"
+    green: "#98c379"
+    yellow: "#e5c07b"
+    blue: "#61afef"
+    magenta: "#c678dd"
+    cyan: "#56b6c2"
+    white: "#abb2bf"
+  bright:
+    black: "#5c6370"
+    red: "#ff7b86"
+    green: "#b5e890"
+    yellow: "#ffd894"
+    blue: "#7fc3ff"
+    magenta: "#e0a3f0"
+    cyan: "#6fd6e2"
+    white: "#dfe7f2"

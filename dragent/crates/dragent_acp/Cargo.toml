@@ -1,0 +1,12 @@
+[package]
+name = "dragent_acp"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Dragent's client for the Agent Client Protocol: drive a coding agent (OpenCode, Gemini, Cursor, Copilot, Qwen…) as a chat over stdio JSON-RPC"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+log = { workspace = true }
+uuid = { version = "1", features = ["v4"] }

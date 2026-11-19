@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "supportedIds": ["dragent", "claude", "codex", "gemini", "opencode", "amp", "cursor"],
+  "aliases": {
+    "claude-code": "claude",
+    "ampcode": "amp",
+    "cursor-agent": "cursor",
+    "codex-cli": "codex",
+    "gemini-cli": "gemini"
+  },
+  "labels": {
+    "dragent": "Dragent",
+    "claude": "Claude Code",
+    "codex": "Codex",
+    "gemini": "Gemini CLI",
+    "opencode": "OpenCode",
+    "amp": "Amp",
+    "cursor": "Cursor"
+  },
+  "themeVariants": {
+    "dragent": "single",
+    "claude": "single",
+    "codex": "light-dark",
+    "gemini": "single",
+    "opencode": "light-dark",
+    "amp": "single",
+    "cursor": "light-dark"
+  },
+  "sources": {
+    "dragent": ["dragent/brand/dragent-icon-512.png"],
+    "claude": ["dragent/app/assets/dragent/agent-images/agents/claude.svg"],
+    "codex": [
+      "dragent/app/assets/dragent/agent-images/agents/codex.svg",
+      "dragent/app/assets/dragent/agent-images/agents/codex-white.svg"
+    ],
+    "gemini": ["dragent/app/assets/dragent/agent-images/agents/gemini.svg"],
+    "opencode": [
+      "dragent/app/assets/dragent/agent-images/agents/opencode.svg",
+      "dragent/app/assets/dragent/agent-images/agents/opencode-white.svg"
+    ],
+    "amp": ["dragent/app/assets/dragent/agent-images/agents/amp.svg"],
+    "cursor": [
+      "dragent/app/assets/dragent/agent-images/cursor.svg",
+      "dragent/app/assets/dragent/agent-images/cursor-white.svg"
+    ]
+  },
+  "fallback": "unbranded lucide agent icon; unknown and custom:<slug> never map to a vendor"
+}

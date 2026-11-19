@@ -1,0 +1,109 @@
+{
+  "command_id": "88000000-0000-4000-8000-000000000001",
+  "schema_version": 1,
+  "project_id": "11111111-1111-4111-8111-111111111111",
+  "work_item_id": "22222222-2222-4222-8222-222222222222",
+  "actor_id": "99000000-0000-4000-8000-000000000001",
+  "correlation_id": "55555555-5555-4555-8555-555555555555",
+  "timestamp_unix_ms": 1788900001000,
+  "payload": {
+    "type": "complete_shaping_turn",
+    "message": {
+      "id": "aa000000-0000-4000-8000-000000000001",
+      "thread_id": "bb000000-0000-4000-8000-000000000001",
+      "work_item_id": "22222222-2222-4222-8222-222222222222",
+      "sender_id": "99000000-0000-4000-8000-000000000001",
+      "kind": "status_update",
+      "body": "I shaped the billing implementation plan.",
+      "reply_to": "aa000000-0000-4000-8000-000000000000",
+      "artifact_ids": [],
+      "evidence_ids": [],
+      "delivery_state": "local_only",
+      "created_at_unix_ms": 1788900001000,
+      "updated_at_unix_ms": 1788900001000
+    },
+    "proposal": {
+      "revision": 2,
+      "outcome": "Ship organization billing",
+      "requirements": ["Support seat-based subscriptions"],
+      "open_decisions": ["Choose the proration policy"],
+      "acceptance_criteria": ["An administrator can update the seat count"],
+      "plan_summary": "Implement billing behind an organization feature flag"
+    },
+    "records": {
+      "work_item_id": "22222222-2222-4222-8222-222222222222",
+      "proposal_revision": 2,
+      "requirements": [
+        {
+          "id": "cc000000-0000-4000-8000-000000000001",
+          "work_item_id": "22222222-2222-4222-8222-222222222222",
+          "summary": "Support seat-based subscriptions",
+          "details": "",
+          "priority": "normal",
+          "status": "draft",
+          "provenance": [
+            {
+              "source": {
+                "type": "agent_message",
+                "thread_id": "bb000000-0000-4000-8000-000000000001",
+                "message_id": "aa000000-0000-4000-8000-000000000001"
+              },
+              "recorded_by": "99000000-0000-4000-8000-000000000001",
+              "recorded_at_unix_ms": 1788900001000
+            }
+          ],
+          "created_at_unix_ms": 1788900001000,
+          "updated_at_unix_ms": 1788900001000
+        }
+      ],
+      "decisions": [
+        {
+          "id": "dd000000-0000-4000-8000-000000000001",
+          "work_item_id": "22222222-2222-4222-8222-222222222222",
+          "question": "Choose the proration policy",
+          "resolution": null,
+          "rationale": null,
+          "status": "open",
+          "provenance": [
+            {
+              "source": {
+                "type": "agent_message",
+                "thread_id": "bb000000-0000-4000-8000-000000000001",
+                "message_id": "aa000000-0000-4000-8000-000000000001"
+              },
+              "recorded_by": "99000000-0000-4000-8000-000000000001",
+              "recorded_at_unix_ms": 1788900001000
+            }
+          ],
+          "decided_by": null,
+          "created_at_unix_ms": 1788900001000,
+          "updated_at_unix_ms": 1788900001000
+        }
+      ],
+      "acceptance_criteria": [
+        {
+          "id": "ee000000-0000-4000-8000-000000000001",
+          "work_item_id": "22222222-2222-4222-8222-222222222222",
+          "description": "An administrator can update the seat count",
+          "status": "pending",
+          "evidence_ids": [],
+          "waiver_reason": null,
+          "waived_by": null,
+          "provenance": [
+            {
+              "source": {
+                "type": "agent_message",
+                "thread_id": "bb000000-0000-4000-8000-000000000001",
+                "message_id": "aa000000-0000-4000-8000-000000000001"
+              },
+              "recorded_by": "99000000-0000-4000-8000-000000000001",
+              "recorded_at_unix_ms": 1788900001000
+            }
+          ],
+          "created_at_unix_ms": 1788900001000,
+          "updated_at_unix_ms": 1788900001000
+        }
+      ]
+    }
+  }
+}

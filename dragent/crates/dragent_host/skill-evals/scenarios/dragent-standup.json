@@ -1,0 +1,13 @@
+[
+  {
+    "id": "standup-recap-no-messages",
+    "request": "What did my agents get done while I was away? Just summarize, don't touch anything.",
+    "expected_skill": "dragent-standup",
+    "must_not_use_skills": ["dragent-orchestrate", "dragent-automate", "dragent-integrations"],
+    "fixture": "team-context",
+    "expect": ["standup"],
+    "forbid": ["msg send", "msg reply", "tasks start", "team create"],
+    "success": "grouped recap by outcome with workspace paths and task ids; evidence for each claim (verified, claimed or excerpt); the concrete next decision for anything blocked",
+    "notes": "Boundary case: summarize existing workers without messaging them. A recap never authorizes follow-up work; starting, sending or changing anything belongs to another skill."
+  }
+]

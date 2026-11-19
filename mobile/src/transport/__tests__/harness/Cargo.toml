@@ -1,0 +1,37 @@
+# Test-only harness for the phone transport's Node tests (docs/design/e2ee.md
+# §12.2, §12.3, §12.7; task E5a). Never shipped: nothing in the app imports it.
+#
+# It runs the REAL Rust code on both ends so the TypeScript transport is tested
+# against real cryptography, not a JavaScript stand-in:
+#
+# - the phone side is E4's binding crate (`dragent_e2ee_ffi`), the exact Rust
+#   the native module wraps (minus Swift/Kotlin and the keychain);
+# - the desktop side is a scripted peer built on `dragent_e2ee` (KK responder,
+#   §4.3 receiver, records, TERM, parts, CTRL, catalog sealing). The test
+#   script decides what it says; the JS "relay" in between can drop, reorder,
+#   replay, splice and tamper with frames.
+#
+# Wire: one JSON object per line over two FIFOs (see harness.ts). Bytes are hex.
+[package]
+name = "dragent_e2ee_transport_harness"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-Proprietary"
+
+[[bin]]
+name = "e2ee-transport-harness"
+path = "src/main.rs"
+
+[dependencies]
+dragent_e2ee_ffi = { path = "../../../../modules/dragent-e2ee/rust" }
+dragent_e2ee = { path = "../../../../../dragent/crates/dragent_e2ee" }
+serde_json = "1"
+
+# Its own workspace root (like the binding crate it links).
+[workspace]
+
+# The crypto in debug builds is slow; optimise dependencies, keep the
+# harness itself quick to rebuild.
+[profile.dev.package."*"]
+opt-level = 3

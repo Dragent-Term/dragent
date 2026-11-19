@@ -1,0 +1,15 @@
+[package]
+name = "dragent-icon-gen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "dragent-icon-gen"
+path = "src/main.rs"
+
+[dependencies]
+ico = "0.4"
+image = { version = "0.25.9", default-features = false, features = ["png"] }

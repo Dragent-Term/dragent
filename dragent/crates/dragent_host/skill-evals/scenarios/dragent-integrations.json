@@ -1,0 +1,35 @@
+[
+  {
+    "id": "integrations-read-only",
+    "request": "What does the Linear issue about the checkout crash say? Don't post anything, I just want to read it first.",
+    "expected_skill": "dragent-integrations",
+    "must_not_use_skills": ["dragent-plugins"],
+    "fixture": "service-results",
+    "expect": ["integrations search", "integrations show"],
+    "forbid": ["integrations comment", "integrations status", "integrations create"],
+    "success": "the selected item id and its current status; a summary of the full item and its comments; source link",
+    "notes": "Boundary case: read an issue without posting a comment. Search results are candidates; the full item must be read before any recommendation, and no write may happen without being asked."
+  },
+  {
+    "id": "integrations-ambiguous-search",
+    "request": "Find the Sentry error about checkout failures — there seem to be several that match.",
+    "expected_skill": "dragent-integrations",
+    "must_not_use_skills": ["dragent-plugins"],
+    "fixture": "service-results",
+    "expect": ["integrations search", "integrations show"],
+    "forbid": ["integrations comment", "integrations status"],
+    "success": "which of the matching items was selected and why; the full item with comments; what could not be verified",
+    "notes": "Failure-recovery case: an ambiguous search result. The run must read the full selected item (comments and status) instead of acting on the first hit or guessing an id."
+  },
+  {
+    "id": "integrations-pagination",
+    "request": "List all open checkout bugs in Linear, not just the first page.",
+    "expected_skill": "dragent-integrations",
+    "must_not_use_skills": ["dragent-plugins"],
+    "fixture": "service-results",
+    "expect": ["integrations describe", "integrations search"],
+    "forbid": ["integrations comment", "integrations create"],
+    "success": "the scope searched and how many pages were read; the item ids found; no claim of exhaustive results from one page",
+    "notes": "Failure-recovery case: pagination. The run must discover the service first, then follow further pages (the service's own cursor through api) or narrower queries where available and report the scope searched rather than claiming exhaustive results from a single page."
+  }
+]

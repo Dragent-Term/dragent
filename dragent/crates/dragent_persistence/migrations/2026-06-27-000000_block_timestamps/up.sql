@@ -1,0 +1,2 @@
+ALTER TABLE blocks ADD COLUMN created_at_unix_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agent_blocks ADD COLUMN created_at_unix_ms INTEGER NOT NULL DEFAULT 0;

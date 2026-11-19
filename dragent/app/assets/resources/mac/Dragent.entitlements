@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Entitlements for the signed .app bundle.
+
+     REQUIRED because release builds are signed with the hardened runtime
+     (codesign "options runtime", mandatory for notarization). The hardened
+     runtime denies protected resources unless the matching entitlement is
+     present, and for the microphone it denies SILENTLY: no TCC prompt, no
+     entry in Privacy & Security > Microphone, and AVAudioEngine still starts
+     but vends nothing except silent buffers. Voice input looks alive and
+     transcribes nothing. (Shipped exactly that way once; don't again.)
+
+     NSMicrophoneUsageDescription in Dragent-Info.plist is necessary but NOT
+     sufficient: the plist string is what the prompt says, this entitlement is
+     what lets the prompt happen at all. Both, or no microphone.
+
+     Careful editing this comment: a double hyphen anywhere inside it is
+     invalid XML, and codesign then STILL EXITS 0 after printing "Failed to
+     parse entitlements" to stderr, shipping a bundle with no entitlements at
+     all. The verify step in scripts/package-macos.sh exists to catch that. -->
+<plist version="1.0">
+<dict>
+  <!-- Microphone. Voice input is dead without this: see above. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+
+  <!-- Camera, for websites in the browser pane that the person allows (the
+       page's own permission prompt comes first). Same rule as the
+       microphone: the plist string and this entitlement, or no camera. -->
+  <key>com.apple.security.device.camera</key>
+  <true/>
+
+  <!-- ONNX Runtime for code indexing. The embedder dlopens libonnxruntime,
+       which crates/dragent_index/src/embedder.rs downloads (sha256-pinned)
+       from Microsoft's official release. That dylib is ad-hoc signed with no
+       Team ID, and the hardened runtime's library validation refuses to map
+       any library whose team differs from the app's:
+
+         not valid for use in process: mapping process and mapped file
+         (non-platform) have different Team IDs
+
+       dlopen fails, the embedder never starts, nothing is chunked, and the UI
+       just says "no repository indexed yet". (Also shipped that way once.)
+       Integrity still comes from the sha256 pin on the download, which is the
+       control that actually matters for a library we fetch ourselves. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

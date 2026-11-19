@@ -1,0 +1,13 @@
+[
+  {
+    "id": "automate-draft-paused",
+    "request": "Draft a weekday-morning check of the test suite but don't turn it on yet — I want to review the definition first.",
+    "expected_skill": "dragent-automate",
+    "must_not_use_skills": ["dragent-orchestrate", "dragent-standup"],
+    "fixture": "empty",
+    "expect": ["automations preview", "automations create", "automations get"],
+    "forbid": ["automations resume", "automations run", "team create"],
+    "success": "the schedule, timezone and target; the created automation id with future runs off; how to clean it up",
+    "notes": "Boundary case: draft an automation without enabling future runs. Drafting means --paused plus the concrete config; preview proves the schedule, create-then-get proves the definition, and no trial run or resume may enable it."
+  }
+]

@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-cyan: #19aad8;
+  --color-brand-emerald: #10b981;
+  --color-brand-rose: #f43f5e;
+  
+  --animate-border-glow: glow 4s linear infinite;
+  --animate-pulse-glow: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-float: float 6s ease-in-out infinite;
+
+  @keyframes glow {
+    0%, 100% { 
+      box-shadow: 0 0 15px rgba(25, 170, 216, 0.15), inset 0 0 15px rgba(25, 170, 216, 0.05); 
+      border-color: rgba(25, 170, 216, 0.2);
+    }
+    50% { 
+      box-shadow: 0 0 30px rgba(25, 170, 216, 0.3), inset 0 0 20px rgba(25, 170, 216, 0.1); 
+      border-color: rgba(25, 170, 216, 0.4);
+    }
+  }
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 0.4; filter: blur(40px); }
+    50% { opacity: 0.8; filter: blur(60px); }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+}
+
+:root {
+  --background: #030303;
+  --foreground: #f5f5f7;
+  --font-sans: var(--font-outfit), var(--font-inter), system-ui, sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* Premium scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.01);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(25, 170, 216, 0.3);
+}
+
+/* Custom glow utility */
+.glow-card {
+  background: rgba(10, 10, 10, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Brand gradient, from the icon's folded ribbon — used for headings/accents so
+   the portal matches the marketing site. */
+.ribbon-text {
+  background: linear-gradient(100deg, #9df5ff 0%, #2fd4c8 28%, #19aad8 55%, #6b5bd6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.ribbon-border {
+  background:
+    linear-gradient(180deg, rgba(14, 16, 22, 0.9), rgba(9, 9, 11, 0.92)) padding-box,
+    linear-gradient(135deg, #2fd4c8, #19aad8 42%, #3a3f9e 74%, #6b5bd6) border-box;
+  border: 1px solid transparent;
+}
+
+.glow-card-active {
+  animation: var(--animate-border-glow);
+}

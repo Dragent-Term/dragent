@@ -1,0 +1,35 @@
+{
+  "vectors": [
+    {
+      "name": "kk_hello",
+      "json_utf8": "{\"v\":1,\"caps\":[\"term\",\"files\"]}",
+      "expect": {
+        "caps": [
+          "term",
+          "files"
+        ]
+      }
+    },
+    {
+      "name": "pairing_hello",
+      "json_utf8": "{\"device_name\":\"Jahsmine's iPhone\",\"platform\":\"ios\",\"push_pub\":\"CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws\"}",
+      "expect": {
+        "device_name": "Jahsmine's iPhone",
+        "platform": "ios",
+        "push_pub_hex": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+      }
+    },
+    {
+      "name": "err_hello_v2",
+      "json_utf8": "{\"v\":2,\"caps\":[]}",
+      "kind": "hello",
+      "expect_error": "BadVersion"
+    },
+    {
+      "name": "err_pairing_platform",
+      "json_utf8": "{\"device_name\":\"Jahsmine's iPhone\",\"platform\":\"web\",\"push_pub\":\"CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws\"}",
+      "kind": "pairing",
+      "expect_error": "BadPlatform"
+    }
+  ]
+}

@@ -1,0 +1,193 @@
+name: ci
+
+# The pull-request gate: one workflow, path-routed jobs; docs-only changes
+# stay green without running the expensive jobs.
+# Required-check guidance lives in .github/REQUIRED_CHECKS.md.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Skip heavy jobs for docs-only PRs; every other job depends on this one.
+  paths:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: filter
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            code:
+              - 'server/**'
+              - 'dragent/**'
+              - 'auth-portal/**'
+              - 'mobile/**'
+              - 'marketing/**'
+              - 'contracts/**'
+              - '.github/workflows/ci.yml'
+
+  server:
+    name: server (go vet / build / test)
+    needs: paths
+    if: needs.paths.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: server/go.sum
+      - name: gofmt (no diffs allowed)
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
+      - name: go build
+        run: go build ./...
+      # The race detector catches ordering bugs a fast machine hides.
+      - name: go test (race detector)
+        run: go test -race ./...
+
+  dragent:
+    name: dragent (cargo metadata / check)
+    needs: paths
+    if: needs.paths.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dragent
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Reads dragent/rust-toolchain.toml; caches the build too.
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          rust-src-dir: dragent
+          components: rustfmt
+          cache-workspaces: dragent
+      - name: cargo metadata (manifests valid, locked)
+        run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
+      - name: rustfmt (files this change touches)
+        # The codebase predates the gate: new and edited Rust must be
+        # formatted, untouched files are formatted as they're changed.
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          changed=$(git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}" HEAD -- '*.rs' | sed -n 's#^dragent/##p')
+          if [ -n "$changed" ]; then
+            echo "$changed" | xargs rustfmt --check --edition 2021
+          fi
+      - name: cargo check (workspace)
+        run: cargo check --workspace --locked
+
+  dragent-tests:
+    name: dragent (tests)
+    needs: paths
+    if: needs.paths.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: dragent
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          rust-src-dir: dragent
+          cache-workspaces: dragent
+      - name: Linux libraries the desktop app links
+        working-directory: .
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-dev libwayland-dev libfontconfig1-dev libssl-dev pkg-config
+      - name: cargo test (workspace)
+        run: cargo test --workspace --locked
+
+  auth-portal:
+    name: auth-portal (typecheck / lint / build)
+    needs: paths
+    if: needs.paths.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auth-portal
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: auth-portal/package-lock.json
+      - name: npm ci (frozen lockfile)
+        run: npm ci --ignore-scripts
+      - name: typecheck
+        run: npx tsc --noEmit
+      - name: lint
+        run: npm run lint
+      - name: build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+
+  mobile:
+    name: mobile (typecheck / lint / test)
+    needs: paths
+    if: needs.paths.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: mobile/package.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: mobile/.nvmrc
+          cache: pnpm
+          cache-dependency-path: mobile/pnpm-lock.yaml
+      - name: pnpm install (frozen lockfile, no install scripts)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: typecheck
+        run: pnpm run typecheck
+      - name: lint
+        run: pnpm run lint
+      - name: test
+        run: pnpm test
+
+  marketing:
+    name: marketing (typecheck / lint / build)
+    needs: paths
+    if: needs.paths.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: marketing
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: marketing/package-lock.json
+      - name: npm ci (frozen lockfile)
+        run: npm ci --ignore-scripts
+      - name: typecheck
+        run: npx tsc --noEmit
+      - name: lint
+        run: npm run lint
+      - name: build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'

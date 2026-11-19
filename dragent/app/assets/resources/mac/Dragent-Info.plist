@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>dragent</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.dragent.app</string>
+  <key>CFBundleName</key>
+  <string>Dragent</string>
+  <key>CFBundleDisplayName</key>
+  <string>Dragent</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>__VERSION__</string>
+  <key>CFBundleVersion</key>
+  <string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.developer-tools</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>© Dragent Contributors</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.dragent.app</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>dragent</string>
+      </array>
+    </dict>
+  </array>
+  <!-- Voice input (push-to-talk). Missing usage keys make macOS KILL the app
+       on first mic access — these are not optional for the bundled build. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Dragent uses the microphone for voice input — speak instead of typing your prompt — and for websites in its browser that you allow.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Dragent uses the camera only for websites in its browser that you allow, such as video calls.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Dragent converts your speech to text on-device to fill the input bar.</string>
+</dict>
+</plist>

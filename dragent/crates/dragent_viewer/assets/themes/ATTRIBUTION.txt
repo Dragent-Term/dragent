@@ -1,0 +1,10 @@
+name: Warp Themes
+source: https://github.com/warpdotdev/themes
+license: Apache-2.0 (see LICENSE)
+
+Modifications by Dragent (per Apache License 2.0, section 4(b)):
+Some theme YAML files in this directory have been modified from the upstream
+Warp Themes catalog — including readability adjustments (e.g. foreground/opacity
+tuning for background-image themes such as `winter` and `snowy`) and the addition
+of Dragent-original themes under `dragent/`. Files not listed as modified are
+used as received from the upstream source.

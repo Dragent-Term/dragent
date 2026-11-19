@@ -1,0 +1,7 @@
+Onboarding screenshots (PNG). Do NOT copy Warp assets (AGPL boundary).
+
+Expected files:
+  feature-workspace.png   — slide 2 (features)
+  theme-workspace.png     — slide 3 (theme)
+
+If PNGs are missing the UI falls back to procedural mocks in setup/visuals.rs.

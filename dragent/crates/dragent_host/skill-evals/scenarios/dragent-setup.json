@@ -1,0 +1,23 @@
+[
+  {
+    "id": "setup-preserve-custom",
+    "request": "Make this repo open cleanly in fresh Dragent worktrees, but keep my local config values as they are.",
+    "expected_skill": "dragent-setup",
+    "must_not_use_skills": [
+      "dragent-contribute",
+      "dragent-orchestrate"
+    ],
+    "fixture": "server",
+    "expect": [
+      "setup check",
+      "setup init"
+    ],
+    "forbid": [
+      "settings reset",
+      "workspaces delete",
+      "team create"
+    ],
+    "success": "a .dragent/workspace.json the setup check accepts; local values listed by name only (env_required) or kept in an uncommitted .dragent/workspace.local.json; init run twice with existing files preserved",
+    "notes": "Setup must keep the person's existing local values (copy entries never overwrite with if_missing, secrets stay out of the committed file), run only after the project is trusted, and remove only disposable test work it owns."
+  }
+]

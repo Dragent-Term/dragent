@@ -1,0 +1,2 @@
+DROP TABLE canonical_workspace_command_outcomes;
+DROP TABLE canonical_workspace_events;

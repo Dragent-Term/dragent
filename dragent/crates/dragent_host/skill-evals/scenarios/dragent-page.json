@@ -1,0 +1,24 @@
+[
+  {
+    "id": "page-build-preview",
+    "request": "Build a small standalone page showing last week's test results and show me a preview.",
+    "expected_skill": "dragent-page",
+    "must_not_use_skills": ["dragent-integrations", "dragent-orchestrate"],
+    "fixture": "page",
+    "expect": ["browser open", "browser snapshot", "browser console"],
+    "forbid": ["integrations comment", "team create", "msg send"],
+    "success": "the file written; the URL tested with observed behavior and console output; what was verified and any limits",
+    "notes": "Positive case: write a self-contained HTML file, serve it locally, open it with dragent browser open, and inspect snapshot, console and a screenshot. A localhost address is a preview, never a shareable hosted URL."
+  },
+  {
+    "id": "page-update-no-duplicate",
+    "request": "The test-results page needs last week's numbers corrected. Update the same page, don't make a second copy.",
+    "expected_skill": "dragent-page",
+    "must_not_use_skills": ["dragent-integrations", "dragent-orchestrate"],
+    "fixture": "page",
+    "expect": ["browser open", "browser snapshot"],
+    "forbid": ["workspaces create", "automations create", "team create"],
+    "success": "the same file updated in place with the corrected numbers; the re-tested preview; no second page or workspace created",
+    "notes": "Boundary case: update a page without creating a duplicate. The run edits the existing source and reuses the preview setup instead of scaffolding a new page or workspace."
+  }
+]

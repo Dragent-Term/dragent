@@ -1,0 +1,9 @@
+{
+  "model": "fake",
+  "default": "fake",
+  "agents": {
+    "fake": "python3 {fakes}/fake_agent.py --mode good --scenario {scenario}",
+    "fake-wrong": "python3 {fakes}/fake_agent.py --mode wrong --scenario {scenario}",
+    "live": "claude -p {request}"
+  }
+}

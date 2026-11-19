@@ -1,0 +1,46 @@
+[
+  {
+    "id": "orchestrate-parallel-work",
+    "request": "Split the invite work across two agents in parallel: the API with Codex and the page with Claude, then QA it.",
+    "expected_skill": "dragent-orchestrate",
+    "must_not_use_skills": ["dragent-panes", "dragent-integrations"],
+    "fixture": "empty",
+    "expect": ["team create", "tasks add", "tasks start", "tasks wait"],
+    "forbid": ["integrations comment", "msg send user"],
+    "success": "team and task ids with each task's stage; what was integrated per task with verification evidence; QA verdict",
+    "notes": "Positive case: plan with dependencies and areas, start workers, verify each result independently, integrate one task at a time, finish with QA. Nothing reaches the person's checkout except via tasks integrate."
+  },
+  {
+    "id": "orchestrate-takeover-no-create",
+    "request": "The lead agent for the invites team stopped. Take over and tell me where things stand.",
+    "expected_skill": "dragent-orchestrate",
+    "must_not_use_skills": ["dragent-panes"],
+    "fixture": "team-context",
+    "expect": ["team show", "msg inbox"],
+    "forbid": ["team create", "tasks start", "tasks add"],
+    "success": "where each task stands from team show; what is waiting in the inbox; what was found before starting more workers",
+    "notes": "Boundary case: recover a team without starting another lead. A new lead takes over with team show and msg inbox; team create would strand the existing work on a second team."
+  },
+  {
+    "id": "orchestrate-two-agents-same-team",
+    "request": "The API worker and the page worker disagree on the invite payload shape. Sort it out between them.",
+    "expected_skill": "dragent-orchestrate",
+    "must_not_use_skills": ["dragent-panes"],
+    "fixture": "team-context",
+    "expect": ["tasks wait", "msg send"],
+    "forbid": ["team create", "team stop"],
+    "success": "the payload shape settled between the workers; which worker messages were exchanged; lead verification of the outcome",
+    "notes": "Failure-recovery case: two agents acting on the same team. Shared details are settled worker-to-worker through the mailbox (msg send to the task id), not by creating another team."
+  },
+  {
+    "id": "integrate-conflict-recovery",
+    "request": "Integrate the invite API task; if it doesn't apply cleanly, get it fixed without losing anything.",
+    "expected_skill": "dragent-orchestrate",
+    "must_not_use_skills": ["dragent-panes"],
+    "fixture": "team-context",
+    "expect": ["tasks integrate", "tasks diff", "tasks reopen"],
+    "forbid": ["team stop", "workspaces delete"],
+    "success": "which tasks integrated and their files; the conflict named with the files involved; the reopen feedback for the fix",
+    "notes": "Failure-recovery case: an integration conflict. A task that does not apply cleanly stops with nothing of that task changed; the lead reopens it to be brought up to date instead of forcing it in."
+  }
+]

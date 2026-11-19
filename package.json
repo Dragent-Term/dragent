@@ -1,0 +1,12 @@
+{
+  "name": "dragent-repo",
+  "private": true,
+  "description": "Repository tooling only: git hooks for contributors. Each app has its own package.",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "9.1.7"
+  }
+}

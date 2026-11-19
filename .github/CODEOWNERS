@@ -1,0 +1,26 @@
+# Every change needs a maintainer's review (branch protection: "Require
+# review from Code Owners"). Security-sensitive paths are listed on their
+# own so they keep an owner if the catch-all is later split by area.
+
+*                                   @Jahsminemma
+
+# Authentication, sessions, the relay, encryption, payments.
+/server/internal/identity/          @Jahsminemma
+/server/internal/relay/             @Jahsminemma
+/server/internal/companionpairing/  @Jahsminemma
+/server/internal/companionsession/  @Jahsminemma
+/server/internal/integrations/      @Jahsminemma
+/server/internal/billing/           @Jahsminemma
+/server/migrations/                 @Jahsminemma
+/dragent/crates/dragent_e2ee/       @Jahsminemma
+/dragent/app/src/realtime/          @Jahsminemma
+/mobile/modules/dragent-e2ee/       @Jahsminemma
+/auth-portal/src/app/api/           @Jahsminemma
+
+# What runs in CI and what ships: workflows, dependencies, licenses.
+/.github/                           @Jahsminemma
+/dragent/deny.toml                  @Jahsminemma
+/LICENSE                            @Jahsminemma
+/LICENSING.md                       @Jahsminemma
+/dragent/NOTICE                     @Jahsminemma
+/dragent/THIRD_PARTY_NOTICES.md     @Jahsminemma

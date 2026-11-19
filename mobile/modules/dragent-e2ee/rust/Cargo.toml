@@ -1,0 +1,54 @@
+# The phone binding of dragent_e2ee (docs/design/e2ee.md §3.2, §13 E4).
+#
+# One Rust implementation: this crate adds no cryptography. It exposes the
+# dragent_e2ee crate to Swift (iOS app module and the Notification Service
+# Extension) and Kotlin (Android app module and the messaging service)
+# through uniffi; the Expo module in ../ios and ../android hands it to JS over
+# JSI. Built by mobile/scripts/build-e2ee-rust.sh.
+#
+# Cargo.lock started as a copy of dragent/Cargo.lock so every shared
+# dependency resolves to the desktop's exact version; the build script
+# asserts the §3.2 pins against it on every build.
+[package]
+name = "dragent_e2ee_ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-Proprietary"
+
+[lib]
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+# Test builds only: compiles the crate's Noise and codec vector runners into
+# the library so the simulator tests can run them (§12.1). Release builds of
+# the app never enable it (the build script refuses it for release).
+vectors = ["dragent_e2ee/vectors"]
+# Host-only: the uniffi-bindgen binary used to generate the Swift/Kotlin code.
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+dragent_e2ee = { path = "../../../../dragent/crates/dragent_e2ee" }
+uniffi = { version = "=0.32.2", default-features = false }
+zeroize = { version = "=1.8.2" }
+sha2 = "=0.10.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = false
+strip = "debuginfo"
+# Unwind (the default) so a Rust panic becomes a thrown error in Swift/Kotlin:
+# the NSE then shows the placeholder instead of dying silently.
+panic = "unwind"
+
+# Its own workspace root (mobile/ is not part of the dragent workspace).
+[workspace]

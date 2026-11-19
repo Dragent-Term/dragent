@@ -1,0 +1,4 @@
+name: Warp Workflows (commands.dev)
+source: https://github.com/warpdotdev/Workflows
+license: Apache-2.0 (see LICENSE)
+bundled: terminal command specs surfaced in the workflow palette

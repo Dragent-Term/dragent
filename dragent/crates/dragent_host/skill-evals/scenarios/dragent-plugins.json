@@ -1,0 +1,13 @@
+[
+  {
+    "id": "plugins-diagnose-server",
+    "request": "My MCP server shows as connected but its tools never answer. Figure out which side is broken, don't reinstall anything yet.",
+    "expected_skill": "dragent-plugins",
+    "must_not_use_skills": ["dragent-feedback"],
+    "fixture": "empty",
+    "expect": ["capabilities", "integrations list"],
+    "forbid": ["settings reset", "workspaces delete", "integrations comment", "integrations create", "integrations status"],
+    "success": "the server and configured direction; discovered tools and the exact operation verified; which side the fault is on with evidence",
+    "notes": "Positive case: inspect the existing entry, validate transport and auth from real discovery, preserve unrelated servers. Reading the service list is discovery; acting on service items would be dragent-integrations and filing anything would be dragent-feedback. There is no plugins install command in this build and a skill is not an installed tool provider."
+  }
+]

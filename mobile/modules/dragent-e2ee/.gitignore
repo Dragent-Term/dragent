@@ -1,0 +1,5 @@
+# Build outputs of scripts/build-e2ee-rust.sh and the simulator tests.
+/build/
+/ios/Frameworks/
+/android/src/main/jniLibs/
+/rust/target/

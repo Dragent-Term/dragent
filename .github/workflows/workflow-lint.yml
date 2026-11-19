@@ -1,0 +1,47 @@
+name: workflow-lint
+
+# The workflows are code that holds secrets and write tokens: lint them for
+# mistakes (actionlint) and for injection and permission problems (zizmor),
+# and lint the server's Dockerfile (hadolint).
+
+on:
+  pull_request:
+    paths:
+      - '.github/**'
+      - 'server/Dockerfile'
+  push:
+    branches: [main]
+    paths:
+      - '.github/**'
+      - 'server/Dockerfile'
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.12 -color
+
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: zizmor (workflow security)
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/zizmorcore/zizmor:1.32.0 --offline --min-severity medium /repo/.github/workflows
+
+  hadolint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: hadolint (server Dockerfile)
+        run: docker run --rm -i hadolint/hadolint:v2.12.0 hadolint --failure-threshold warning - < server/Dockerfile

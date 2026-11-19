@@ -1,0 +1,12 @@
+[package]
+name = "runtime_metrics"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+license = "AGPL-3.0-only"
+publish.workspace = true
+
+[dependencies]
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

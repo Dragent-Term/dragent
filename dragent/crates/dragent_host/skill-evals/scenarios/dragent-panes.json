@@ -1,0 +1,24 @@
+[
+  {
+    "id": "panes-arrange-no-team",
+    "request": "Put my test run below this terminal and open the app beside it so I can watch both.",
+    "expected_skill": "dragent-panes",
+    "must_not_use_skills": ["dragent-orchestrate", "dragent-browser"],
+    "fixture": "server",
+    "expect": ["panes list", "panes open"],
+    "forbid": ["team create", "tasks add", "msg send"],
+    "success": "pane ids and labels of what was opened; where each pane is; keyboard stayed where the person had it",
+    "notes": "Boundary case: arranging panes without starting a team. Laying out visible panes is dragent-panes; starting agents to do work would be dragent-orchestrate and must not happen here."
+  },
+  {
+    "id": "panes-timeout-requests-show",
+    "request": "Open a browser pane for the staging site next to my terminal; the last open timed out.",
+    "expected_skill": "dragent-panes",
+    "must_not_use_skills": ["dragent-orchestrate"],
+    "fixture": "empty",
+    "expect": ["panes open", "requests show", "panes list"],
+    "forbid": ["panes close"],
+    "success": "request_id and its state from requests show; the pane id found via panes list; no duplicate pane opened",
+    "notes": "Failure-recovery case: a timed-out open must be checked with requests show (and panes list for the --label) before retrying, so the retry does not open a duplicate. Uses --label and --idempotency-key."
+  }
+]

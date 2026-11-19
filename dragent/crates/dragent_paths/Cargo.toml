@@ -1,0 +1,10 @@
+[package]
+name = "dragent_paths"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+dirs = { workspace = true }
+sha2 = { workspace = true }

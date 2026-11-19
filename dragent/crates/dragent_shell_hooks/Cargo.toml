@@ -1,0 +1,9 @@
+[package]
+name = "dragent_shell_hooks"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Shell integration bootstrap for Dragent: precmd/preexec hooks that report command lifecycle over a private OSC channel"
+
+[dependencies]
+anyhow = { workspace = true }

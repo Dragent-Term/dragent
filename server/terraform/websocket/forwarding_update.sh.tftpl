@@ -1,0 +1,39 @@
+#!/bin/bash
+# Converge a live host to the Terraform-declared config without replacing the
+# instance (user_data is ignored after first boot). Installs the shared
+# blue/green deploy script + Caddy template from the same module sources that
+# user_data bootstraps from (see the deploy_script / caddyfile_template
+# template parameters), then lands the forwarding env value and runs one
+# blue/green pass.
+set -euo pipefail
+
+umask 077
+mkdir -p /etc/dragent /etc/caddy
+
+cat > /usr/local/bin/dragent-deploy.sh <<'DEPLOY'
+${deploy_script}
+DEPLOY
+chmod +x /usr/local/bin/dragent-deploy.sh
+cat > /etc/caddy/Caddyfile.template <<'CADDY_TEMPLATE'
+${caddyfile_template}
+CADDY_TEMPLATE
+
+# The deploy script rebuilds server.env from Terraform's plain_env (which
+# carries this same DRAGENT_FORWARD_DOMAIN value) plus SSM, so landing the
+# value here first can never be dropped by the rebuild below — the rebuild
+# converges to the identical line and takes the CONFIG_CHANGED path only when
+# something actually differs.
+if grep -q '^DRAGENT_FORWARD_DOMAIN=' /etc/dragent/server.env; then
+  sed -i 's/^DRAGENT_FORWARD_DOMAIN=.*/DRAGENT_FORWARD_DOMAIN=${forward_domain}/' /etc/dragent/server.env
+else
+  printf '%s\n' 'DRAGENT_FORWARD_DOMAIN=${forward_domain}' >> /etc/dragent/server.env
+fi
+
+# Re-render the live Caddyfile against the currently-active port (legacy hosts
+# without an active-port marker serve 8080, matching the pre-blue/green setup)
+# without switching upstreams; the deploy run below switches when it deploys.
+ACTIVE="$(cat /etc/dragent/active-port 2>/dev/null || echo ${container_port})"
+sed "s/__UPSTREAM_PORT__/$ACTIVE/g" /etc/caddy/Caddyfile.template > /etc/caddy/Caddyfile
+docker exec caddy caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile
+docker exec caddy caddy reload --adapter caddyfile --config /etc/caddy/Caddyfile
+/usr/local/bin/dragent-deploy.sh

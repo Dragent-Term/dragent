@@ -1,0 +1,27 @@
+accent: "#e0b978"
+background: "#0a0a14"
+details: darker
+foreground: "#ece3d4"
+background_image:
+  # background image credit: Photo by Vino Li on Unsplash (F2N1KH3j59g)
+  path: dragent/cosmos_bg.jpg
+  opacity: 42
+terminal_colors:
+  normal:
+    black: "#241f2a"
+    red: "#e57373"
+    green: "#a3c073"
+    yellow: "#e0b978"
+    blue: "#7b9fd4"
+    magenta: "#b98cd4"
+    cyan: "#6fbcb0"
+    white: "#d8cfc0"
+  bright:
+    black: "#5f5665"
+    red: "#ff8a85"
+    green: "#bcda90"
+    yellow: "#f2d29a"
+    blue: "#97b7e8"
+    magenta: "#d0a6ea"
+    cyan: "#88d3c6"
+    white: "#ece3d4"

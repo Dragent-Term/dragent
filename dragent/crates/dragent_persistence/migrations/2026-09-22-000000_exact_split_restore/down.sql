@@ -1,0 +1,2 @@
+-- SQLite installations supported by older Dragent builds cannot reliably drop
+-- columns. Keeping additive persistence columns is safe on rollback.
