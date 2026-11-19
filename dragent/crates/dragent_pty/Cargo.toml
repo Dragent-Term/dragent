@@ -19,7 +19,7 @@ parking_lot = { workspace = true }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 libc = "0.2"
 mio = { version = "1.1", features = ["os-poll", "os-ext"] }
-portable-pty = "0.8"
+portable-pty = "0.9"
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
