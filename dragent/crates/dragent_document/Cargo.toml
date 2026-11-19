@@ -1,0 +1,11 @@
+[package]
+name = "dragent_document"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Document buffers, capability policy, and review diffs for Dragent"
+publish = false
+
+[dependencies]
+dragent_workspace_model.workspace = true
+similar.workspace = true

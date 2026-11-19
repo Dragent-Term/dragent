@@ -1,0 +1,170 @@
+#!/bin/bash
+# Bootstrap: Docker + Caddy + the server container. Idempotent enough to re-run.
+# NOTE: shell tracing (-x) is intentionally OFF — the secret-fetch loop below
+# would otherwise print credential values into the cloud-init log.
+set -euo pipefail
+exec > >(tee /var/log/dragent-bootstrap.log) 2>&1
+
+# ── Packages ──────────────────────────────────────────────────────────────────
+dnf update -y
+# AL2023 ships curl-minimal by default; installing the full curl package here
+# conflicts with it and aborts bootstrap before Docker is installed.
+dnf install -y docker
+command -v aws >/dev/null 2>&1 || dnf install -y awscli-2 || dnf install -y awscli
+systemctl enable --now docker
+
+# ── CloudWatch Logs agent ──────────────────────────────────────────────────────
+# Ship bootstrap output and Docker JSON logs (server + Caddy) to the
+# environment-scoped log group created by Terraform. The instance role grants
+# only stream discovery and event publishing for that group.
+case "$(uname -m)" in
+  aarch64) CW_ARCH="arm64" ;;
+  x86_64)  CW_ARCH="amd64" ;;
+  *) echo "Unsupported architecture for CloudWatch agent: $(uname -m)" >&2; exit 1 ;;
+esac
+CW_RPM="/tmp/amazon-cloudwatch-agent.rpm"
+curl -fsSL -o "$CW_RPM" \
+  "https://amazoncloudwatch-agent-${region}.s3.${region}.amazonaws.com/amazon_linux/$${CW_ARCH}/latest/amazon-cloudwatch-agent.rpm"
+rpm -Uvh --replacepkgs "$CW_RPM"
+rm -f "$CW_RPM"
+mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+cat > /opt/aws/amazon-cloudwatch-agent/etc/dragent-config.json <<'CWCONFIG'
+{
+  "agent": {
+    "run_as_user": "root",
+    "metrics_collection_interval": 60
+  },
+  "logs": {
+    "force_flush_interval": 5,
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/dragent-bootstrap.log",
+            "log_group_name": "${cloudwatch_log_group}",
+            "log_stream_name": "$${instance_id}/bootstrap",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/var/lib/docker/containers/*/*-json.log",
+            "log_group_name": "${cloudwatch_log_group}",
+            "log_stream_name": "$${instance_id}/docker",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  }
+}
+CWCONFIG
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/dragent-config.json -s
+
+# ── ECR credential helper: Docker pulls from ECR using the instance role, with
+# no manual `docker login` and no token to expire. Used by both the initial pull
+# and the redeploy poller.
+if ! dnf install -y amazon-ecr-credential-helper; then
+  case "$(uname -m)" in aarch64) A=arm64;; *) A=amd64;; esac
+  curl -fsSL -o /usr/bin/docker-credential-ecr-login \
+    "https://amazon-ecr-credential-helper-releases.s3.amazonaws.com/0.9.0/linux-$A/docker-credential-ecr-login"
+  chmod +x /usr/bin/docker-credential-ecr-login
+fi
+mkdir -p /root/.docker
+echo '{ "credsStore": "ecr-login" }' > /root/.docker/config.json
+
+# ── Container env: plain settings + this env's secrets from SSM Parameter Store ─
+# Each secret is a SecureString under ${secret_prefix}/<KEY>; --with-decryption
+# returns the plaintext (the instance role grants ssm:GetParameter + a
+# ViaService-scoped kms:Decrypt). Shell tracing stays OFF so values never hit the
+# cloud-init log.
+umask 077
+mkdir -p /etc/dragent
+cat > /etc/dragent/server.env <<'PLAINENV'
+${plain_env}
+PLAINENV
+# A missing parameter must NOT brick the host. Under `set -e` an unguarded
+# get-parameter failure aborts bootstrap before Docker/Caddy/the container are
+# configured, so the box boots healthy (status checks pass, SSH up) while
+# nothing listens on 80/443 — an outage that looks like a networking fault. Only
+# the keys the server genuinely cannot start without are fatal; a missing
+# optional key (an API key for one feature) logs loudly and the service still
+# comes up with that feature disabled.
+REQUIRED_KEYS="DATABASE_URL JWT_SECRET"
+missing=""
+for KEY in ${secret_keys}; do
+  if VAL="$(aws ssm get-parameter --region "${region}" --with-decryption \
+        --name "${secret_prefix}/$KEY" --query Parameter.Value --output text 2>/dev/null)"; then
+    # One line per value: a multi-line value (the APNs .p8 key) keeps its
+    # line breaks as \n, which the server reads back.
+    VAL="$(printf '%s' "$VAL" | sed ':a;N;$!ba;s/\n/\\n/g')"
+    printf '%s=%s\n' "$KEY" "$VAL" >> /etc/dragent/server.env
+  else
+    missing="$missing $KEY"
+    echo "[bootstrap] WARNING: ${secret_prefix}/$KEY not found in ${region} — skipping"
+  fi
+  unset VAL
+done
+chmod 600 /etc/dragent/server.env
+
+if [ -n "$missing" ]; then
+  echo "[bootstrap] WARNING: missing parameters:$missing"
+  for KEY in $REQUIRED_KEYS; do
+    case " $missing " in
+      *" $KEY "*)
+        echo "[bootstrap] FATAL: $KEY is required and missing — cannot start."
+        exit 1
+        ;;
+    esac
+  done
+  echo "[bootstrap] continuing without the optional keys above."
+fi
+
+# ── Deploy script: the shared blue/green source (deploy.sh.tftpl), also
+# delivered to live hosts by the websocket SSM associations so new and existing
+# hosts can never drift. Rendered in modules/ec2-service/main.tf. ────────────
+cat > /usr/local/bin/dragent-deploy.sh <<'DEPLOY'
+${deploy_script}
+DEPLOY
+chmod +x /usr/local/bin/dragent-deploy.sh
+# ── Caddy: auto-TLS reverse proxy (shared template source: Caddyfile.tftpl).
+# WebSocket upgrades pass through natively, so /realtime works. TLS issues once
+# DNS points ${domain} at this instance's EIP.
+mkdir -p /etc/caddy
+cat > /etc/caddy/Caddyfile.template <<'CADDY_TEMPLATE'
+${caddyfile_template}
+CADDY_TEMPLATE
+sed 's/__UPSTREAM_PORT__/${container_port}/g' /etc/caddy/Caddyfile.template > /etc/caddy/Caddyfile
+docker rm -f caddy 2>/dev/null || true
+docker run -d --name caddy --restart always --network host \
+  -v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
+  -v caddy_data:/data -v caddy_config:/config \
+  caddy:2
+
+# First run happens during bootstrap, when the DB/SSM may not be reachable yet.
+# Never fail bootstrap here — the poller retries every 60 s once the timer is armed.
+# (Caddy is already up serving 502s until the first container passes /ready.)
+/usr/local/bin/dragent-deploy.sh || echo "[bootstrap] initial deploy deferred; poller will retry."
+
+# ── Redeploy poller: check ECR every 60s (parity with App Runner auto-deploy) ──
+cat > /etc/systemd/system/dragent-deploy.service <<'UNIT'
+[Unit]
+Description=Redeploy the server if a new image was pushed
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dragent-deploy.sh
+UNIT
+cat > /etc/systemd/system/dragent-deploy.timer <<'UNIT'
+[Unit]
+Description=Poll ECR for a new server image
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=60
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now dragent-deploy.timer
+
+echo "[bootstrap] complete — server + caddy running; deploy poller armed."

@@ -1,0 +1,13 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:21.000
+A read-only code review request is typed into Codex inside Dragent. The workspace sidebar stays visible; a branded panel conceals the file explorer.
+
+2
+00:00:21.000 --> 00:00:34.000
+Codex reads ProductTour.tsx and checks accessibility guidance. Its working status updates live.
+
+3
+00:00:34.000 --> 00:00:43.000
+Codex streams its explanation and three accessibility recommendations. No project files were changed by this session.

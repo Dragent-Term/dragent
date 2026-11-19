@@ -1,0 +1,41 @@
+[package]
+name = "dragent_pty"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Cross-platform PTY manager for Dragent "
+
+# Wasm-safe deps (all targets). The web viewer links this crate for its type
+# signatures only (it renders remote output into a headless emulator and never
+# spawns a PTY), so anything here MUST compile to wasm32.
+[dependencies]
+anyhow = { workspace = true }
+async-channel = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+
+# Native-only leaf deps: the real PTY implementation. Gated out on wasm, where
+# `wasm_stub` provides the public API as unreachable no-ops.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+libc = "0.2"
+mio = { version = "1.1", features = ["os-poll", "os-ext"] }
+portable-pty = "0.8"
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+dragent_shell_hooks = { path = "../dragent_shell_hooks" }
+
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"
+signal-hook-mio = { version = "0.2", features = ["support-v1_0"] }
+
+[target.'cfg(windows)'.dependencies]
+polling = "3.7"
+piper = "0.2"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Environment",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
+windows-registry = { workspace = true }

@@ -1,0 +1,23 @@
+{
+  "command_id": "10000000-0000-4000-8000-000000000034",
+  "schema_version": 1,
+  "project_id": "20000000-0000-4000-8000-000000000001",
+  "work_item_id": "30000000-0000-4000-8000-000000000001",
+  "actor_id": "40000000-0000-4000-8000-000000000003",
+  "correlation_id": "50000000-0000-4000-8000-000000000001",
+  "timestamp_unix_ms": 1700000000034,
+  "expected_revision": 33,
+  "payload": {
+    "type": "record_evidence",
+    "evidence": {
+      "id": "e0000000-0000-4000-8000-000000000034",
+      "work_item_id": "30000000-0000-4000-8000-000000000001",
+      "task_id": "70000000-0000-4000-8000-000000000003",
+      "kind": "test",
+      "summary": "The focused authentication tests passed.",
+      "source": "cargo test -p auth",
+      "produced_by": "40000000-0000-4000-8000-000000000003",
+      "created_at_unix_ms": 1700000000034
+    }
+  }
+}

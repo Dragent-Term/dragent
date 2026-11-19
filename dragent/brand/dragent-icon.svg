@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="sq" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16202e"/><stop offset="1" stop-color="#0a0e15"/>
+    </linearGradient>
+    <radialGradient id="aur1" cx="0.30" cy="0.24" r="0.55">
+      <stop offset="0" stop-color="#19aad8" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#19aad8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aur2" cx="0.80" cy="0.82" r="0.55">
+      <stop offset="0" stop-color="#6b5bd6" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#6b5bd6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="fUp" x1="0" y1="0" x2="1" y2="0.9">
+      <stop offset="0" stop-color="#9df5ff"/>
+      <stop offset="0.55" stop-color="#4fd4f6"/>
+      <stop offset="1" stop-color="#22b4e4"/>
+    </linearGradient>
+    <linearGradient id="fLo" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#1587c0"/>
+      <stop offset="0.6" stop-color="#0d5da4"/>
+      <stop offset="1" stop-color="#3a3f9e"/>
+    </linearGradient>
+    <linearGradient id="fTail" x1="1" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#0e6f9e"/>
+      <stop offset="1" stop-color="#2fd4c8"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#sq)"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#aur1)"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#aur2)"/>
+  <polygon points="814,512 389,812 389,670 606,512" fill="url(#fLo)"/>
+  <polygon points="389,812 389,670 212,545 231,706" fill="url(#fTail)"/>
+  <polygon points="389,212 814,512 606,512 389,354" fill="url(#fUp)"/>
+  <polygon points="389,212 814,512 795,512 389,229" fill="#d6f9ff" opacity="0.92"/>
+  <polygon points="389,670 212,545 218,556 389,681" fill="#8feee2" opacity="0.55"/>
+</svg>

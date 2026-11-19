@@ -1,0 +1,38 @@
+version: 2
+
+updates:
+  # Go backend
+  - package-ecosystem: gomod
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, go]
+
+  # Rust workspaces (Tauri app + crates)
+  - package-ecosystem: cargo
+    directory: /dragent
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, rust]
+
+  # Web frontend
+  - package-ecosystem: npm
+    directory: /auth-portal
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, javascript]
+
+  # Pinned CI actions in this repo
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies, ci]

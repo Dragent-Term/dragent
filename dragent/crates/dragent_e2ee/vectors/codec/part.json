@@ -1,0 +1,63 @@
+{
+  "vectors": [
+    {
+      "name": "begin_seed",
+      "content_utf8": "part-begin {\"part_id\":\"seed-7\",\"purpose\":\"seed\",\"stream_handle\":3,\"total_bytes\":100,\"part_count\":2,\"sha256\":\"336cca097cbfc97eac60e6571b88101707b094c53cb2e40eadc5d05d6d0789f8\"}",
+      "expect": {
+        "part_id": "seed-7",
+        "purpose": "seed",
+        "request_id": null,
+        "stream_handle": 3,
+        "total_bytes": 100,
+        "part_count": 2,
+        "sha256_hex": "336cca097cbfc97eac60e6571b88101707b094c53cb2e40eadc5d05d6d0789f8"
+      }
+    },
+    {
+      "name": "chunk_0",
+      "json_utf8": "{\"part_id\":\"seed-7\",\"index\":0,\"bytes\":\"CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJ\"}",
+      "expect": {
+        "part_id": "seed-7",
+        "index": 0,
+        "bytes_hex": "090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
+      }
+    },
+    {
+      "name": "chunk_1",
+      "json_utf8": "{\"part_id\":\"seed-7\",\"index\":1,\"bytes\":\"CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ\"}",
+      "expect": {
+        "part_id": "seed-7",
+        "index": 1,
+        "bytes_hex": "09090909090909090909090909090909090909090909090909090909090909090909090909090909"
+      }
+    },
+    {
+      "name": "end",
+      "content_utf8": "part-end {\"part_id\":\"seed-7\"}",
+      "expect": {
+        "part_id": "seed-7"
+      }
+    },
+    {
+      "name": "err_wrong_command",
+      "content_utf8": "part-end {\"part_id\":\"x\"}",
+      "begin": false,
+      "expect_error": "NotJson or WrongCommand"
+    },
+    {
+      "name": "err_reply_over_cap",
+      "content_utf8": "part-begin {\"part_id\":\"r\",\"purpose\":\"reply\",\"total_bytes\":2097152,\"part_count\":4,\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"}",
+      "expect_error": "BadTotal"
+    },
+    {
+      "name": "err_bad_purpose",
+      "content_utf8": "part-begin {\"part_id\":\"p\",\"purpose\":\"bulk\",\"total_bytes\":10,\"part_count\":2,\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"}",
+      "expect_error": "BadPurpose"
+    },
+    {
+      "name": "err_bad_hash",
+      "content_utf8": "part-begin {\"part_id\":\"p\",\"purpose\":\"reply\",\"total_bytes\":10,\"part_count\":2,\"sha256\":\"ZZ\"}",
+      "expect_error": "BadHash"
+    }
+  ]
+}

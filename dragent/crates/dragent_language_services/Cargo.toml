@@ -1,0 +1,20 @@
+[package]
+name = "dragent_language_services"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Bounded native language-server lifecycle and LSP transport for Dragent"
+publish = false
+
+[dependencies]
+dragent_paths = { workspace = true }
+async-channel = { workspace = true }
+dragent_editor = { workspace = true }
+dirs = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+ureq = { workspace = true }
+url = { workspace = true }

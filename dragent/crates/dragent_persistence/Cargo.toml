@@ -1,0 +1,43 @@
+[package]
+name = "dragent_persistence"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+publish = false
+
+# Wasm-safe deps (all targets). The web viewer links this crate for its data
+# types + no-op writer only; the diesel/SQLite backend is native-only below.
+[dependencies]
+anyhow = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+uuid = { version = "1", features = ["v4", "serde"] }
+dragent_workspace_model = { path = "../dragent_workspace_model" }
+dragent_session_protocol = { path = "../dragent_session_protocol" }
+dragent_paths = { workspace = true }
+
+# uuid v4 needs an explicit randomness source on wasm.
+[target.'cfg(target_family = "wasm")'.dependencies]
+uuid = { version = "1", features = ["js"] }
+
+# Native-only: SQLite (diesel) storage backend + platform data dir. Gated out on
+# wasm, where `wasm_stub` returns empty results and a no-op writer.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+diesel = { workspace = true, features = [
+    "sqlite",
+    "returning_clauses_for_sqlite_3_35",
+    "chrono",
+    "32-column-tables",
+] }
+diesel_migrations = "2.2.0"
+dirs = { workspace = true }
+
+# Built in, not linked from the system: Windows ships no sqlite3.lib, so this
+# crate (and anything built with it alone, like its tests) failed to link.
+[target.'cfg(windows)'.dependencies]
+libsqlite3-sys = { version = "0.28", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

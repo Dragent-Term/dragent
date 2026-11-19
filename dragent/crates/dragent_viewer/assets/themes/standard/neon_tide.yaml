@@ -1,0 +1,26 @@
+# Neon Tide — original Dragent theme.
+# Cyber-wave spirit without copying it: near-black indigo water, accented in
+# Dragent's own blue (the dragent.dev mark). All values designed in-house.
+accent: "#19aad8"
+background: "#101018"
+details: darker
+foreground: "#e6e6f2"
+terminal_colors:
+  bright:
+    black: "#4a4a5e"
+    blue: "#7db9ff"
+    cyan: "#6fe3f2"
+    green: "#6ff2b8"
+    magenta: "#d88cff"
+    red: "#ff7d8a"
+    white: "#f2f2fa"
+    yellow: "#ffdf6b"
+  normal:
+    black: "#101018"
+    blue: "#5aa9ff"
+    cyan: "#4fd8e8"
+    green: "#4fe3a5"
+    magenta: "#c86bff"
+    red: "#ff5f6b"
+    white: "#c6c6d8"
+    yellow: "#ffd166"

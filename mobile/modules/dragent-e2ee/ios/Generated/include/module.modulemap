@@ -1,0 +1,4 @@
+module dragent_e2ee_ffiFFI {
+    header "dragent_e2ee_ffiFFI.h"
+    export *
+}

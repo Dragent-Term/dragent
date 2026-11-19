@@ -1,0 +1,24 @@
+[
+  {
+    "id": "browser-embedded-not-computer",
+    "request": "Check that the login form on my local dev server shows an error for a bad password.",
+    "expected_skill": "dragent-browser",
+    "must_not_use_skills": ["dragent-computer"],
+    "fixture": "server",
+    "expect": ["browser open", "browser snapshot", "browser console"],
+    "forbid": ["computer snapshot", "computer click", "computer type"],
+    "success": "the URL tested; the observed behavior of the login form; console output around the failure",
+    "notes": "Boundary case: test a page in Dragent's embedded browser pane rather than using desktop control. The target is a web page in Dragent's browser, not an external browser window or native app."
+  },
+  {
+    "id": "browser-stale-ref",
+    "request": "Click the Sign in button on the staging page (the page just re-rendered).",
+    "expected_skill": "dragent-browser",
+    "must_not_use_skills": ["dragent-computer"],
+    "fixture": "server",
+    "expect": ["browser snapshot", "browser click"],
+    "forbid": ["computer click"],
+    "success": "a fresh snapshot taken after the re-render; the click using a reference from that snapshot; what the click did",
+    "notes": "Failure-recovery case: a stale element reference. References expire when the page re-renders, so the run must take a fresh snapshot and use a reference from it instead of guessing or retrying the old one."
+  }
+]

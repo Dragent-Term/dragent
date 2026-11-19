@@ -1,0 +1,71 @@
+name: Stale PRs
+
+# Stale-PR automation: 7-day nudge, ~10-day final warning, auto-close ~14 days
+# of inactivity. Any contributor push or comment resets the clock; the
+# `no-autoclose` label exempts a PR. See `.github/TRIAGE.md`.
+#
+# Two jobs: `stale` (pinned actions/stale: nudge at day 7, close at day ~14)
+# and `final-warning` (pinned actions/github-script: warning at day ~10,
+# which actions/stale cannot schedule on its own).
+
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9
+        with:
+          only-prs: true
+          days-before-stale: 7
+          days-before-close: 7
+          stale-pr-label: stale
+          exempt-pr-labels: no-autoclose
+          operations-per-run: 100
+          ascending: true
+          stale-pr-message: >-
+            This PR has had no activity for 7 days. Please push an update or
+            comment within the next few days, or it will be automatically
+            closed at ~14 days of inactivity. A final warning follows at
+            ~10 days.
+          close-pr-message: >-
+            Closing due to ~14 days of inactivity. Reopen (or open a new PR
+            referencing this one) whenever you are ready to continue.
+
+  final-warning:
+    needs: stale
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const marker = '<!-- stale-final-warning -->';
+            const tenDaysAgo = Date.now() - 10 * 24 * 60 * 60 * 1000;
+            const { data: prs } = await github.rest.pulls.list({
+              ...context.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            for (const pr of prs) {
+              const labels = pr.labels.map((l) => l.name);
+              if (!labels.includes('stale')) continue;
+              if (labels.includes('no-autoclose')) continue;
+              if (new Date(pr.updated_at).getTime() > tenDaysAgo) continue;
+              const { data: comments } = await github.rest.issues.listComments({
+                ...context.repo,
+                issue_number: pr.number,
+                per_page: 100,
+              });
+              if (comments.some((c) => c.body && c.body.includes(marker))) continue;
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: pr.number,
+                body: 'Final warning: this PR has been inactive for ~10 days and will be automatically closed at ~14 days. Push or comment to keep it open.\n' + marker,
+              });
+            }

@@ -1,0 +1,58 @@
+{
+  "vectors": [
+    {
+      "name": "full",
+      "bytes_hex": "000000070000000000000064000000000000005a00000000000000c80d00000000001800501b5b316d6869",
+      "expect": {
+        "handle": 7,
+        "seq": 100,
+        "base": 90,
+        "total": 200,
+        "alive": true,
+        "reset": false,
+        "exit_code": 0,
+        "size": [
+          24,
+          80
+        ],
+        "data_hex": "1b5b316d6869"
+      }
+    },
+    {
+      "name": "minimal_reset",
+      "bytes_hex": "0000000100000000000000000000000000000000000000000000000002",
+      "expect": {
+        "handle": 1,
+        "seq": 0,
+        "base": 0,
+        "total": 0,
+        "alive": false,
+        "reset": true,
+        "exit_code": null,
+        "size": null,
+        "data_hex": ""
+      }
+    },
+    {
+      "name": "err_truncated",
+      "bytes_hex": "00000000000000000000000000000000000000000000000000000000",
+      "expect": {
+        "error": "Truncated"
+      }
+    },
+    {
+      "name": "err_bad_flags",
+      "bytes_hex": "0000000100000000000000000000000000000000000000000000000012",
+      "expect": {
+        "error": "BadFlags"
+      }
+    },
+    {
+      "name": "err_counter_too_large",
+      "bytes_hex": "0000000100200000000000000000000000000000000000000000000001",
+      "expect": {
+        "error": "CounterTooLarge"
+      }
+    }
+  ]
+}

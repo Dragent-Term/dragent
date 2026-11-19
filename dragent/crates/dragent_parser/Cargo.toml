@@ -1,0 +1,12 @@
+[package]
+name = "dragent_parser"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Shell command parser for dragent — lexer, lite-parser, and command classifier"
+
+# Architecture inspired by nushell (MIT license): https://github.com/nushell/nushell
+# This crate contains no code copied from Warp (AGPL) or from nushell crates.
+# All code is original, following the same structural patterns.
+
+[dependencies]

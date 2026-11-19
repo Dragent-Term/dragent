@@ -1,0 +1,27 @@
+accent: "#6b9bc9"
+background: "#0e1319"
+details: darker
+foreground: "#d6dae0"
+background_image:
+  # background image credit: Photo by Dmitry Khotsinskiy on Unsplash (eGAmQATjk54)
+  path: dragent/onyx_bg.jpg
+  opacity: 60
+terminal_colors:
+  normal:
+    black: "#1b2027"
+    red: "#d76b74"
+    green: "#8fb573"
+    yellow: "#d6b06a"
+    blue: "#6b9bc9"
+    magenta: "#a98cc9"
+    cyan: "#6fb0b8"
+    white: "#b4bcc4"
+  bright:
+    black: "#5a636e"
+    red: "#ea7b84"
+    green: "#a8cf88"
+    yellow: "#ecc47e"
+    blue: "#86b4e0"
+    magenta: "#c0a3df"
+    cyan: "#86c9d1"
+    white: "#d6dae0"

@@ -1,0 +1,2 @@
+-- Tab/split-group layout tables were included in the initial migration.
+-- This migration is a no-op placeholder so embed_migrations! compiles.

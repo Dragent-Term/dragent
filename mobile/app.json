@@ -1,0 +1,134 @@
+{
+  "expo": {
+    "name": "Dragent",
+    "slug": "dragent-mobile",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "version": "0.0.1",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "scheme": "dragent",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dragent.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "Dragent only opens your photo library if you choose an image to send to your agent.",
+        "DragentE2EEPrivateKeychainGroup": "$(AppIdentifierPrefix)com.dragent.mobile",
+        "DragentE2EESharedKeychainGroup": "$(AppIdentifierPrefix)dev.dragent.e2ee",
+        "NSSpeechRecognitionUsageDescription": "Dragent turns what you say into text in the message box. Recognition runs on this iPhone when it can.",
+        "NSMicrophoneUsageDescription": "Dragent uses the microphone when you tap the mic, so you can speak a message to your agent instead of typing it."
+      },
+      "entitlements": {
+        "keychain-access-groups": [
+          "$(AppIdentifierPrefix)com.dragent.mobile",
+          "$(AppIdentifierPrefix)dev.dragent.e2ee"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.dragent.mobile",
+      "allowBackup": false,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png",
+        "backgroundColor": "#0e131b"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "googleServicesFile": "./google-services.json"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#07090d",
+          "dark": {
+            "image": "./assets/splash.png",
+            "backgroundColor": "#07090d"
+          }
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Dragent to scan the pairing QR code from your desktop.",
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-dev-client",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#19aad8"
+        }
+      ],
+      "./plugins/e2ee-nse/app.plugin.js",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Dragent uses the microphone when you tap the mic, so you can speak a message to your agent instead of typing it.",
+          "speechRecognitionPermission": "Dragent turns what you say into text in the message box. Recognition runs on this iPhone when it can."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Dragent only opens your photo library if you choose an image to send to your agent."
+        }
+      ],
+      [
+        "expo-widgets",
+        {
+          "groupIdentifier": "group.com.dragent.mobile",
+          "frequentUpdates": true,
+          "enableAndroid": true,
+          "widgets": []
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "targetName": "DragentNotificationService",
+                  "bundleIdentifier": "com.dragent.mobile.NotificationService",
+                  "entitlements": {
+                    "keychain-access-groups": [
+                      "$(AppIdentifierPrefix)dev.dragent.e2ee"
+                    ],
+                    "com.apple.security.application-groups": [
+                      "group.com.dragent.mobile"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "projectId": "b7f48435-39d8-4a4b-8c18-5d2709be72ff"
+      }
+    },
+    "owner": "nimboon"
+  }
+}

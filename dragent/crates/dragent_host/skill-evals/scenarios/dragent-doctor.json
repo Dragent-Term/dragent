@@ -1,0 +1,13 @@
+[
+  {
+    "id": "doctor-unavailable-service",
+    "request": "My Linear searches fail from Dragent but the app looks fine. Diagnose it without breaking anything else.",
+    "expected_skill": "dragent-doctor",
+    "must_not_use_skills": ["dragent-feedback", "dragent-plugins"],
+    "fixture": "service-results",
+    "expect": ["status", "integrations list"],
+    "forbid": ["workspaces delete", "settings reset", "team stop", "automations delete"],
+    "success": "the failing layer pinned down with targeted evidence; cause and verification of the fix; any prerequisite still blocking",
+    "notes": "Boundary case: diagnose an unavailable connected service without reinstalling everything. A restart or reinstall is disruptive and needs the user's request; the run must isolate connection, auth and scope errors with focused checks instead."
+  }
+]

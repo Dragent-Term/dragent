@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / discussion
+    url: https://github.com/Dragent-Term/dragent/discussions
+    about: Questions belong in Discussions, not issues. Please check existing threads first.
+  - name: Security vulnerability
+    url: https://github.com/Dragent-Term/dragent/security/advisories/new
+    about: Do not open a public issue for security problems. Report privately via SECURITY.md.

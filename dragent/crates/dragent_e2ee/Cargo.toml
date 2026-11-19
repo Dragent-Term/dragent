@@ -1,0 +1,47 @@
+[package]
+name = "dragent_e2ee"
+version = "0.1.0"
+edition = "2021"
+description = "End-to-end encryption core for the phone relay and push (Noise KK / IKpsk1 / X, channel state, sealed stores)."
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# rlib for the desktop app; staticlib/cdylib are produced by the phone module's
+# own build scripts (E4), not here.
+crate-type = ["rlib"]
+
+# Exact pins: docs/design/e2ee.md §3.2. Bumping any of these needs a P2 audit
+# addendum (§3.3). `scripts/check-deps.sh` (run by tests/dep_pins.rs) fails if
+# snow gains any other feature or if anything but getrandom 0.3.4 is linked.
+[dependencies]
+# §3.2 lists "std" too, but snow 0.10.0's "std" feature implicitly enables its optional
+# ring, blake2 and getrandom deps (ring then links getrandom 0.2). Without it the
+# tree has no ring, no blake2, no aes-gcm and only getrandom 0.3.4.
+snow = { version = "=0.10.0", default-features = false, features = ["use-curve25519", "use-chacha20poly1305", "use-sha2"] }
+x25519-dalek = { version = "=2.0.1", features = ["static_secrets", "zeroize"] }
+chacha20poly1305 = { version = "=0.10.1", default-features = false, features = ["alloc"] }
+hkdf = "=0.12.4"
+sha2 = "=0.10.9"
+getrandom = "=0.3.4"
+zeroize = { version = "=1.8.2", features = ["zeroize_derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+# Opt-in, test builds only: compiles the Noise and codec vector runners
+# (`noise::vectors::run_json`, `codec::vectors::run_json`) and snow's
+# fixed-ephemeral hook they need, so the phone module (E4) can run §12.1's
+# vectors on the simulators. Never enabled by the desktop app (asserted by
+# scripts/check-deps.sh) or by the phone module's release build
+# (mobile/scripts/build-e2ee-rust.sh refuses it). Approved by the lead.
+vectors = []
+
+[dev-dependencies]
+
+# E1b: harness-free codec benchmarks (no new dependencies). Approved by the
+# lead; nothing else in this file may change without E1a/the lead.
+[[bench]]
+name = "codec"
+harness = false

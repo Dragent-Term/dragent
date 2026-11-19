@@ -1,0 +1,6 @@
+<!-- Original artwork for Dragent, not sourced from Material Icon Theme — kept in this style-matched directory for consistency. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <rect x="4" y="4" width="24" height="24" rx="3" stroke="#ab47bc" stroke-width="2"/>
+  <circle cx="11" cy="12" r="2.5" fill="#ab47bc"/>
+  <path fill="#ab47bc" d="M8 24 14 16 18 21 21 17 26 24Z"/>
+</svg>

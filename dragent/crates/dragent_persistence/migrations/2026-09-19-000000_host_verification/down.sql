@@ -1,0 +1,1 @@
+DROP TABLE host_command_verifications;

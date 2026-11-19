@@ -1,0 +1,85 @@
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Sensitive files / Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+server/.env
+
+.claude
+dragent/.claude
+
+# Node.js
+node_modules/
+.next/
+out/
+build/
+.npm
+.yarn/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Rust
+target/
+Cargo.lock.bak
+**/*.rs.bk
+
+# Go
+server/bin/
+server/server
+server/api
+
+# Terraform — never commit the provider cache (huge), local state, or tfvars.
+# The .terraform.lock.hcl IS committed (it pins provider versions).
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.tfstate.lock.info
+*tfplan*
+.terraformrc
+terraform.rc
+
+
+# IDEs and Editors
+.idea/
+.vscode/
+reference-code/
+*.suo
+*.ntvsca*
+*.njsproj
+*.sln
+*.swp
+*~
+.claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.dragent/
+
+# Expo mobile app (mobile/ is an isolated Expo project)
+mobile/node_modules/
+mobile/.expo/
+mobile/expo-env.d.ts
+mobile/dist/
+mobile/ios/build/
+mobile/android/build/
+ios/build/
+android/build/

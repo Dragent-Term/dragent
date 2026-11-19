@@ -1,0 +1,46 @@
+[package]
+name = "dragent_computer"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Computer use: read desktop app windows through each platform's accessibility layer and act in them"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+log = { workspace = true }
+arboard = { workspace = true }
+tempfile = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = { workspace = true }
+core-graphics = { version = "0.25.0", features = ["highsierra"] }
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true, features = ["NSString", "NSArray"] }
+objc2-app-kit = { workspace = true, features = ["NSWorkspace", "NSRunningApplication", "libc"] }
+
+[target.'cfg(windows)'.dependencies]
+image = { workspace = true, default-features = false, features = ["png"] }
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Storage_Xps",
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "Win32_UI_Accessibility",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+image = { workspace = true, default-features = false, features = ["png"] }
+x11rb = { workspace = true }
+zbus = { workspace = true }
+
+# Real apps on this desktop; runs only with `-- --live` (see the file).
+[[test]]
+name = "live"
+harness = false

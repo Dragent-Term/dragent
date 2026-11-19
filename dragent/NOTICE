@@ -1,0 +1,106 @@
+Dragent
+Copyright (c) 2026 Nimbletech Ltd. All rights reserved.
+
+Dragent is open-source software licensed under the GNU Affero General Public
+License, version 3 only (AGPL-3.0-only)
+(see the root LICENSE file and LICENSING.md).
+Dragent is an original, independent ("clean-room") implementation.
+
+Dragent bundles the following third-party open-source software and assets, which
+remain licensed under their own terms. This NOTICE lists them and where each
+component's license text is included, so that Dragent meets those licenses'
+attribution and notice requirements. These terms apply only to the respective
+third-party components, not to Dragent's own code (licensed under the
+GNU Affero General Public License, version 3 only — see the root LICENSE file).
+
+================================================================================
+Components under the Apache License 2.0
+================================================================================
+
+1. alacritty_terminal — The Alacritty Project, Copyright (c) 2020.
+   Dragent's terminal core includes portions of the Alacritty terminal library,
+   used under the Apache License 2.0. Modified where noted in the corresponding
+   source files.
+   License text: crates/LICENSE-ALACRITTY
+
+2. Warp Themes — https://github.com/warpdotdev/themes
+   The bundled theme catalog under crates/dragent_viewer/assets/themes/ is used under the Apache
+   License 2.0. Some theme files have been modified by Dragent.
+   The warp_bundled background JPGs shipped with the upstream catalog.
+   License text: crates/dragent_viewer/assets/themes/LICENSE
+   Attribution:  crates/dragent_viewer/assets/themes/ATTRIBUTION.txt
+
+3. Warp Workflows (commands.dev) — https://github.com/warpdotdev/Workflows
+   The bundled workflow catalog under app/assets/workflows/ is used under the
+   Apache License 2.0.
+   License text: app/assets/workflows/LICENSE
+   Attribution:  app/assets/workflows/ATTRIBUTION.txt
+
+================================================================================
+Other bundled third-party components
+================================================================================
+
+- WarpUI (warpui, warpui_core) — MIT License,
+  Copyright (c) Denver Technologies, Inc. (Warp).
+  The MIT-licensed UI framework on which the Dragent desktop application is built.
+  License text: crates/LICENSE-WARPUI
+
+- Antigravity Skill Vault — MIT License, Copyright (c) 2026 Yudhi Armyndharis.
+  307 bundled agent skills from the pinned revision of
+  https://github.com/rmyndharis/antigravity-skills.
+  The upstream vault identifies the ported original content as originating from
+  wshobson/agents, MIT License, Copyright (c) 2024 Seth Hobson.
+  License: skills/LICENSE
+  Attribution: skills/ATTRIBUTION.md
+  Additional upstream license: skills/LICENSE-WSHOBSON-AGENTS
+
+- Fira Code — SIL Open Font License 1.1,
+  Copyright (c) 2014 The Fira Code Project Authors.
+  Bundled fonts under app/assets/fonts/.
+  License: app/assets/fonts/LICENSE-FIRACODE
+
+- Inter — SIL Open Font License 1.1,
+  Copyright (c) 2016 The Inter Project Authors.
+  Bundled fonts under app/assets/fonts/.
+  License: app/assets/fonts/LICENSE-INTER
+
+- JetBrains Mono — SIL Open Font License 1.1,
+  Copyright 2020 The JetBrains Mono Project Authors.
+  Bundled fonts under app/assets/fonts/.
+  License: app/assets/fonts/LICENSE-JETBRAINS-MONO
+
+- Lucide icons — ISC License (portions MIT, Feather-derived),
+  Copyright (c) Lucide Contributors.
+  License: app/assets/dragent/icons/LICENSE-LUCIDE
+
+- Material icon theme file-type icons — MIT License,
+  Copyright (c) 2025 Material Extensions.
+  Bundled file-type SVGs under app/assets/dragent/icons/.
+  License: app/assets/dragent/icons/LICENSE-MATERIAL-ICON-THEME
+
+- Microsoft Windows Terminal (assets/shaders) — MIT License,
+  Copyright (c) Microsoft Corporation.
+  License: app/assets/windows/LICENSE-WINDOWS-TERMINAL
+
+- DirectX Shader Compiler / LLVM — University of Illinois/NCSA Open Source License.
+  License: app/assets/windows/LICENSE-DXC
+
+- Reachability (macOS network reachability) — BSD-2-clause-style license,
+  Copyright (c) 2011, Tony Million.
+  Source files compiled into the mac build; license text retained in-file;
+  binary-distribution notice reproduced in THIRD_PARTY_NOTICES.md.
+  In-file text: crates/warpui/src/platform/mac/objc/reachability.h
+  and crates/warpui/src/platform/mac/objc/reachability.m
+
+- Third-party product logos (Claude, ChatGPT/OpenAI, Ollama) are trademarks of
+  their respective owners, used nominatively for identification only.
+  See app/assets/dragent/icons/ATTRIBUTION-LOGOS.md
+
+- Background photographs for Dragent's own image themes (Stellar, Onyx, Cosmos)
+  are used under the Unsplash License (https://unsplash.com/license).
+  Photo credits: crates/dragent_viewer/assets/themes/dragent/ATTRIBUTION.txt
+
+Rust crate dependencies are used under their respective open-source licenses
+(predominantly MIT and/or Apache-2.0). Dragent's own code is copyleft under
+AGPL-3.0-only (see the root LICENSE file); no other copyleft (GPL/LGPL/MPL)
+code beyond the licenses listed above is included in Dragent.

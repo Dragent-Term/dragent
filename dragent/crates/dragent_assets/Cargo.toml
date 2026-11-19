@@ -1,0 +1,12 @@
+[package]
+name = "dragent_assets"
+version = "0.1.0"
+edition = "2021"
+description = "Dragent bundled assets (Lucide icons)"
+license = "AGPL-3.0-only"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+rust-embed.workspace = true
+warpui_core.workspace = true

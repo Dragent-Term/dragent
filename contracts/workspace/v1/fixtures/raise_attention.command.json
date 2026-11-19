@@ -1,0 +1,26 @@
+{
+  "command_id": "10000000-0000-4000-8000-000000000021",
+  "schema_version": 1,
+  "project_id": "20000000-0000-4000-8000-000000000001",
+  "work_item_id": "30000000-0000-4000-8000-000000000001",
+  "actor_id": "40000000-0000-4000-8000-000000000001",
+  "correlation_id": "50000000-0000-4000-8000-000000000001",
+  "timestamp_unix_ms": 1700000000021,
+  "expected_revision": 20,
+  "payload": {
+    "type": "raise_attention",
+    "attention_item": {
+      "id": "d0000000-0000-4000-8000-000000000001",
+      "work_item_id": "30000000-0000-4000-8000-000000000001",
+      "task_id": null,
+      "thread_id": null,
+      "kind": "decision",
+      "status": "open",
+      "summary": "Choose the production deployment region",
+      "requested_by": "40000000-0000-4000-8000-000000000001",
+      "assigned_to": ["60000000-0000-4000-8000-000000000001"],
+      "created_at_unix_ms": 1700000000021,
+      "resolved_at_unix_ms": null
+    }
+  }
+}

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dragent Web Viewer — Phase 1</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        width: 100%;
+        background: #0b0d10;
+        overflow: hidden;
+      }
+      /* warpui's wasm windowing attaches its <canvas> inside #wasm-container. */
+      #wasm-container,
+      #wasm-container canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        outline: none;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #5b6270;
+        font: 14px ui-sans-serif, system-ui, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="boot">Loading WASM viewer…</div>
+    <div id="wasm-container"></div>
+    <pre id="diag" style="position:fixed;left:0;bottom:0;max-height:50vh;overflow:auto;margin:0;padding:8px;color:#e06c75;background:rgba(0,0,0,.85);font:11px ui-monospace,monospace;white-space:pre-wrap;z-index:9999;display:none"></pre>
+    <script type="module">
+      // Surface panics / hard errors into #diag so a failure is diagnosable
+      // without devtools. Hidden until something real is logged (benign warnings
+      // like a missing fallback font are ignored).
+      const diag = document.getElementById("diag");
+      const log = (tag, ...a) => {
+        diag.style.display = "block";
+        diag.textContent +=
+          `[${tag}] ` +
+          a.map((x) => (x && x.stack ? x.stack : String(x))).join(" ") +
+          "\n";
+      };
+      window.addEventListener("error", (e) => log("error", e.message, e.filename + ":" + e.lineno));
+      window.addEventListener("unhandledrejection", (e) => log("unhandledrejection", e.reason));
+
+      import init from "./dragent_web_viewer.js";
+      const isWinitControlFlow = (e) =>
+        String(e?.message ?? e).includes("control flow") ||
+        String(e?.message ?? e).includes("isn't actually an error");
+      init()
+        .then(() => { document.getElementById("boot")?.remove(); console.log("[viewer] init resolved"); })
+        .catch((e) => {
+          // winit hands control to the browser event loop by throwing — the App
+          // is running fine, so this is success, not a failure.
+          if (isWinitControlFlow(e)) {
+            document.getElementById("boot")?.remove();
+            console.log("[viewer] App running (winit handed off to event loop)");
+            return;
+          }
+          const el = document.getElementById("boot");
+          if (el) el.textContent = "WASM failed to load — see diagnostics below";
+          log("init-failed", e);
+        });
+    </script>
+  </body>
+</html>

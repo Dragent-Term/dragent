@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1652" height="1652" viewBox="0 0 1652 1652">
+  <!-- Authored square; the shipped PNG is the centre 1652x1240 band (y 206..1446). -->
+  <defs>
+    <linearGradient id="sq" gradientUnits="userSpaceOnUse" x1="0" y1="206" x2="0" y2="1446">
+      <stop offset="0" stop-color="#16202e"/><stop offset="1" stop-color="#0a0e15"/>
+    </linearGradient>
+    <radialGradient id="aur1" gradientUnits="userSpaceOnUse" cx="826" cy="586" r="1020">
+      <stop offset="0" stop-color="#6b5bd6" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#6b5bd6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aur2" gradientUnits="userSpaceOnUse" cx="1360" cy="1326" r="900">
+      <stop offset="0" stop-color="#6b5bd6" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#6b5bd6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="826" cy="586" r="430">
+      <stop offset="0" stop-color="#6b5bd6" stop-opacity="0.32"/>
+      <stop offset="0.6" stop-color="#6b5bd6" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#6b5bd6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0.45"><stop offset="0" stop-color="#d8e2ff"/><stop offset="0.5" stop-color="#8f9cff"/><stop offset="1" stop-color="#3a3f9e"/></linearGradient>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6b5bd6" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#6b5bd6" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#6b5bd6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="fUp" x1="0" y1="0" x2="1" y2="0.9">
+      <stop offset="0" stop-color="#9df5ff"/>
+      <stop offset="0.55" stop-color="#4fd4f6"/>
+      <stop offset="1" stop-color="#22b4e4"/>
+    </linearGradient>
+    <linearGradient id="fLo" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#1587c0"/>
+      <stop offset="0.6" stop-color="#0d5da4"/>
+      <stop offset="1" stop-color="#3a3f9e"/>
+    </linearGradient>
+    <linearGradient id="fTail" x1="1" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#0e6f9e"/>
+      <stop offset="1" stop-color="#2fd4c8"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1652" height="1652" fill="url(#sq)"/>
+  <rect width="1652" height="1652" fill="url(#aur1)"/>
+  <rect width="1652" height="1652" fill="url(#aur2)"/>
+
+  <!-- Halo. Decorative: it bleeds past the square-crop band on purpose. -->
+  <circle cx="826" cy="586" r="430" fill="url(#glow)"/>
+
+  <g transform="translate(519.22,279.82) scale(0.59801)">
+      <polygon points="814,512 389,812 389,670 606,512" fill="url(#fLo)"/>
+      <polygon points="389,812 389,670 212,545 231,706" fill="url(#fTail)"/>
+      <polygon points="389,212 814,512 606,512 389,354" fill="url(#fUp)"/>
+      <polygon points="389,212 814,512 795,512 389,229" fill="#d6f9ff" opacity="0.92"/>
+      <polygon points="389,670 212,545 218,556 389,681" fill="#8feee2" opacity="0.55"/>
+    </g>
+
+  <text x="826" y="878" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-weight="500" font-size="42" letter-spacing="16" fill="#8299b0">DRAGENT</text>
+
+  <text x="826" y="1072" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-weight="700" font-size="158" letter-spacing="3" fill="url(#word)">ULTRA</text>
+
+  <rect x="636" y="1140" width="380" height="2" fill="url(#rule)"/>
+
+  <text x="826" y="1224" text-anchor="middle" font-family="Menlo, monospace"
+        font-size="38" fill="#647f97">the self-healing terminal</text>
+</svg>

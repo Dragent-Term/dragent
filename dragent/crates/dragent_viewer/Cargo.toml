@@ -1,0 +1,46 @@
+[package]
+name = "dragent_viewer"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Native-free terminal + agent render/model layer shared by the desktop app and the WASM web viewer (one renderer, no drift)"
+publish = false
+
+# Renderer-agnostic: consumers pick warpui's backend (mac on desktop, wgpu WebGL
+# on wasm). This crate must stay free of native-only deps (PTY, MCP, ONNX, objc2)
+# so it compiles to wasm32.
+[dependencies]
+warpui = { workspace = true }
+warpui_core = { workspace = true }
+dragent_agent = { workspace = true }
+dragent_paths = { workspace = true }
+dragent_terminal = { workspace = true }
+dragent_editor = { workspace = true }
+once_cell = { workspace = true }
+uuid = { workspace = true }
+# `Instant` that works on wasm (std::time::Instant panics on wasm32-unknown).
+web-time = "1.1.0"
+async-channel = { workspace = true }
+regex = { workspace = true }
+unicode-width = { workspace = true }
+pulldown-cmark = { workspace = true }
+mermaid_to_svg = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+rust-embed = { workspace = true }
+chrono = { workspace = true }
+
+# Loading user themes from ~/.config is desktop-only; the browser has no fs.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+dirs = { workspace = true }
+
+# On wasm, theme background images are NOT embedded (they bloat the bundle);
+# they're fetched by URL from `/wasm-themes/…` (see `BgImage::asset_source`).
+[target.'cfg(target_family = "wasm")'.dependencies]
+anyhow = { workspace = true }
+bytes = { workspace = true }
+web-sys = { version = "0.3.69", features = ["Window", "Response"] }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = "0.3.69"

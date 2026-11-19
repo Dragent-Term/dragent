@@ -1,0 +1,112 @@
+# Computer use (dragent/crates/dragent_computer) on all three desktops.
+#
+#   tests  — unit tests and the helper-process tests (timeouts, crashes,
+#            restarts) on macOS, Windows and Linux.
+#   live-* — the live suite (tests/live.rs) against real apps: a text editor
+#            is read, written and read back through accessibility, and a web
+#            page in Chrome is read and pressed. Typing and key presses are on
+#            (DRAGENT_COMPUTER_LIVE_INPUT), since nobody uses these desktops.
+#
+# Hosted runners may not allow Accessibility for the job, so the live suite
+# reports and skips when that capability is unavailable.
+name: computer-use
+
+on:
+  pull_request:
+    paths:
+      - "dragent/crates/dragent_computer/**"
+      - ".github/workflows/computer-use.yml"
+  push:
+    branches: [main, staging]
+    paths:
+      - "dragent/crates/dragent_computer/**"
+      - ".github/workflows/computer-use.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: computer-use-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: dragent
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: dragent -> target
+      - run: cargo test -p dragent_computer
+
+  live-linux:
+    runs-on: ubuntu-22.04
+    env:
+      DRAGENT_COMPUTER_LIVE_INPUT: "1"
+      ACCESSIBILITY_ENABLED: "1"
+    defaults:
+      run:
+        working-directory: dragent
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: dragent -> target
+      - name: Desktop pieces
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y at-spi2-core dbus-x11 dconf-cli gedit openbox xdotool xvfb
+      - run: cargo test -p dragent_computer --test live --no-run
+      # A virtual screen, a session bus with the accessibility bus, and a
+      # window manager so windows can be brought forward for typing.
+      - name: Live suite
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+            dbus-run-session -- bash -c '
+              gsettings set org.gnome.desktop.interface toolkit-accessibility true || true
+              openbox &
+              sleep 2
+              cargo test -p dragent_computer --test live -- --live'
+
+  live-windows:
+    runs-on: windows-latest
+    env:
+      DRAGENT_COMPUTER_LIVE_INPUT: "1"
+    defaults:
+      run:
+        working-directory: dragent
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: dragent -> target
+      - run: cargo test -p dragent_computer --test live -- --live
+
+  live-macos:
+    runs-on: macos-15
+    env:
+      DRAGENT_COMPUTER_LIVE_INPUT: "1"
+    defaults:
+      run:
+        working-directory: dragent
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: dragent -> target
+      - run: cargo test -p dragent_computer --test live -- --live

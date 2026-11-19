@@ -1,0 +1,28 @@
+# Gitleaks config for the secret-scan job in security.yml.
+# Extends the default rule set; allowlists below cover fingerprints that are
+# known test fixtures, not live credentials. Keep this list short and justify
+# every entry — when in doubt, rotate the secret instead of allowlisting it.
+
+[extend]
+useDefault = true
+
+# Example (inactive): allowlist a fingerprint only after confirming it is a
+# fixture with no access to anything real.
+# [[allowlist]]
+# description = "test fixture, no live access (path + line pinned by owner)"
+# paths = ['''server/internal/identity/components/.*_test\.go''']
+# regexes = ['''(?i)sk_test_[a-z0-9]+''']
+
+[[allowlists]]
+description = "Diagnostics redaction tests: made-up tokens the redactor must hide"
+paths = ['''^dragent/app/src/diagnostics\.rs$''']
+regexes = ['''sk-ant-api03-ABCDEFGHIJKLMNOPQRST''', '''ghp_ABCDEFGHIJKLMNOPQRSTUVWX''']
+
+[[allowlists]]
+description = "Bundled agent skills: documentation examples of key blocks, no key material"
+paths = ['''^dragent/skills/.*\.md$''']
+regexes = ['''-----BEGIN [A-Z ]*PRIVATE KEY-----''']
+
+[[allowlists]]
+description = "Firebase Android config: the API key ships in every app build by design; it is restricted to the app's package and SHA-1 in Google Cloud"
+paths = ['''^mobile/google-services\.json$''']

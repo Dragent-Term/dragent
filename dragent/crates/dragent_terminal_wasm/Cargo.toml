@@ -1,0 +1,20 @@
+[package]
+name = "dragent_terminal_wasm"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "WASM adapter for the Dragent terminal emulator"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base64 = { workspace = true }
+dragent_terminal = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+wasm-bindgen = { workspace = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+web-sys = { workspace = true }

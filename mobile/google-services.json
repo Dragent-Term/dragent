@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "780551334738",
+    "project_id": "dragent-5d20b",
+    "storage_bucket": "dragent-5d20b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:780551334738:android:a541e622601f33e876688b",
+        "android_client_info": {
+          "package_name": "com.dragent.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWp_itBFUkmCi9ByZS0UWtTbtBIHzFC-c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,214 @@
+[package]
+name = "dragent"
+version = "0.2.8"
+edition = "2021"
+description = "Dragent — self-healing terminal application"
+license.workspace = true
+default-run = "dragent"
+publish = false
+
+[features]
+default = ["local-index", "e2ee"]
+local-index = ["dragent_index/service-client", "dep:dragent_index_service"]
+performance-harness = []
+# Internal builds may expose the Agentic Workspace without a persisted opt-in.
+# Production builds keep it behind the user-facing experimental setting.
+agentic-workspace = []
+# Git gaps - all behind flags, default off (no-op without flags)
+git-gaps = ["git-hunk-stage", "git-worktree-manager", "git-multi-diff-editor", "git-graph-history"]
+git-hunk-stage = []
+git-worktree-manager = []
+git-multi-diff-editor = []
+git-graph-history = []
+# Phone relay end-to-end encryption (docs/design/e2ee.md). On by default and in
+# every build: the server only relays ciphertext, so a desktop built without it
+# cannot reach phones.
+e2ee = ["dep:dragent_e2ee"]
+
+[[bin]]
+name = "dragent"
+path = "src/main.rs"
+
+[[bin]]
+name = "dragent-perf"
+path = "src/bin/dragent_perf.rs"
+required-features = ["performance-harness"]
+
+# Wasm-safe deps (all targets). The app is built for wasm (the web viewer runs
+# its real views), so anything here MUST compile to wasm32; native-only crates
+# go in the `cfg(not(target_family = "wasm"))` section below.
+[dependencies]
+dragent_terminal = { workspace = true }
+dragent_assets = { workspace = true }
+dragent_parser = { workspace = true }
+dragent_session_protocol = { workspace = true }
+dragent_viewer = { workspace = true }
+dragent_resource_policy = { workspace = true }
+dragent_agent = { workspace = true }
+dragent_workspace_model = { workspace = true }
+dragent_document = { workspace = true }
+dragent_editor = { workspace = true }
+dragent_language_services = { workspace = true }
+runtime_metrics = { workspace = true }
+walkdir = { workspace = true }
+globset = { workspace = true }
+glob = "0.3"
+# These four crates are wasm-safe: each ships a `#[cfg(wasm)]` stub (no PTY, no
+# SQLite, no ONNX, no shell scripts) so the viewer links their types as no-ops.
+dragent_pty = { workspace = true }
+dragent_shell_hooks = { workspace = true }
+dragent_persistence = { workspace = true }
+dragent_paths = { workspace = true }
+dragent_automations = { workspace = true }
+dragent_workspace_setup = { path = "../crates/dragent_workspace_setup" }
+dragent_plugins = { path = "../crates/dragent_plugins" }
+dragent_tasks = { path = "../crates/dragent_tasks" }
+dragent_index = { workspace = true, default-features = false }
+dragent_index_protocol = { workspace = true }
+warpui = { workspace = true }
+warpui_core = { workspace = true }
+rust-embed = { workspace = true }
+bincode = { workspace = true }
+anyhow = { workspace = true }
+async-channel = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+ed25519-dalek = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }
+mermaid_to_svg = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+# Agent MCP sync edits other tools' config files in place: key order and
+# untouched values must survive (JSON), as must comments and layout (TOML).
+indexmap = { version = "2.14", features = ["serde"] }
+toml_edit = { workspace = true }
+uuid = { version = "1", features = ["v4", "serde"] }
+qrcode = { version = "0.14", default-features = false }
+url = { workspace = true }
+aes-gcm = { workspace = true }
+rand = { workspace = true }
+futures-lite = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+fuzzy-matcher = { workspace = true }
+zed-sum-tree = { workspace = true }
+unicode-width = { workspace = true }
+pulldown-cmark = { workspace = true }
+base64 = { workspace = true }
+# `dirs` compiles on wasm (every lookup returns None there), so it stays an
+# all-targets dep — the viewer's path lookups simply find nothing.
+dirs = { workspace = true }
+# `web-time`: std::time on native, browser clock on wasm. Matches `Block`'s
+# `created_at`/timing fields (which use it) so app code aligns on both targets.
+web-time = "1.1.0"
+
+# Standard wasm RNG backend (getrandom 0.2 pulled in transitively) + uuid v4
+# randomness source (uuid gates its own `js` feature, not just getrandom's).
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+uuid = { version = "1", features = ["js"] }
+# Browser APIs used by the web viewer: deep-link navigation + the session
+# WebSocket transport (realtime::start on wasm).
+web-sys = { workspace = true, features = [
+    "Window",
+    "Location",
+    "WebSocket",
+    "MessageEvent",
+    "CloseEvent",
+    "Event",
+    "BinaryType",
+    "Response",
+] }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = "0.3.69"
+
+# Native-only deps: PTY, shell integration, on-disk persistence, code index
+# (ONNX), MCP, OS keychain, native HTTP/TLS/WebSocket, file watching, process +
+# libc. The wasm viewer gates out the code that uses these.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# Built-in browser panes: the system web engine (WKWebView, WebView2,
+# WebKitGTK) embedded as a child view, so nothing extra is bundled.
+wry = { version = "0.57.1", features = ["devtools"] }
+# Cookies imported from other browsers into the browser pane (the versions wry uses).
+cookie = "0.18"
+time = "0.3"
+raw-window-handle = "0.6.2"
+# Validate dimensions before the native PR image preview decodes repository blobs.
+image = { workspace = true, default-features = false, features = ["png", "jpeg", "webp", "ico", "gif"] }
+
+dragent_host = { workspace = true }
+dragent_acp = { workspace = true }
+dragent_computer = { workspace = true }
+dragent_e2ee = { workspace = true, optional = true }
+dragent_index_service = { workspace = true, optional = true }
+rmcp = { workspace = true }
+ignore = "0.4.22"
+notify-debouncer-full = { workspace = true }
+env_logger = { workspace = true }
+tokio = { workspace = true }
+keyring = { workspace = true }
+ureq = { workspace = true }
+reqwest = { workspace = true }
+tokio-util = { workspace = true }
+libc = { workspace = true }
+rustls = { workspace = true }
+tungstenite = { workspace = true }
+
+[build-dependencies]
+cc = "1.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true, features = ["NSString", "NSArray", "NSURL", "NSError", "NSProcessInfo", "NSLocale"] }
+objc2-app-kit = { workspace = true, features = ["NSOpenPanel", "NSSavePanel", "NSPanel", "NSWindow", "NSResponder", "NSView", "NSApplication", "block2"] }
+objc2-speech = { workspace = true }
+objc2-avf-audio = { workspace = true }
+# AVCaptureDevice: microphone TCC status/prompt (separate permission from speech).
+objc2-av-foundation = { workspace = true, features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
+block2 = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# WebKitGTK browser panes need GTK initialised and its loop advanced.
+gtk = "0.18"
+webkit2gtk = "=2.0.2"
+cairo-rs = { version = "0.18", features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Globalization",
+    "Win32_Security_WinTrust",
+    "Win32_Security_Cryptography_Catalog",
+    "Win32_Security_Cryptography_Sip",
+] }
+webview2-com = "0.39"
+windows-registry = { workspace = true }
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0"
+ico = "0.4"
+image = { workspace = true, default-features = false, features = ["png"] }
+
+[package.metadata.bundle.bin.dragent]
+name = "Dragent"
+identifier = "com.dragent.app"
+icon = [
+  "assets/resources/mac/Dragent.icns",
+  "assets/resources/windows/dragent.ico",
+]
+category = "public.app-category.developer-tools"
+copyright = "© Dragent Contributors"
+short_description = "Self-healing developer terminal"
+osx_url_schemes = ["dragent"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# The ui_preview example writes its screenshots as PNGs.
+image = { workspace = true, default-features = false, features = ["png"] }
+diesel = { workspace = true }

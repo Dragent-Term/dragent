@@ -1,0 +1,43 @@
+[
+  {
+    "id": "dragent-route-to-skill",
+    "request": "My panes are a mess and I want the tests beside my editor — where do we start and which helper covers that?",
+    "expected_skill": "dragent",
+    "must_not_use_skills": [
+      "dragent-orchestrate",
+      "dragent-integrations"
+    ],
+    "fixture": "empty",
+    "expect": [
+      "capabilities",
+      "status"
+    ],
+    "forbid": [
+      "team create",
+      "integrations comment",
+      "tasks add"
+    ],
+    "success": "the context established (organisation, workspace, pane); the one focused skill named for the job; no whole pack loaded",
+    "notes": "Positive case for the entry skill: establish context (capabilities, status, workspaces) and route to the one focused skill. It never treats this page as the manual for every command and never acts beyond routing."
+  },
+  {
+    "id": "skills-update-keeps-custom",
+    "request": "I edited Dragent's panes skill in ~/.agents/skills so it fits how I work. Get the latest Dragent skills into my other agents, but don't lose my edits.",
+    "expected_skill": "dragent",
+    "must_not_use_skills": [
+      "dragent-panes",
+      "dragent-orchestrate"
+    ],
+    "fixture": "empty",
+    "expect": [
+      "settings get",
+      "settings set"
+    ],
+    "forbid": [
+      "settings reset",
+      "team create"
+    ],
+    "success": "the person's edited SKILL.md and that skill's other files unchanged afterwards; the untouched skills updated; the answer says which skill was left as theirs and why",
+    "notes": "Boundary case: preserve customized skill resources during an update. Ownership is per file: a skill whose SKILL.md the person changed is theirs as a whole, and turning sharing off and on (teach-other-agents) only replaces files still exactly as Dragent wrote them. The agent must not delete or overwrite the folder by hand to force an update."
+  }
+]

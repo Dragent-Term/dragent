@@ -1,0 +1,17 @@
+Dragent background-image themes
+
+The themes in this directory are Dragent-original. Their background photographs
+are used under the Unsplash License (https://unsplash.com/license), which permits
+free commercial and non-commercial use. The images have been resized/re-encoded
+for bundling. Photo credits:
+
+- stellar_bg.jpg — Photo by "0xk" on Unsplash
+  https://unsplash.com/photos/0xk-zQAPhRyrMVc
+
+- onyx_bg.jpg — Photo by Dmitry Khotsinskiy on Unsplash
+  https://unsplash.com/photos/eGAmQATjk54
+
+- cosmos_bg.jpg — Photo by Vino Li on Unsplash
+  https://unsplash.com/photos/F2N1KH3j59g
+
+dragent_bg.jpg and the dragent_dark/dragent_light theme colors are Dragent's own.

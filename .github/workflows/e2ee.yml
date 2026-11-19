@@ -1,0 +1,115 @@
+name: e2ee-proof
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - "server/**"
+      - "dragent/crates/dragent_e2ee/**"
+      - "mobile/modules/dragent-e2ee/**"
+      - "mobile/src/transport/**"
+      - "mobile/plugins/e2ee-nse/**"
+      - ".github/workflows/e2ee.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - "dragent/crates/dragent_e2ee/**"
+      - "mobile/modules/dragent-e2ee/**"
+      - "mobile/src/transport/**"
+      - "mobile/plugins/e2ee-nse/**"
+      - ".github/workflows/e2ee.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR cancels the older run.
+concurrency:
+  group: e2ee-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ciphertext-only-proof:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: server/go.mod
+      - name: Vet the proof package
+        run: go vet ./test/e2ee/
+      - name: Ciphertext-only recorder + log checks (§12.9, §12.10)
+        run: go test ./test/e2ee/ -count=1 -v
+
+  # Fuzzing is the slow part: it runs only after a merge to staging/main
+  # (or by hand), never on pull requests.
+  go-fuzz:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - FuzzRelayHeaderDecode
+          - FuzzRouterRouting
+          - FuzzSealedCatalogBlob
+          - FuzzPushNotifyIntake
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: server/go.mod
+      - name: Fuzz ${{ matrix.target }} (§12.11)
+        run: go test ./test/e2ee/ -run XXX -fuzz ${{ matrix.target }} -fuzztime 1m
+
+  # Client-side E2EE suites that the server proof builds on: the Rust crypto
+  # crate (unit + vector tests) and the phone transport E2EE tests. The full
+  # desktop app suite is deliberately not here — it needs macOS system libs.
+  clients:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Rust (stable)
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      # Reuse compiled crates between runs (crypto crate + phone test harness).
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: |
+            dragent -> target
+            mobile/src/transport/__tests__/harness -> ../../../modules/dragent-e2ee/rust/target
+      - name: Crypto crate tests (§12.1)
+        working-directory: dragent
+        run: cargo test -p dragent_e2ee
+      - name: Crypto crate vector tests (§12.1)
+        working-directory: dragent
+        run: cargo test -p dragent_e2ee --features vectors
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 12.16.1
+      - name: Set up Node 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: mobile/pnpm-lock.yaml
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: pnpm install --frozen-lockfile
+      # The real-crypto harness builds with --offline, so fetch its crates
+      # first (a fresh runner has an empty cargo cache).
+      - name: Fetch harness crates
+        working-directory: mobile
+        run: cargo fetch --locked --manifest-path src/transport/__tests__/harness/Cargo.toml
+      - name: Phone transport E2EE tests
+        working-directory: mobile
+        run: npm run test:e2ee

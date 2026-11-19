@@ -1,0 +1,82 @@
+name: remote-host-release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+env:
+  RELEASES_BUCKET: dragent-releases-269235677023
+  AWS_REGION: us-east-1
+jobs:
+  host:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+          - runner: macos-15
+            platform: macos-arm64
+          - runner: macos-15-intel
+            platform: macos-x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - name: Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev libdbus-1-dev pkg-config
+      - name: Test the headless runtime
+        working-directory: dragent
+        run: cargo test --locked -p dragent_host --lib --test host_tools_run_path
+      # Linux servers run what's built here. Debian 11 sets the glibc floor
+      # (2.31, matching MIN_GLIBC in dragent_host/src/remote.rs), and SQLite
+      # and libdbus are compiled in, so nothing else must be installed.
+      - name: Build the headless runtime (Linux, Debian 11)
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src/dragent rust:1-bullseye \
+            cargo build --locked --release -p dragent_host --bin dragent-host
+          sudo chown -R "$(id -u):$(id -g)" dragent/target
+          if ldd dragent/target/release/dragent-host | grep -E 'libdbus|libsqlite3|not found'; then
+            echo 'The runtime must not need libdbus or libsqlite3 on the server' >&2
+            exit 1
+          fi
+          needs=$(objdump -T dragent/target/release/dragent-host | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "The runtime needs glibc $needs"
+          if [ "$(printf '%s\n2.31\n' "$needs" | sort -V | tail -1)" != 2.31 ]; then
+            echo "glibc $needs is above the 2.31 floor servers are promised" >&2
+            exit 1
+          fi
+      - name: Build the headless runtime (macOS)
+        if: runner.os == 'macOS'
+        working-directory: dragent
+        run: cargo build --locked --release -p dragent_host --bin dragent-host
+      - name: Package protocol-pinned host
+        shell: bash
+        run: |
+          PROTOCOL=$(sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([0-9]*\);/\1/p' dragent/crates/dragent_host/src/protocol.rs)
+          test -n "$PROTOCOL"
+          echo "PROTOCOL=$PROTOCOL" >> "$GITHUB_ENV"
+          HOST_VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' dragent/crates/dragent_host/Cargo.toml | head -1)
+          echo "HOST_VERSION=$HOST_VERSION" >> "$GITHUB_ENV"
+          mkdir -p remote-artifact
+          cp dragent/target/release/dragent-host remote-artifact/dragent-host
+          cd remote-artifact
+          if command -v sha256sum >/dev/null; then sha256sum dragent-host > dragent-host.sha256; else shasum -a 256 dragent-host > dragent-host.sha256; fi
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: arn:aws:iam::269235677023:role/dragent-release-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Publish host and checksum
+        run: |
+          aws s3 cp remote-artifact/dragent-host "s3://$RELEASES_BUCKET/remote/v$PROTOCOL/$HOST_VERSION/${{ matrix.platform }}/dragent-host" --cache-control "public, max-age=300"
+          aws s3 cp remote-artifact/dragent-host.sha256 "s3://$RELEASES_BUCKET/remote/v$PROTOCOL/$HOST_VERSION/${{ matrix.platform }}/dragent-host.sha256" --cache-control "public, max-age=300"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: remote-host-${{ matrix.platform }}
+          path: remote-artifact/

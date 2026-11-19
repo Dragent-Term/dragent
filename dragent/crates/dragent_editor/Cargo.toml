@@ -1,0 +1,16 @@
+[package]
+name = "dragent_editor"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Reusable language, highlighting, and breakpoint domains for Dragent editors"
+
+[dependencies]
+arborium.workspace = true
+# Same versions `arborium` already pulls in: the flat-token resolver and the
+# capture -> theme-tag vocabulary used for whole-document highlighting.
+arborium-highlight = { version = "2.18.1", default-features = false, features = ["tree-sitter"] }
+arborium-theme = { version = "2.18.1", default-features = false }
+log.workspace = true
+pulldown-cmark.workspace = true
+regex.workspace = true

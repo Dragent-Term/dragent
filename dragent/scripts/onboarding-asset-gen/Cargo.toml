@@ -1,0 +1,14 @@
+[package]
+name = "onboarding-asset-gen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "onboarding-asset-gen"
+path = "src/main.rs"
+
+[dependencies]
+image = { version = "0.25.9", default-features = false, features = ["png"] }

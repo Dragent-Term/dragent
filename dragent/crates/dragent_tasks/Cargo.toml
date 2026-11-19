@@ -1,0 +1,10 @@
+[package]
+name = "dragent_tasks"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

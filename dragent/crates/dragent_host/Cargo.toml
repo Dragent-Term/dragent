@@ -1,0 +1,71 @@
+[package]
+name = "dragent_host"
+version = "0.2.8"
+edition = "2024"
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "dragent-host"
+path = "src/main.rs"
+
+[dependencies]
+indexmap = { version = "2.14", features = ["serde"] }
+toml_edit = { workspace = true }
+base64 = { workspace = true }
+bincode = { workspace = true }
+dragent_terminal = { workspace = true }
+dirs = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+dragent_workspace_model = { workspace = true }
+dragent_session_protocol = { workspace = true }
+dragent_persistence = { workspace = true }
+dragent_paths = { workspace = true }
+dragent_pty = { workspace = true }
+dragent_shell_hooks = { workspace = true }
+dragent_index = { workspace = true }
+uuid = { workspace = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+anyhow = { workspace = true }
+keyring = { workspace = true }
+env_logger = { workspace = true }
+libc = { workspace = true }
+sha2 = { workspace = true }
+sha1 = "0.10"
+# Decrypting cookies imported from Chromium-family browsers.
+aes = "0.8"
+cbc = "0.1"
+hmac = "0.12"
+chrono = { workspace = true }
+zeroize = "=1.8.2"
+sysinfo = { workspace = true }
+diesel = { workspace = true, features = [
+    "sqlite",
+    "returning_clauses_for_sqlite_3_35",
+    "chrono",
+    "32-column-tables",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Built in, not linked from the system: the remote runtime must start on
+# servers and containers that have no libdbus or libsqlite3 installed.
+keyring = { workspace = true, features = ["sync-secret-service", "crypto-rust", "vendored"] }
+libsqlite3-sys = { version = "0.28", features = ["bundled"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_IO", "Win32_Storage_FileSystem", "Win32_Security_Authorization"] }
+# Built in, not linked from the system: unlike macOS, Windows ships no system
+# sqlite3.lib/dll, so the linker fails with LNK1181 without this.
+libsqlite3-sys = { version = "0.28", features = ["bundled"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

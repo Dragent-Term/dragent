@@ -1,0 +1,13 @@
+[
+  {
+    "id": "contribute-small-fix",
+    "request": "Fix the typo in the panes help text in this checkout and check it the way the repo asks.",
+    "expected_skill": "dragent-contribute",
+    "must_not_use_skills": ["dragent-setup", "dragent-feedback"],
+    "fixture": "empty",
+    "expect": ["capabilities"],
+    "forbid": ["automations create", "integrations comment", "team create"],
+    "success": "the concrete problem and resulting behavior; files changed; the narrow checks run with results; what was left uncommitted",
+    "notes": "Positive case: work on Dragent itself with git discovery first, narrow checks, formatting only touched files, and no push or PR unless asked. Capabilities confirm the commands this build supports."
+  }
+]

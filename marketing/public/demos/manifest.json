@@ -1,0 +1,124 @@
+{
+  "agent": {
+    "chapters": [
+      {
+        "end": 16.697,
+        "label": "Review the approval",
+        "start": 0
+      }
+    ],
+    "duration": 16.697,
+    "frames": 277,
+    "kind": "native-window-recording"
+  },
+  "coordination": {
+    "chapters": [
+      {
+        "end": 3.4,
+        "label": "Read handoffs",
+        "start": 0
+      },
+      {
+        "end": 6.918,
+        "label": "Follow the plan",
+        "start": 3.4
+      },
+      {
+        "end": 20.57,
+        "label": "Draft direction",
+        "start": 6.918
+      }
+    ],
+    "duration": 20.57,
+    "frames": 177,
+    "kind": "native-window-recording"
+  },
+  "remote": {
+    "chapters": [
+      {
+        "end": 3.298,
+        "label": "Check installed agents",
+        "start": 0
+      },
+      {
+        "end": 6.386,
+        "label": "Inspect host resources",
+        "start": 3.298
+      }
+    ],
+    "duration": 6.386,
+    "frames": 77,
+    "kind": "native-window-recording"
+  },
+  "reviews": {
+    "chapters": [
+      {
+        "end": 3.557,
+        "label": "Inspect files",
+        "start": 0
+      },
+      {
+        "end": 16.928,
+        "label": "Draft a comment",
+        "start": 3.557
+      },
+      {
+        "end": 20,
+        "label": "Check CI",
+        "start": 16.928
+      },
+      {
+        "end": 24.077,
+        "label": "Read the discussion",
+        "start": 20
+      }
+    ],
+    "duration": 24.077,
+    "frames": 237,
+    "kind": "native-window-recording"
+  },
+  "workspace": {
+    "chapters": [
+      {
+        "end": 8.052,
+        "label": "Describe the task",
+        "start": 0
+      },
+      {
+        "end": 11.466,
+        "label": "Refine the scope",
+        "start": 8.052
+      },
+      {
+        "end": 17.251,
+        "label": "Add verification",
+        "start": 11.466
+      }
+    ],
+    "duration": 17.251,
+    "frames": 170,
+    "kind": "native-window-recording"
+  },
+  "codex": {
+    "duration": 43,
+    "frames": 1290,
+    "kind": "actual-app-recording",
+    "chapters": [
+      {
+        "label": "Describe the task",
+        "start": 0,
+        "end": 21
+      },
+      {
+        "label": "Watch Codex work",
+        "start": 21,
+        "end": 34
+      },
+      {
+        "label": "Read the findings",
+        "start": 34,
+        "end": 43
+      }
+    ]
+  }
+}

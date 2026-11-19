@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Embedded into the BARE executable (cargo run binary) via the
+     __TEXT,__info_plist linker section. Without this, macOS TCC ABORTS the
+     process the moment SFSpeechRecognizer::requestAuthorization runs, because
+     an unbundled binary has no Info.plist to carry the usage keys.
+
+     NEVER add CFBundleIdentifier here: it makes [[NSBundle mainBundle]
+     bundleIdentifier] non-nil, which flips the "is bundled" guard in warpui's
+     app delegate and sends startup into UNUserNotificationCenter — which
+     throws NSInternalInconsistencyException for a binary with no
+     LaunchServices registration. (Learned the hard way.) The name keys below
+     are safe — they don't affect bundleIdentifier.
+
+     The .app bundle ignores this section and uses its own Info.plist
+     (Dragent-Info.plist), which carries the same keys. -->
+<plist version="1.0">
+<dict>
+  <!-- Menu bar / Dock / Cmd-Tab name for the bare binary. Without these,
+       macOS falls back to the executable's file name: lowercase "dragent". -->
+  <key>CFBundleName</key>
+  <string>Dragent</string>
+  <key>CFBundleDisplayName</key>
+  <string>Dragent</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Dragent uses the microphone for voice input — speak instead of typing your prompt — and for websites in its browser that you allow.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Dragent uses the camera only for websites in its browser that you allow, such as video calls.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Dragent converts your speech to text on-device to fill the input bar.</string>
+</dict>
+</plist>

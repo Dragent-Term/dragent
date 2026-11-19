@@ -1,0 +1,13 @@
+[
+  {
+    "id": "computer-native-app",
+    "request": "Fill in the address field in my open desktop invoicing app and tell me what it shows.",
+    "expected_skill": "dragent-computer",
+    "must_not_use_skills": ["dragent-browser"],
+    "fixture": "empty",
+    "expect": ["computer apps", "computer snapshot", "computer click"],
+    "forbid": ["browser open", "browser snapshot", "browser click"],
+    "success": "the app and window acted on; the element number used with its advertised action; refreshed state showing whether the fill was verified",
+    "notes": "Boundary case: operate an external native app through desktop control. Dragent's embedded browser cannot see native apps, so browser commands must not appear."
+  }
+]
