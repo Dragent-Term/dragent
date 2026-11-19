@@ -19,8 +19,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  id-token: write # OIDC → AWS release role
-  contents: read
+  contents: read # the publish job adds what it needs (OIDC, attestations)
 
 env:
   RELEASES_CDN: https://d8d93sixrrr9g.cloudfront.net
@@ -42,6 +41,8 @@ jobs:
       version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - id: v
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -61,6 +62,8 @@ jobs:
         arch: [arm64, x86_64]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Import signing certificate
@@ -125,6 +128,8 @@ jobs:
         arch: [x64, arm64]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Ensure Inno Setup
@@ -156,6 +161,8 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts

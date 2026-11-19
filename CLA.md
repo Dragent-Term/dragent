@@ -93,6 +93,5 @@ the instructions the project's automated check posts on it — typically a
 bot comment asking You to confirm You have read this document. Once Your
 signature is recorded, the check passes on Your current and future pull
 requests (a `cla-signed` label or equivalent passing status marks this).
-If the check still reports You as unsigned after signing, leave a comment
-asking for a recheck (see `.github/workflows/cla.yml` for the exact
-command) and a maintainer will help.
+If the check still reports You as unsigned after signing, use the recheck
+link in the bot's comment, or ask a maintainer for help.
