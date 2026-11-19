@@ -60,15 +60,14 @@ Maintainers can apply `no-autoclose` to exempt long-running PRs.
 Every contributor signs the CLA once — not per commit — before their first
 contribution can merge. [`CLA.md`](./CLA.md) holds the agreement text.
 
-1. Open (or update) your pull request. An automated check posts a comment
-   with a link to the CLA and the exact reply text that records your
-   signature.
-2. Reply on the PR with that confirmation text. The check re-runs and, once
-   every committer on the PR has signed, it passes and the PR carries the
-   `cla-signed` label. A PR showing `cla-not-signed` stays blocked.
-3. If the check still shows you as unsigned after signing, or the status
-   looks stale, comment `recheck` on the PR to re-run it. Pushing new
-   commits — or adding new committers — re-triggers the check automatically.
+1. Open (or update) your pull request. The CLA Assistant bot comments with
+   a link to the CLA.
+2. Follow the link and sign in with GitHub to sign. The `license/cla`
+   check on the PR turns green once every committer has signed; until
+   then the PR stays blocked.
+3. If the check still shows you as unsigned after signing, use the recheck
+   link in the bot's comment. New commits or new committers re-run the
+   check automatically.
 
 Corporate contributors: if your employer or anyone else holds rights in
 work you create, get authorization (for example, an authorized signatory or

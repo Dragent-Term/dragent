@@ -20,7 +20,7 @@ Set these in **Settings → Branches → Branch protection** (or a ruleset) for
 | `cargo-deny (licenses / sources / bans / advisories)` | security.yml | Every Rust dependency is AGPL-compatible and from a reviewed source |
 | `codeql (…)` | security.yml | Static analysis of Go and JavaScript/TypeScript |
 | `actionlint`, `zizmor`, `hadolint` | workflow-lint.yml | Workflows have no mistakes, injection or excess permissions; the Dockerfile is sound (when they change) |
-| `CLAAssistant` | cla.yml | Every committer signed the CLA |
+| `license/cla` | CLA Assistant app (cla-assistant.io) | Every committer signed the CLA |
 
 Not a merge gate, but published: `scorecard.yml` rates the repository's
 security practices weekly (OpenSSF Scorecard). Releases carry signed build
