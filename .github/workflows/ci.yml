@@ -101,10 +101,17 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
+        # rustfmt also checks a touched mod.rs's child modules; only diffs in
+        # the touched files themselves fail the job.
         run: |
           changed=$(git diff --name-only --diff-filter=ACMR "origin/$BASE_REF" HEAD -- '*.rs' | sed -n 's#^dragent/##p')
-          if [ -n "$changed" ]; then
-            echo "$changed" | xargs rustfmt --check --edition 2021
+          [ -n "$changed" ] || exit 0
+          report=$(echo "$changed" | xargs rustfmt --check --edition 2021 2>&1 || true)
+          bad=$(echo "$report" | sed -n "s#^Diff in $PWD/\(.*\):[0-9]*:\$#\1#p" | sort -u | grep -xF -f <(echo "$changed") || true)
+          if [ -n "$bad" ]; then
+            echo "$report"
+            echo "::error::Not formatted (run rustfmt --edition 2021 on them): $(echo "$bad" | tr '\n' ' ')"
+            exit 1
           fi
       - name: Linux libraries the desktop app links
         working-directory: .

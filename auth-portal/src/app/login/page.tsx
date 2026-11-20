@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Loader2, Mail, ShieldAlert, ShieldCheck } from "lucide-react";
 import SessionControl from "@/components/SessionControl";
-import { setToken } from "@/lib/token";
+import { SIGNED_IN_KEY, markSignedIn } from "@/lib/token";
 import { appPart, stashHandoff } from "@/lib/desktopHandoff";
 
 // Custom Google SVG icon
@@ -104,37 +104,13 @@ function LoginDesktopContent() {
         if (!res.ok) return;
         const data = await res.json();
         
-        if (data && !data.pending && data.refresh_token) {
-          // Sign-in always finishes on the dashboard now — there is one login
-          // flow, not a separate desktop one. Persist the access token, stash
-          // the deep-link payload for the dashboard to offer, and navigate.
-          // Never navigate on a half-finished sign-in. Without an access token
-          // the dashboard has nothing to authenticate with, sees no session,
-          // and bounces straight back here — which looks exactly like being
-          // logged out on its own.
-          if (!data.access_token) {
-            setError(
-              "Sign-in completed but no access token was returned. Please try again."
-            );
-            return;
-          }
-          setToken(data.access_token);
-          // Only when the desktop app initiated this: a browser-only sign-in
-          // has nothing to hand back, and prompting "Open in Dragent" there
-          // would be noise.
-          if (searchParams.get("state")) {
-            stashHandoff({
-              scheme,
-              state,
-              refresh_token: data.refresh_token,
-              user_id: data.user_id ?? "",
-            });
-          }
-          setSession({
-            access_token: data.access_token,
-            refresh_token: data.refresh_token,
-            user_id: data.user_id,
-          });
+        // A browser-only sign-in finished elsewhere (a magic link opened on
+        // another device) and was approved: the route put the session in
+        // this browser's cookie. (Desktop-started sign-ins aren't polled
+        // here at all; see the guard above.)
+        if (data && !data.pending && data.signed_in === true) {
+          markSignedIn();
+          setSession({ user_id: data.user_id });
           router.replace(safeNext(searchParams.get("next")));
         }
       } catch (err) {
@@ -155,18 +131,18 @@ function LoginDesktopContent() {
       if (event.origin !== window.location.origin) return;
       const data = event.data;
       if (!data || data.type !== "dragent:oauth-complete" || data.state !== state) return;
-      if (typeof data.access_token !== "string" || !data.access_token) return;
-      setToken(data.access_token);
+      if (data.signed_in !== true) return;
+      markSignedIn();
       if (searchParams.get("state") && (typeof data.handoff_code === "string" || typeof data.refresh_token === "string")) {
         stashHandoff({ scheme, state, ...appPart(data), user_id: data.user_id ?? "" });
       }
-      setSession({ access_token: data.access_token, user_id: data.user_id });
+      setSession({ user_id: data.user_id });
       router.replace(safeNext(searchParams.get("next")));
     };
     // A magic link opened in another tab of this browser signs that tab in;
     // follow it rather than waiting here.
     const onStorage = (event: StorageEvent) => {
-      if (event.key === "dragent_token" && event.newValue) {
+      if (event.key === SIGNED_IN_KEY && event.newValue) {
         router.replace(safeNext(searchParams.get("next")));
       }
     };

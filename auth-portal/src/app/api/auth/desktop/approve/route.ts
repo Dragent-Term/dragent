@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
+import { bearerFrom, sameOrigin } from "@/lib/server/session";
 
 const GO_BACKEND_URL = process.env.NEXT_BACKEND_URL || "http://localhost:8080";
 
-// POST /api/auth/desktop/approve {state} with the signed-in Bearer token:
+// POST /api/auth/desktop/approve {state}, signed in (session cookie):
 // lets the Dragent app waiting on this sign-in collect it.
 export async function POST(request: Request) {
-  const auth = request.headers.get("authorization") ?? "";
+  if (!sameOrigin(request)) {
+    return NextResponse.json({ error: "Cross-site request refused" }, { status: 403 });
+  }
+  const auth = bearerFrom(request);
   let state = "";
   try {
     const body = await request.json();

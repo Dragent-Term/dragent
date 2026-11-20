@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { setToken } from "@/lib/token";
+import { markSignedIn } from "@/lib/token";
 import { appPart, stashHandoff } from "@/lib/desktopHandoff";
 import { 
   CheckCircle2, 
@@ -46,7 +46,7 @@ function OAuthCallbackContent() {
         }
 
         // This browser is signed in from here on.
-        setToken(data.access_token);
+        markSignedIn();
 
         // Social sign-in runs in a window.open() popup. Hand the result back to
         // the opener (our own /login page, same origin) and close.
@@ -57,7 +57,7 @@ function OAuthCallbackContent() {
               {
                 type: "dragent:oauth-complete",
                 state: data.state,
-                access_token: data.access_token,
+                signed_in: true,
                 ...(data.handoff_code ? { handoff_code: data.handoff_code } : { refresh_token: data.refresh_token }),
                 user_id: data.user_id ?? "",
               },

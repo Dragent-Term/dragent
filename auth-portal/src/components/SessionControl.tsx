@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { getToken } from "@/lib/token";
 import { signInCode } from "@/lib/signInCode";
 import { 
   CheckCircle2, 
@@ -48,7 +47,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
     try {
       const res = await fetch("/api/auth/desktop/approve", {
         method: "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state }),
       });
       const data = await res.json().catch(() => ({}));

@@ -1,72 +1,73 @@
 /**
- * Where the access token lives in the browser.
+ * The browser session, as page scripts see it: not at all.
  *
- * `localStorage`, not `sessionStorage`: sessionStorage is scoped to the tab and
- * is discarded when it closes, which is why signing in again was needed on
- * every visit. localStorage survives restarts, so a returning user stays signed
- * in until the token expires or they sign out.
+ * The access token lives in an httpOnly cookie that only this app's server
+ * reads (src/lib/server/session.ts); the API routes forward it to the Go
+ * backend. Scripts on the page, an injected one included, can't read it.
  *
- * Trade-off worth knowing: localStorage is readable by any script on this
- * origin, so an XSS becomes a token theft. An httpOnly cookie would remove that
- * class of attack, but every server route here forwards an `Authorization:
- * Bearer` header the client supplies, so moving to cookies is a larger change.
- * This is the deliberate interim.
- *
- * Read/write only through this module — the token used to be touched directly
- * in three separate components, which is how the dashboard and the WASM viewer
- * ended up able to disagree about whether anyone was signed in.
+ * What's left here is a harmless "signed in" hint in localStorage, so other
+ * tabs notice a sign-in (the `storage` event) and the UI knows whether to
+ * try, plus a one-time move of tokens that older builds kept in storage.
  */
 
-const KEY = "dragent_token";
+const HINT = "dragent_signed_in";
+// Where builds before the cookie kept the token itself.
+const LEGACY = "dragent_token";
 
-/** The stored token, or null. Safe to call during SSR (returns null). */
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
+/** An opaque marker meaning "this browser has a session cookie". */
+export const SESSION = "cookie";
+
+export function markSignedIn(): void {
+  if (typeof window === "undefined") return;
   try {
-    return window.localStorage.getItem(KEY);
+    window.localStorage.setItem(HINT, String(Date.now()));
   } catch {
-    // Private-browsing modes can throw on access rather than return null.
-    return null;
+    /* storage unavailable: the cookie still works */
   }
 }
 
-export function setToken(token: string): void {
+export function markSignedOut(): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(KEY, token);
-  } catch {
-    /* storage unavailable — the session stays in memory for this page only */
-  }
-}
-
-export function clearToken(): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(KEY);
-    // Also clear the old location so a user upgrading from a build that used
-    // sessionStorage does not keep a stale token in the tab.
-    window.sessionStorage.removeItem(KEY);
+    window.localStorage.removeItem(HINT);
+    window.localStorage.removeItem(LEGACY);
+    window.sessionStorage.removeItem(LEGACY);
   } catch {
     /* nothing to clear */
   }
 }
 
+/** The storage key other tabs watch for a sign-in. */
+export const SIGNED_IN_KEY = HINT;
+
 /**
- * One-time migration for anyone mid-session when this shipped: promote a token
- * left in sessionStorage into localStorage so they are not signed out by the
- * upgrade itself.
+ * Move a token an older build left in storage into the session cookie, then
+ * delete it from storage. Resolves once done (or when there was nothing).
  */
-export function adoptLegacySessionToken(): string | null {
-  if (typeof window === "undefined") return null;
+export async function adoptLegacyToken(): Promise<void> {
+  if (typeof window === "undefined") return;
+  let token: string | null = null;
   try {
-    const legacy = window.sessionStorage.getItem(KEY);
-    if (legacy && !window.localStorage.getItem(KEY)) {
-      window.localStorage.setItem(KEY, legacy);
-      window.sessionStorage.removeItem(KEY);
-      return legacy;
-    }
+    token = window.localStorage.getItem(LEGACY) ?? window.sessionStorage.getItem(LEGACY);
   } catch {
-    /* ignore */
+    return;
   }
-  return null;
+  if (!token) return;
+  try {
+    const res = await fetch("/api/auth/adopt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (res.ok) markSignedIn();
+  } catch {
+    /* offline: the old token is dropped anyway, signing in again fixes it */
+  } finally {
+    try {
+      window.localStorage.removeItem(LEGACY);
+      window.sessionStorage.removeItem(LEGACY);
+    } catch {
+      /* nothing to clear */
+    }
+  }
 }

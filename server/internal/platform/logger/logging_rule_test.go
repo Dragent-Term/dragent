@@ -147,12 +147,8 @@ func TestLoggingRuleQueryTokenGuard(t *testing.T) {
 	if !ok {
 		t.Fatal("main.go not found")
 	}
-	for _, prefix := range []string{`"/v1/relay/"`, `"/v1/companion/"`, `"/v1/push/"`} {
-		if !strings.Contains(main, prefix) {
-			t.Errorf("main.go: query-token guard is missing prefix %s (H2)", prefix)
-		}
-	}
-	if !strings.Contains(main, "queryToken(r)") {
-		t.Error("main.go: AuthMiddleware must consult queryToken (H2)")
+	// Access tokens are never read from a URL (H2, now on every route).
+	if strings.Contains(main, `Query().Get("access_token")`) {
+		t.Error("main.go: AuthMiddleware accepts access_token in the query string (H2)")
 	}
 }

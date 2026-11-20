@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { setSessionCookie } from "@/lib/server/session";
 import { visitorIP } from "@/lib/visitorIp";
 
 const GO_BACKEND_URL = process.env.NEXT_BACKEND_URL || "http://localhost:8080";
@@ -106,15 +107,18 @@ export async function GET(request: Request) {
       // The app's part: a one-time code when the desktop started with a
       // PKCE challenge, or (older desktop builds) its refresh token.
       if (data?.access_token && (data?.handoff_code || data?.refresh_token)) {
-        return NextResponse.json({
+        // This browser's session goes into the httpOnly cookie, not the
+        // page: scripts on the page never see the access token.
+        const res = NextResponse.json({
           success: true,
-          access_token: data.access_token,
           ...(data.handoff_code
             ? { handoff_code: data.handoff_code }
             : { refresh_token: data.refresh_token }),
           state: data.state || state,
           user_id: data.user_id,
         });
+        setSessionCookie(res, data.access_token);
+        return res;
       }
     }
 

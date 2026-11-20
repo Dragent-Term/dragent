@@ -3,7 +3,7 @@
 import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ArrowRight } from "lucide-react";
-import { setToken } from "@/lib/token";
+import { markSignedIn } from "@/lib/token";
 import { appPart, stashHandoff } from "@/lib/desktopHandoff";
 
 function MagicVerificationContent() {
@@ -41,16 +41,15 @@ function MagicVerificationContent() {
         // the desktop deep link and stop there, which left anyone reading their
         // email in a browser at a dead end with no session.
         //
-        // Never navigate without an access token. The dashboard authenticates
-        // with a Bearer header; landing there tokenless renders "Authentication
-        // required" and bounces to /login, which reads as being logged out the
-        // instant you log in.
-        if (!data.access_token) {
+        // Never navigate without a session: the route sets the session cookie
+        // on success. Landing on the dashboard without one bounces to /login,
+        // which reads as being logged out the instant you log in.
+        if (!data.success) {
           throw new Error(
             "Signed in, but no access token was issued. Please request a new link."
           );
         }
-        setToken(data.access_token);
+        markSignedIn();
 
         // Let the dashboard offer "Open in Dragent". Safe to always stash: the
         // desktop app completes by polling this state, not by the deep link

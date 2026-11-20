@@ -474,6 +474,9 @@ func main() {
 
 	// Auth context injection middleware (applies globally)
 	r.Use(AuthMiddleware(tokenService))
+	// The browser viewer signs in to /realtime with a ticket, not a token.
+	tickets := realtimeTickets{rdb: rClient.Rdb}
+	r.Use(tickets.middleware)
 	// A revoked phone's token is refused on every route, not only the relay.
 	r.Use(pairingHandler.RejectRevokedDevices)
 	// Forward hostnames are a separate routing boundary. This must run before
@@ -506,6 +509,7 @@ func main() {
 		rr.Post("/auth/desktop/session", authHandlers.PollDesktopSessionWithProof)
 		rr.Post("/auth/desktop/exchange", authHandlers.ExchangeDesktopHandoff)
 		rr.With(RequireAuth).Post("/auth/desktop/approve", authHandlers.ApproveDesktopSession)
+		rr.With(RequireAuth).Post("/realtime/ticket", tickets.handleIssue)
 
 		// GraphQL endpoint and playground
 		// No playground and no introspection outside dev/local; see
@@ -740,21 +744,17 @@ func AuthMiddleware(tokenService *model.TokenService) func(http.Handler) http.Ha
 			fallbackAllowed := strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Fallback-Allowed")), "true")
 			ctx = context.WithValue(ctx, "fallback_allowed", fallbackAllowed)
 
-			// Extract the bearer from the Authorization header, or — for the
-			// realtime WebSocket, where browsers cannot set request headers —
-			// from an `access_token` query param over TLS. URL tokens are
-			// refused (ignored) on the relay, pairing and push route
-			// prefixes (H2, §2.3): the phone and desktop authenticate
-			// in-band there, so no URL token is needed. The browser viewer
-			// on /realtime is deferred (§14) and keeps today's behaviour.
+			// The bearer comes from the Authorization header only. Access
+			// tokens are never accepted in a URL (they end up in logs,
+			// history and proxies): the phone and desktop authenticate
+			// in-band on the relay, and the browser viewer joins /realtime
+			// with a short-lived ticket (realtime_ticket.go).
 			var token string
 			if authHeader := r.Header.Get("Authorization"); authHeader != "" {
 				parts := strings.Split(authHeader, " ")
 				if len(parts) == 2 && strings.ToLower(parts[0]) == "bearer" {
 					token = parts[1]
 				}
-			} else if qt := queryToken(r); qt != "" {
-				token = qt
 			}
 			if token == "" {
 				next.ServeHTTP(w, r.WithContext(ctx))
@@ -773,22 +773,6 @@ func AuthMiddleware(tokenService *model.TokenService) func(http.Handler) http.Ha
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-// queryToken returns the access_token query parameter, except on the relay,
-// pairing and push route prefixes where URL tokens are refused (H2, §2.3) —
-// callers there authenticate in-band (relay-auth / relay-host-auth carry the
-// token and e2e:1 inside the first socket message) or over the Authorization
-// header, so a query token is treated as absent. /realtime keeps today's
-// behaviour (§14), as does every other route.
-func queryToken(r *http.Request) string {
-	p := r.URL.Path
-	if strings.HasPrefix(p, "/v1/relay/") ||
-		strings.HasPrefix(p, "/v1/companion/") ||
-		strings.HasPrefix(p, "/v1/push/") {
-		return ""
-	}
-	return r.URL.Query().Get("access_token")
 }
 
 // RequireAuth is a strict middleware applied to agent routes. It rejects any

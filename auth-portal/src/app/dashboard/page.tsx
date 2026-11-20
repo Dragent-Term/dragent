@@ -21,7 +21,7 @@ import {
   Building2,
 } from "lucide-react";
 import SessionControl from "@/components/SessionControl";
-import { getToken, setToken as persistToken, clearToken, adoptLegacySessionToken } from "@/lib/token";
+import { SESSION, adoptLegacyToken, markSignedOut } from "@/lib/token";
 import { readHandoff, clearHandoff, type DesktopHandoff } from "@/lib/desktopHandoff";
 import OrgSwitcher, { type OrgWithRole } from "@/components/organization/OrgSwitcher";
 import OrganizationSection, { MyInvitationsBanner } from "@/components/organization/OrganizationSection";
@@ -108,21 +108,16 @@ const initials = (name: string, email: string) => {
   return (parts.length > 1 ? parts[0][0] + parts[1][0] : n.slice(0, 2)).toUpperCase();
 };
 
-// `undefined` = still resolving; `null` = no session; string = signed in.
-function useToken(): [string | null | undefined, (t: string) => void] {
+// `undefined` = still resolving; otherwise the session marker. The session
+// itself is an httpOnly cookie this page can't read: /api/account decides
+// whether it's still good (a 401 there sends the person to /login).
+function useToken(): [string | null | undefined, (t: string | null) => void] {
   const [token, setToken] = useState<string | null | undefined>(undefined);
   useEffect(() => {
-    const hash = window.location.hash.replace(/^#/, "");
-    const fromHash = new URLSearchParams(hash).get("token");
-    if (fromHash) {
-      persistToken(fromHash);
-      history.replaceState(null, "", window.location.pathname);
-      setToken(fromHash);
-      return;
-    }
-    // Anyone mid-session when this shipped still has a token in sessionStorage;
-    // promote it rather than signing them out on the upgrade itself.
-    setToken(adoptLegacySessionToken() ?? getToken());
+    // Sessions are never taken from the URL: a link carrying someone's
+    // token would sign this browser into their account.
+    if (window.location.hash) history.replaceState(null, "", window.location.pathname + window.location.search);
+    void adoptLegacyToken().finally(() => setToken(SESSION));
   }, []);
   return [token, setToken];
 }
@@ -188,7 +183,7 @@ export default function DashboardPage() {
   const [activeOrg, setActiveOrg] = useState<OrgWithRole | null>(null);
   useEffect(() => {
     if (!token) return;
-    fetch("/api/organization/me/active-organization", { headers: { Authorization: `Bearer ${token}` } })
+    fetch("/api/organization/me/active-organization")
       .then((res) => (res.ok ? res.json() : null))
       .then((org) => org && setActiveOrg(org))
       .catch(() => {});
@@ -201,14 +196,13 @@ export default function DashboardPage() {
           ...init,
           headers: {
             ...(init?.headers ?? {}),
-            Authorization: `Bearer ${token ?? ""}`,
             "Content-Type": "application/json",
           },
         });
         const data = await res.json().catch(() => ({}));
 
-        // A rejected token is a dead end unless we clear it. Tokens now live in
-        // localStorage, so a stale one survives tab closes — without this the
+        // A rejected session is a dead end unless we clear it. The cookie
+        // outlives tab closes, so without this the
         // dashboard renders the backend's raw "authentication required: provide
         // a valid Bearer token" on every load, forever, with no way out.
         // Treat 401 as "this session is over": drop it and start sign-in again.
@@ -218,7 +212,7 @@ export default function DashboardPage() {
         // and the redirect hides which call actually failed.
         if (res.status === 401) {
           if (path.startsWith("/api/account")) {
-            clearToken();
+            markSignedOut();
             clearHandoff();
             window.location.replace("/login");
             throw new Error("session expired");
@@ -285,12 +279,11 @@ export default function DashboardPage() {
     try {
       await fetch("/api/auth/logout", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token ?? ""}` },
       });
     } catch {
       /* offline: the local sign-out still happens */
     }
-    clearToken();
+    markSignedOut();
     clearHandoff();
     window.location.reload();
   };

@@ -22,18 +22,18 @@
 //! (set on sign-out via `crate::api::session_expired_rx`, or when the user ends
 //! the session) tears the loop down.
 
-pub mod controller;
+pub(crate) mod companion_accounts;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod companion_coordination;
+pub(crate) mod companion_history;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod companion_host;
 pub(crate) mod companion_starts;
 pub(crate) mod companion_tasks;
 pub(crate) mod companion_trackers;
-pub(crate) mod companion_usage;
-pub(crate) mod companion_history;
 pub(crate) mod companion_uploads;
-pub(crate) mod companion_accounts;
-#[cfg(not(target_family = "wasm"))]
-pub(crate) mod companion_host;
+pub(crate) mod companion_usage;
+pub mod controller;
 pub(crate) mod desktop_catalog;
 pub(crate) mod keep_responsive;
 // Phone relay end-to-end encryption (docs/design/e2ee.md). Behind the `e2ee`
@@ -49,21 +49,21 @@ pub mod e2e_keys;
 // `host-notify` frames. Settings → Mobile reaches the live host through
 // `companion_host::e2ee_live::{begin_pairing, cancel_pairing, revoke_phone,
 // reset_keys, status}`.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod desktop_publisher;
 #[cfg(all(feature = "e2ee", not(target_family = "wasm")))]
 pub mod e2e_notify;
 #[cfg(all(feature = "e2ee", not(target_family = "wasm")))]
 pub mod e2e_store;
-#[cfg(not(target_family = "wasm"))]
-pub(crate) mod desktop_publisher;
+pub mod forward;
+pub mod forward_tunnel;
+pub mod manager;
 pub mod phone_agent;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod phone_browser;
 pub mod phone_control;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod phone_git;
-pub mod forward;
-pub mod forward_tunnel;
-pub mod manager;
 pub mod qr;
 pub mod rest;
 pub mod session;
@@ -177,7 +177,7 @@ pub fn start(config: RealtimeConfig, tx: async_channel::Sender<RealtimeEvent>) -
 /// Wasm: the browser `WebSocket` transport. Mirrors the native loop at the
 /// message level — `RealtimeEvent`s out, queued text frames in — so the session
 /// layer is transport-agnostic. Browsers can't set request headers, so the
-/// bearer token (when present) rides as a `?token=` query param; the secret-based
+/// signed-in viewer's short-lived ticket (when present) rides as `?ticket=`; the secret-based
 /// viewer handshake itself is done by the session layer over frames.
 #[cfg(target_family = "wasm")]
 pub fn start(config: RealtimeConfig, tx: async_channel::Sender<RealtimeEvent>) -> RealtimeHandle {
@@ -187,19 +187,18 @@ pub fn start(config: RealtimeConfig, tx: async_channel::Sender<RealtimeEvent>) -
     let stop = Arc::new(AtomicBool::new(false));
     let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
 
-    // Bearer token as `access_token` query param (no WS headers in the browser;
-    // matches the gateway's expected param). The host page injects the signed-in
-    // viewer's token (`window.__DRAGENT_TOKEN__`) so the gateway resolves their
-    // real name + avatar; falling back to the API client's token. An anonymous
-    // link viewer simply connects without one, authorised by the session secret.
+    // The signed-in viewer joins with a short-lived ticket, never the access
+    // token: the host page asks its own server for one (the session lives in
+    // an httpOnly cookie there) and keeps `window.__DRAGENT_TICKET__` fresh,
+    // so each (re)connect reads a current one. A ticket works only on
+    // /realtime and only for a minute. An anonymous link viewer connects
+    // without one, authorised by the session secret.
     let mut url = config.url.clone();
-    // Only the page-injected token (signed-in viewer). No API-client fallback on
-    // wasm: it would kick off a doomed token exchange (the REST client is a
-    // stub) and log noise; anonymous viewers are authorised by the secret.
-    let token = browser_global("__DRAGENT_TOKEN__").filter(|t| !t.is_empty());
-    if let Some(token) = token {
+    let ticket = browser_global("__DRAGENT_TICKET__").filter(|t| !t.is_empty());
+    if let Some(ticket) = ticket {
         let sep = if url.contains('?') { '&' } else { '?' };
-        url = format!("{url}{sep}access_token={token}");
+        let ticket: String = url::form_urlencoded::byte_serialize(ticket.as_bytes()).collect();
+        url = format!("{url}{sep}ticket={ticket}");
     }
 
     let ws = match web_sys::WebSocket::new(&url) {
@@ -348,7 +347,10 @@ fn connect_and_serve(
         // `stop()` (e.g. the host's EndSession) must still reach the server, so
         // it deletes the session. Flushing before the stop check guarantees that.
         while let Ok(msg) = outbound_rx.try_recv() {
-            log::debug!("[realtime] -> {}", crate::agent::tools_background::utf8_prefix(&msg, 200));
+            log::debug!(
+                "[realtime] -> {}",
+                crate::agent::tools_background::utf8_prefix(&msg, 200)
+            );
             if socket.send(tungstenite::Message::Text(msg.into())).is_err() {
                 return Ok(true); // socket died mid-send → reconnect
             }
@@ -362,7 +364,10 @@ fn connect_and_serve(
         // Read one frame (blocks up to READ_TIMEOUT).
         match socket.read() {
             Ok(tungstenite::Message::Text(text)) => {
-                log::debug!("[realtime] <- {}", crate::agent::tools_background::utf8_prefix(&text, 200));
+                log::debug!(
+                    "[realtime] <- {}",
+                    crate::agent::tools_background::utf8_prefix(&text, 200)
+                );
                 let _ = tx.send_blocking(RealtimeEvent::Message(text.to_string()));
             }
             // Binary/ping/pong: tungstenite auto-replies to pings; we ignore the
