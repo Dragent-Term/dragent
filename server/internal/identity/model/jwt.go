@@ -1,10 +1,12 @@
 package model
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -14,6 +16,19 @@ import (
 
 type TokenService struct {
 	secret []byte
+	// signedOut reports a device whose session was ended (logout). Nil in
+	// tests and tools that don't sign anyone out.
+	signedOut func(ctx context.Context, deviceID string) (bool, error)
+}
+
+// ErrSignedOut is a valid token from a device that has since signed out.
+var ErrSignedOut = errors.New("session signed out")
+
+// SetSignedOutCheck makes every verification refuse tokens from devices that
+// signed out, so logout takes effect everywhere a token is checked (API,
+// relay, pairing), not only where the refresh token is used.
+func (s *TokenService) SetSignedOutCheck(check func(ctx context.Context, deviceID string) (bool, error)) {
+	s.signedOut = check
 }
 
 func NewTokenService(secret string) *TokenService {
@@ -67,6 +82,20 @@ func (s *TokenService) VerifyAccessToken(tokenString string) (*types.TokenClaims
 	claims, ok := token.Claims.(*types.TokenClaims)
 	if !ok || !token.Valid {
 		return nil, errors.New("invalid token claims")
+	}
+
+	if s.signedOut != nil && claims.DeviceID != uuid.Nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		out, err := s.signedOut(ctx, claims.DeviceID.String())
+		if err != nil {
+			// Redis down: let the token through rather than signing every
+			// user out at once. A signed-out device's refresh token is
+			// revoked in the database either way.
+			slog.Warn("signed-out check unavailable", "error", err)
+		} else if out {
+			return nil, ErrSignedOut
+		}
 	}
 
 	return claims, nil

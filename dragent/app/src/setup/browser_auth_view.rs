@@ -18,6 +18,7 @@ pub fn render_browser_auth_view(
     ui_font: FamilyId,
     flow_id: EntityId,
     auth_error: Option<&str>,
+    sign_in_code: Option<&str>,
     copy_hover: MouseStateHandle,
     paste_hover: MouseStateHandle,
     cancel_hover: MouseStateHandle,
@@ -44,9 +45,25 @@ pub fn render_browser_auth_view(
             .with_color(theme.sub_text()),
         ));
 
+    if let Some(code) = sign_in_code {
+        body = body.with_child(Box::new(
+            Text::new(
+                format!("Your code: {code}. If the browser asks, approve only when it shows the same code."),
+                ui_font,
+                crate::theme::text_size(CAPTION_SIZE),
+            )
+            .with_color(theme.foreground),
+        ));
+    }
+
     if let Some(error) = auth_error {
         body = body.with_child(Box::new(
-            Text::new(error.to_string(), ui_font, crate::theme::text_size(CAPTION_SIZE)).with_color(theme.ansi_red()),
+            Text::new(
+                error.to_string(),
+                ui_font,
+                crate::theme::text_size(CAPTION_SIZE),
+            )
+            .with_color(theme.ansi_red()),
         ));
     }
 
@@ -56,8 +73,12 @@ pub fn render_browser_auth_view(
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .with_spacing(12.0)
                 .with_child(Box::new(
-                    Text::new("HAVING TROUBLE?".to_string(), ui_font, crate::theme::text_size(11.0))
-                        .with_color(theme.accent),
+                    Text::new(
+                        "HAVING TROUBLE?".to_string(),
+                        ui_font,
+                        crate::theme::text_size(11.0),
+                    )
+                    .with_color(theme.accent),
                 ))
                 .with_child(render_secondary_button(
                     theme,

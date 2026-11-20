@@ -1150,6 +1150,7 @@ impl View for Preview {
                         account_connected: true,
                         browser_auth_active: false,
                         auth_error: None,
+                        sign_in_code: None,
                         provider: if gitlab {
                             GitProvider::Gitlab
                         } else {

@@ -279,7 +279,17 @@ export default function DashboardPage() {
       setBusy(null);
     }
   };
-  const signOut = () => {
+  const signOut = async () => {
+    // End the session on the server too, so this token stops working even if
+    // it was copied. Sign out locally whatever the answer.
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token ?? ""}` },
+      });
+    } catch {
+      /* offline: the local sign-out still happens */
+    }
     clearToken();
     clearHandoff();
     window.location.reload();

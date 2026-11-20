@@ -26,41 +26,27 @@ export async function GET(
       );
     }
 
-    // Call the Go backend with redirect: "manual" to catch the 302 redirect
+    // Asked for JSON, the Go backend answers with the session itself
+    // instead of a redirect to the app.
     const goRes = await fetch(
-      `${GO_BACKEND_URL}/auth/callback/${provider}?code=${code}&state=${state}`,
-      {
-        method: "GET",
-        redirect: "manual",
-      }
+      `${GO_BACKEND_URL}/auth/callback/${provider}?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`,
+      { method: "GET", redirect: "manual", cache: "no-store", headers: { Accept: "application/json" } }
     );
 
-    const location = goRes.headers.get("location");
-    console.log(`Go backend OAuth callback status for ${provider}:`, goRes.status, "location:", location);
-
-    if (location && (location.startsWith("dragent://") || location.includes("/callback"))) {
-      // Parse query params from the redirect URL
-      const callbackUrl = new URL(location.replace("dragent://", "http://temp-placeholder.local/"));
-      const refresh_token = callbackUrl.searchParams.get("refresh_token");
-      const redirect_state = callbackUrl.searchParams.get("state");
-      const user_id = callbackUrl.searchParams.get("user_id");
-
-      if (refresh_token) {
+    if (goRes.ok) {
+      const data = await goRes.json();
+      if (data?.access_token && data?.refresh_token) {
         return NextResponse.json({
           success: true,
-          refresh_token,
-          state: redirect_state || state,
-          user_id,
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          state: data.state || state,
+          user_id: data.user_id,
         });
       }
     }
 
-    // Read details if error occurred
-    const errorText = await goRes.text();
-    return NextResponse.json(
-      { error: `Go backend authentication failed: ${errorText || "Invalid credentials"}` },
-      { status: 401 }
-    );
+    return NextResponse.json({ error: "Sign-in failed. Please try again." }, { status: 401 });
   } catch (error: unknown) {
     // The detail stays in the server log; the browser gets a plain message.
     console.error("OAuth callback proxy failed:", error);

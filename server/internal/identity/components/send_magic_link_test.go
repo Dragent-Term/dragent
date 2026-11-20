@@ -18,12 +18,29 @@ func (u lookupUsers) GetByEmail(context.Context, string) (*model.User, error) {
 	return nil, u.err
 }
 
-func TestSendMagicLinkOnlyRealMissIsUserNotFound(t *testing.T) {
+type recordMagic struct {
+	model.TokenStore
+	registration bool
+}
+
+func (s *recordMagic) SaveMagicToken(_ context.Context, _, _, _, _, _ string, isRegistration bool) error {
+	s.registration = isRegistration
+	return nil
+}
+
+type noMail struct{}
+
+func (noMail) SendMagicLink(context.Context, string, string, string) error { return nil }
+
+// A missing account gets a sign-up link, not an error the caller could tell
+// apart; an outage is still an error.
+func TestSendMagicLinkMissSendsSignUpOutageFails(t *testing.T) {
 	cmd := SendMagicLinkCommand{Email: "a@example.com", StateID: "s"}
 
-	err := NewSendMagicLinkUseCase(lookupUsers{err: sql.ErrNoRows}, nil, nil, nil).Execute(context.Background(), cmd)
-	if !errors.Is(err, ErrUserNotFound) {
-		t.Fatalf("no rows: got %v, want ErrUserNotFound", err)
+	store := &recordMagic{}
+	err := NewSendMagicLinkUseCase(lookupUsers{err: sql.ErrNoRows}, store, noMail{}, model.NewTokenService("k")).Execute(context.Background(), cmd)
+	if err != nil || !store.registration {
+		t.Fatalf("no rows: got err %v registration %v, want a sign-up link", err, store.registration)
 	}
 
 	outage := errors.New("dial tcp: connection refused")

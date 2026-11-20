@@ -103,3 +103,33 @@ pub fn exchange(refresh_token: &str) -> Result<ExchangeResult, String> {
         avatar_url: p.user.avatar_url,
     })
 }
+
+/// Wasm: nothing to sign out of server-side from the viewer.
+#[cfg(target_family = "wasm")]
+pub fn sign_out_on_server(_access_token: &str) -> Result<(), String> {
+    Ok(())
+}
+
+/// Ends this device's session on the server (the GraphQL logout mutation):
+/// its refresh token is revoked and its access tokens refused from then on.
+/// Blocking — call off the UI thread.
+#[cfg(not(target_family = "wasm"))]
+pub fn sign_out_on_server(access_token: &str) -> Result<(), String> {
+    let url = format!("{}/query", crate::api::backend_url());
+    let response = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(8))
+        .set("Authorization", &format!("Bearer {access_token}"))
+        .send_json(serde_json::json!({ "query": "mutation { logout }" }))
+        .map_err(|e| format!("network error: {e}"))?;
+    let body: serde_json::Value = response
+        .into_json()
+        .map_err(|e| format!("parse error: {e}"))?;
+    if body.pointer("/data/logout").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(format!(
+            "logout refused: {}",
+            body.get("errors").cloned().unwrap_or_default()
+        ))
+    }
+}
