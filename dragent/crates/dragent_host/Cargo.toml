@@ -17,6 +17,7 @@ base64 = { workspace = true }
 bincode = { workspace = true }
 dragent_terminal = { workspace = true }
 dirs = { workspace = true }
+dunce = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
