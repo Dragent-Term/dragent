@@ -22,10 +22,23 @@ impl Drop for App {
     }
 }
 
+/// The automation server's shared secret for this test process: passed to
+/// the app in DRAGENT_AUTOMATION_TOKEN and sent first on every connection.
+fn automation_token() -> String {
+    format!("e2e-automation-token-{:020}", std::process::id())
+}
+
 fn connect(port: u16, deadline: Instant) -> TcpStream {
     loop {
         match TcpStream::connect(("127.0.0.1", port)) {
-            Ok(s) => return s,
+            Ok(mut s) => {
+                let reply = request(
+                    &mut s,
+                    serde_json::json!({"cmd": "auth", "token": automation_token()}),
+                );
+                assert_eq!(reply["ok"], true, "automation auth refused: {reply}");
+                return s;
+            }
             Err(_) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(500));
             }
@@ -53,6 +66,7 @@ fn command_flows_through_real_app_to_completed_block() {
 
     let child = std::process::Command::new(exe)
         .env("DRAGENT_AUTOMATION_PORT", port.to_string())
+        .env("DRAGENT_AUTOMATION_TOKEN", automation_token())
         .env("DRAGENT_INDEX_DISABLE", "1") // keep the test hermetic
         .spawn()
         .expect("spawn dragent");
@@ -121,6 +135,7 @@ fn agentic_workspace_flag_and_layout_are_runtime_navigable() {
     let child = std::process::Command::new(exe)
         .current_dir(&project)
         .env("DRAGENT_AUTOMATION_PORT", port.to_string())
+        .env("DRAGENT_AUTOMATION_TOKEN", automation_token())
         .env("DRAGENT_AGENTIC_WORKSPACE", "1")
         .env("DRAGENT_INDEX_DISABLE", "1")
         .spawn()

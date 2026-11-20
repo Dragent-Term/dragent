@@ -10,6 +10,12 @@
 //! Off unless the env var is present; binds loopback only. Do not set the
 //! variable in production environments.
 //!
+//! Every connection must first send `{"cmd":"auth","token":"<t>"}` with the
+//! value of `DRAGENT_AUTOMATION_TOKEN` (at least 32 characters; without it
+//! the server doesn't start). Loopback alone isn't a boundary: any local
+//! process can connect, and a web page can POST JSON lines to a local port.
+//! A line that isn't JSON (an HTTP request line, say) ends the connection.
+//!
 //! Protocol (one JSON object per line, one JSON reply per line):
 //!   {"cmd":"ping"}                     -> {"ok":true}
 //!   {"cmd":"run","text":"echo hi"}    -> {"ok":true}         (submits a command)
@@ -64,6 +70,34 @@ fn port() -> Option<u16> {
         .and_then(|v| v.parse::<u16>().ok())
 }
 
+const MIN_TOKEN_LEN: usize = 32;
+
+/// The shared secret a client must present first, from
+/// `DRAGENT_AUTOMATION_TOKEN`. None (server stays off) when missing or short.
+fn token() -> Option<String> {
+    std::env::var("DRAGENT_AUTOMATION_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| t.len() >= MIN_TOKEN_LEN)
+}
+
+/// Constant-time comparison, so the reply time says nothing about the token.
+fn same_secret(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Whether a connection's first line authenticates it.
+fn authenticates(line: &str, expected: &str) -> bool {
+    let Ok(req) = serde_json::from_str::<serde_json::Value>(line) else {
+        return false;
+    };
+    req.get("cmd").and_then(|c| c.as_str()) == Some("auth")
+        && req
+            .get("token")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| same_secret(t.as_bytes(), expected.as_bytes()))
+}
+
 /// Register the first terminal session with the automation server (if
 /// `DRAGENT_AUTOMATION_PORT` is set) and start it. Later sessions are no-ops so
 /// the (core, writer) pair always refers to the same session.
@@ -79,6 +113,12 @@ pub fn maybe_start(core: Arc<FairMutex<TerminalSessionCore>>, writer: PtyWriter)
 /// bridge, whichever comes first.
 fn start_server() {
     let Some(port) = port() else {
+        return;
+    };
+    let Some(token) = token() else {
+        log::error!(
+            "[automation] DRAGENT_AUTOMATION_PORT is set but DRAGENT_AUTOMATION_TOKEN is missing or shorter than {MIN_TOKEN_LEN} characters; not starting"
+        );
         return;
     };
     static STARTED: Once = Once::new();
@@ -100,7 +140,7 @@ fn start_server() {
             };
             log::info!("[automation] listening on 127.0.0.1:{port}");
             for stream in listener.incoming().flatten() {
-                if let Err(e) = serve(stream) {
+                if let Err(e) = serve(stream, &token) {
                     log::warn!("[automation] connection ended: {e}");
                 }
             }
@@ -108,13 +148,30 @@ fn start_server() {
         .expect("spawn automation server");
 }
 
-fn serve(stream: TcpStream) -> std::io::Result<()> {
+fn serve(stream: TcpStream, token: &str) -> std::io::Result<()> {
     let mut out = stream.try_clone()?;
     let reader = BufReader::new(stream);
+    let mut authenticated = false;
     for line in reader.lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
+        }
+        if !authenticated {
+            if !authenticates(&line, token) {
+                let _ = out.write_all(b"{\"ok\":false,\"error\":\"unauthorized\"}\n");
+                return Ok(());
+            }
+            authenticated = true;
+            out.write_all(b"{\"ok\":true}\n")?;
+            out.flush()?;
+            continue;
+        }
+        // Anything but JSON ends the connection: no request smuggled
+        // inside another protocol gets a second line.
+        if serde_json::from_str::<serde_json::Value>(&line).is_err() {
+            let _ = out.write_all(b"{\"ok\":false,\"error\":\"bad json\"}\n");
+            return Ok(());
         }
         let reply = match TERMINAL.get() {
             Some(terminal) => {
@@ -290,7 +347,10 @@ pub enum WorkspaceAutomationCommand {
     Shape(String),
     Approve,
     SelectLayout(String),
-    OpenBrowser { target: String, url: Option<String> },
+    OpenBrowser {
+        target: String,
+        url: Option<String>,
+    },
     NavigateBrowser(String),
     /// Open a link the way a click on it does.
     OpenLink(String),
@@ -298,11 +358,20 @@ pub enum WorkspaceAutomationCommand {
     ToggleNewTabMenu,
     OpenProject(std::path::PathBuf),
     OpenAgent(String),
-    StartPrompt { agent: String, prompt: String, project: std::path::PathBuf },
+    StartPrompt {
+        agent: String,
+        prompt: String,
+        project: std::path::PathBuf,
+    },
     SelectTheme(String),
     AgentPanes(std::sync::mpsc::Sender<serde_json::Value>),
-    Commit { message: String, push: bool },
-    GitSync { pull: bool },
+    Commit {
+        message: String,
+        push: bool,
+    },
+    GitSync {
+        pull: bool,
+    },
     GitPanel(std::sync::mpsc::Sender<serde_json::Value>),
     /// Reply with each browser pane's live state (read on the UI thread).
     Browsers(std::sync::mpsc::Sender<serde_json::Value>),
@@ -430,11 +499,16 @@ fn handle_workspace_cmd(req: &serde_json::Value) -> Option<serde_json::Value> {
                 .get("url")
                 .and_then(|value| value.as_str())
                 .map(str::to_string);
-            send_workspace(bridge, WorkspaceAutomationCommand::OpenBrowser { target, url })
+            send_workspace(
+                bridge,
+                WorkspaceAutomationCommand::OpenBrowser { target, url },
+            )
         }
         "workspace_browser_navigate" => {
             let Some(url) = req.get("url").and_then(|value| value.as_str()) else {
-                return Some(json!({"ok": false, "error": "workspace_browser_navigate requires url"}));
+                return Some(
+                    json!({"ok": false, "error": "workspace_browser_navigate requires url"}),
+                );
             };
             send_workspace(
                 bridge,
@@ -445,11 +519,16 @@ fn handle_workspace_cmd(req: &serde_json::Value) -> Option<serde_json::Value> {
             let Some(url) = req.get("url").and_then(|value| value.as_str()) else {
                 return Some(json!({"ok": false, "error": "workspace_open_link requires url"}));
             };
-            send_workspace(bridge, WorkspaceAutomationCommand::OpenLink(url.to_string()))
+            send_workspace(
+                bridge,
+                WorkspaceAutomationCommand::OpenLink(url.to_string()),
+            )
         }
         "workspace_browser_action" => {
             let Some(action) = req.get("action").and_then(|value| value.as_str()) else {
-                return Some(json!({"ok": false, "error": "workspace_browser_action requires action"}));
+                return Some(
+                    json!({"ok": false, "error": "workspace_browser_action requires action"}),
+                );
             };
             send_workspace(
                 bridge,
@@ -460,7 +539,10 @@ fn handle_workspace_cmd(req: &serde_json::Value) -> Option<serde_json::Value> {
             let Some(agent) = req.get("agent").and_then(|v| v.as_str()) else {
                 return Some(json!({"ok": false, "error": "workspace_open_agent requires agent"}));
             };
-            send_workspace(bridge, WorkspaceAutomationCommand::OpenAgent(agent.to_string()))
+            send_workspace(
+                bridge,
+                WorkspaceAutomationCommand::OpenAgent(agent.to_string()),
+            )
         }
         "workspace_start_prompt" => {
             let (Some(agent), Some(prompt), Some(project)) = (
@@ -468,7 +550,9 @@ fn handle_workspace_cmd(req: &serde_json::Value) -> Option<serde_json::Value> {
                 req.get("prompt").and_then(|v| v.as_str()),
                 req.get("project").and_then(|v| v.as_str()),
             ) else {
-                return Some(json!({"ok": false, "error": "workspace_start_prompt requires agent, prompt and project"}));
+                return Some(
+                    json!({"ok": false, "error": "workspace_start_prompt requires agent, prompt and project"}),
+                );
             };
             send_workspace(
                 bridge,
@@ -481,9 +565,14 @@ fn handle_workspace_cmd(req: &serde_json::Value) -> Option<serde_json::Value> {
         }
         "workspace_select_theme" => {
             let Some(theme) = req.get("theme").and_then(|v| v.as_str()) else {
-                return Some(json!({"ok": false, "error": "workspace_select_theme requires theme"}));
+                return Some(
+                    json!({"ok": false, "error": "workspace_select_theme requires theme"}),
+                );
             };
-            send_workspace(bridge, WorkspaceAutomationCommand::SelectTheme(theme.to_string()))
+            send_workspace(
+                bridge,
+                WorkspaceAutomationCommand::SelectTheme(theme.to_string()),
+            )
         }
         "workspace_agent_panes" => {
             let (reply_tx, reply_rx) = std::sync::mpsc::channel();
@@ -515,12 +604,19 @@ fn handle_workspace_cmd(req: &serde_json::Value) -> Option<serde_json::Value> {
             }
         }
         "workspace_diff_comment" => {
-            let action = req.get("action").and_then(|value| value.as_str()).unwrap_or("state");
+            let action = req
+                .get("action")
+                .and_then(|value| value.as_str())
+                .unwrap_or("state");
             let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-            if let Err(error) = bridge.command_tx.send_blocking(WorkspaceAutomationCommand::DiffComment {
-                action: action.to_string(),
-                reply: reply_tx,
-            }) {
+            if let Err(error) =
+                bridge
+                    .command_tx
+                    .send_blocking(WorkspaceAutomationCommand::DiffComment {
+                        action: action.to_string(),
+                        reply: reply_tx,
+                    })
+            {
                 return Some(json!({"ok": false, "error": format!("send: {error}")}));
             }
             match reply_rx.recv_timeout(std::time::Duration::from_secs(5)) {
@@ -537,19 +633,32 @@ fn handle_workspace_cmd(req: &serde_json::Value) -> Option<serde_json::Value> {
         "workspace_commit" => send_workspace(
             bridge,
             WorkspaceAutomationCommand::Commit {
-                message: req.get("message").and_then(|value| value.as_str()).unwrap_or("Commit").into(),
-                push: req.get("push").and_then(|value| value.as_bool()).unwrap_or(false),
+                message: req
+                    .get("message")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("Commit")
+                    .into(),
+                push: req
+                    .get("push")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false),
             },
         ),
         "workspace_git_sync" => send_workspace(
             bridge,
             WorkspaceAutomationCommand::GitSync {
-                pull: req.get("pull").and_then(|value| value.as_bool()).unwrap_or(false),
+                pull: req
+                    .get("pull")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false),
             },
         ),
         "workspace_git_panel" => {
             let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-            if let Err(error) = bridge.command_tx.send_blocking(WorkspaceAutomationCommand::GitPanel(reply_tx)) {
+            if let Err(error) = bridge
+                .command_tx
+                .send_blocking(WorkspaceAutomationCommand::GitPanel(reply_tx))
+            {
                 return Some(json!({"ok": false, "error": format!("send: {error}")}));
             }
             match reply_rx.recv_timeout(std::time::Duration::from_secs(5)) {
@@ -560,8 +669,15 @@ fn handle_workspace_cmd(req: &serde_json::Value) -> Option<serde_json::Value> {
         "workspace_browser_tool" => {
             let (reply_tx, reply_rx) = std::sync::mpsc::channel();
             let command = WorkspaceAutomationCommand::BrowserTool {
-                pane: req.get("pane").and_then(|value| value.as_str()).map(str::to_string),
-                tool: req.get("tool").and_then(|value| value.as_str()).unwrap_or_default().to_string(),
+                pane: req
+                    .get("pane")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                tool: req
+                    .get("tool")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
                 arguments: req.get("arguments").cloned().unwrap_or_else(|| json!({})),
                 reply: reply_tx,
             };
@@ -718,4 +834,49 @@ fn handle_agent_cmd(req: &serde_json::Value) -> Option<serde_json::Value> {
         }
         _ => unreachable!(),
     })
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    const T: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn only_the_right_token_authenticates() {
+        assert!(authenticates(
+            &format!(r#"{{"cmd":"auth","token":"{T}"}}"#),
+            T
+        ));
+        assert!(!authenticates(r#"{"cmd":"auth","token":"wrong"}"#, T));
+        assert!(!authenticates(r#"{"cmd":"run","text":"id"}"#, T));
+        assert!(!authenticates("POST / HTTP/1.1", T));
+    }
+
+    #[test]
+    fn short_tokens_are_refused() {
+        assert!(MIN_TOKEN_LEN >= 32);
+        assert!(!same_secret(b"abc", b"abcd"));
+        assert!(same_secret(b"abcd", b"abcd"));
+    }
+
+    #[test]
+    fn an_http_request_gets_nowhere() {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            serve(stream, T).unwrap();
+        });
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .write_all(b"POST / HTTP/1.1\r\nHost: x\r\n\r\n{\"cmd\":\"quit\"}\n")
+            .unwrap();
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).unwrap();
+        server.join().unwrap();
+        assert_eq!(reply.lines().count(), 1, "got: {reply}");
+        assert!(reply.contains("unauthorized"));
+    }
 }
