@@ -2,12 +2,13 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { setToken } from "@/lib/token";
+import { stashHandoff } from "@/lib/desktopHandoff";
 import { 
   CheckCircle2, 
   XCircle, 
   Loader2, 
-  ArrowRight, 
-  ExternalLink 
+  ArrowRight
 } from "lucide-react";
 
 function OAuthCallbackContent() {
@@ -43,40 +44,42 @@ function OAuthCallbackContent() {
           throw new Error(data.error || "Authentication failed");
         }
 
-        setSession({
-          refresh_token: data.refresh_token,
-          state: data.state,
-          user_id: data.user_id,
-        });
+        // This browser is signed in from here on.
+        setToken(data.access_token);
 
         // Social sign-in runs in a window.open() popup. Hand the result back to
-        // the opener and close, instead of leaving the user staring at a stray
-        // window with "you can close this tab" on it.
+        // the opener (our own /login page, same origin) and close.
         const opened = Boolean(window.opener) && window.opener !== window;
         if (opened) {
           try {
-            // Same-origin: the opener is our own /login page.
             window.opener.postMessage(
-              { type: "dragent:oauth-complete", state: data.state },
+              {
+                type: "dragent:oauth-complete",
+                state: data.state,
+                access_token: data.access_token,
+                refresh_token: data.refresh_token,
+                user_id: data.user_id ?? "",
+              },
               window.location.origin
             );
           } catch {
-            // Opener gone (user closed it) — the poll on /login still resolves,
-            // so closing is still the right move.
+            // Opener gone: the token is saved, so the dashboard still works.
           }
           window.close();
           return;
         }
 
-        // Not a popup (provider bounced the whole tab, or popups blocked):
-        // fall back to the deep link so the desktop app still gets the token.
-        const deepLink = `dragent://auth/callback?refresh_token=${encodeURIComponent(
-          data.refresh_token
-        )}&state=${encodeURIComponent(data.state)}&user_id=${encodeURIComponent(data.user_id || "")}`;
-
-        setTimeout(() => {
-          window.location.href = deepLink;
-        }, 1500);
+        // Not a popup (the provider took over the whole tab, or popups were
+        // blocked): finish on the dashboard, which offers the hand-off to the
+        // app (open it, or approve it with the code it shows).
+        stashHandoff({
+          scheme: "dragent",
+          state: data.state,
+          refresh_token: data.refresh_token,
+          user_id: data.user_id ?? "",
+        });
+        setSession({ refresh_token: data.refresh_token, state: data.state, user_id: data.user_id });
+        router.replace("/dashboard");
 
       } catch (err: unknown) {
         console.error("OAuth exchange failed:", err);
@@ -87,7 +90,7 @@ function OAuthCallbackContent() {
     };
 
     verifyOAuth();
-  }, [provider, code, state]);
+  }, [provider, code, state, router]);
 
   const capitalize = (str: string) => str ? str.charAt(0).toUpperCase() + str.slice(1) : "";
 
@@ -133,38 +136,9 @@ function OAuthCallbackContent() {
             </button>
           </div>
         ) : session ? (
-          <div className="py-4 space-y-6 text-left">
-            <div className="flex items-center gap-4 p-4 rounded-xl bg-brand-emerald/10 border border-brand-emerald/20">
-              <CheckCircle2 className="w-8 h-8 text-brand-emerald shrink-0 animate-bounce" />
-              <div>
-                <h2 className="text-md font-bold text-white">Login Authorized!</h2>
-                <p className="text-xs text-gray-400">Syncing with desktop client...</p>
-              </div>
-            </div>
-
-            <p className="text-sm text-gray-400 font-inter text-center">
-              Your browser is redirecting you back to the desktop application. You can close this tab afterwards.
-            </p>
-
-            <button
-              onClick={() => {
-                const deepLink = `dragent://auth/callback?refresh_token=${encodeURIComponent(
-                  session.refresh_token
-                )}&state=${encodeURIComponent(session.state)}&user_id=${encodeURIComponent(session.user_id || "")}`;
-                window.location.href = deepLink;
-              }}
-              className="w-full py-3.5 bg-brand-cyan hover:bg-brand-cyan/90 text-white font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 text-sm shadow-lg shadow-brand-cyan/20"
-            >
-              <span>Redirect to Desktop App</span>
-              <ExternalLink className="w-4 h-4" />
-            </button>
-            
-            <div className="bg-[#080808] border border-white/5 rounded-xl p-4 font-mono text-[11px] text-gray-500">
-              <div className="text-gray-400 font-bold mb-1.5 uppercase tracking-wider text-[9px]">Redirect Payload:</div>
-              <div className="truncate">Token: {session.refresh_token}</div>
-              <div>State: {session.state.substring(0, 16)}...</div>
-              <div>Identity: {session.user_id || "authorized"}</div>
-            </div>
+          <div className="py-8 space-y-4">
+            <CheckCircle2 className="w-10 h-10 text-brand-emerald mx-auto" />
+            <p className="text-sm text-gray-400 font-inter">Signed in. Taking you to your dashboard...</p>
           </div>
         ) : null}
       </div>

@@ -182,6 +182,12 @@ func (r *PostgresUserRepository) RevokeTokenFamily(ctx context.Context, familyID
 	return err
 }
 
+func (r *PostgresUserRepository) RevokeDeviceTokens(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) error {
+	db := r.getDB()
+	_, err := db.Exec(ctx, `UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND device_id = $2 AND revoked_at IS NULL`, userID, deviceID)
+	return err
+}
+
 type PostgresTxManager struct {
 	pool *pgxpool.Pool
 }

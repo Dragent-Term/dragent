@@ -94,6 +94,8 @@ type UserRepository interface {
 	GetRefreshTokenByHash(ctx context.Context, hash string) (*RefreshToken, error)
 	RevokeToken(ctx context.Context, id uuid.UUID) error
 	RevokeTokenFamily(ctx context.Context, familyID uuid.UUID) error
+	// RevokeDeviceTokens revokes every refresh token of one signed-in device.
+	RevokeDeviceTokens(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) error
 
 	WithTx(tx any) UserRepository
 }
@@ -103,8 +105,19 @@ type TokenStore interface {
 	GetMagicToken(ctx context.Context, tokenHash string) (email string, stateID string, firstName string, lastName string, isRegistration bool, err error)
 	DeleteMagicToken(ctx context.Context, tokenHash string) error
 
-	AuthorizeState(ctx context.Context, stateID string, accessToken string, refreshToken string) error
+	// AuthorizeState parks a finished sign-in under its state. It isn't
+	// handed out yet: whoever started the sign-in only chose the state, so
+	// knowing it proves nothing. The signed-in user approves it first.
+	AuthorizeState(ctx context.Context, stateID string, userID string, accessToken string, refreshToken string) error
+	// ApproveState releases a parked sign-in, only to the user it belongs to.
+	ApproveState(ctx context.Context, stateID string, userID string) error
+	// GetAuthorizedState returns the tokens of an approved sign-in only.
 	GetAuthorizedState(ctx context.Context, stateID string) (accessToken string, refreshToken string, err error)
+
+	// SignOutDevice ends a device's session: its access tokens are refused
+	// from now on, though they haven't expired.
+	SignOutDevice(ctx context.Context, deviceID string) error
+	IsDeviceSignedOut(ctx context.Context, deviceID string) (bool, error)
 }
 
 type Mailer interface {

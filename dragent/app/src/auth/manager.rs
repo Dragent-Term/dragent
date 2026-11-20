@@ -66,8 +66,14 @@ impl SingletonEntity for AuthManager {}
 impl AuthManager {
     /// Credential-free model for isolated UI captures; never restores a real session.
     pub(crate) fn preview(_ctx: &mut ModelContext<Self>) -> Self {
-        Self { status: AuthStatus::LoggedOut, pending_state: None, refresh_token: None,
-            access_token: None, access_token_expires_at: None, session_epoch: 0 }
+        Self {
+            status: AuthStatus::LoggedOut,
+            pending_state: None,
+            refresh_token: None,
+            access_token: None,
+            access_token_expires_at: None,
+            session_epoch: 0,
+        }
     }
 
     /// Flip an isolated UI capture between its signed-out and signed-in pages.
@@ -427,7 +433,35 @@ impl AuthManager {
         ctx.notify();
     }
 
+    /// The code to match in the browser while a sign-in is waiting.
+    pub fn pending_sign_in_code(&self) -> Option<String> {
+        if !matches!(self.status, AuthStatus::SigningIn) {
+            return None;
+        }
+        self.pending_state.as_deref().map(super::code::sign_in_code)
+    }
+
     pub fn log_out(&mut self, ctx: &mut ModelContext<Self>) {
+        // End the session on the server too, so a copied token stops working.
+        // In the background, and best effort: signing out here never waits
+        // on the network.
+        let access = self.access_token.clone();
+        let refresh = self.refresh_token.clone();
+        if access.is_some() || refresh.is_some() {
+            std::thread::spawn(move || {
+                let access = match access {
+                    Some(token) => Some(token),
+                    None => refresh
+                        .and_then(|r| super::token_exchange::exchange(&r).ok())
+                        .map(|e| e.access_token),
+                };
+                if let Some(token) = access {
+                    if let Err(err) = super::token_exchange::sign_out_on_server(&token) {
+                        warn!("server sign-out failed: {err}");
+                    }
+                }
+            });
+        }
         if let Err(err) = clear_refresh_token() {
             warn!("failed to clear keychain session: {err:#}");
         }

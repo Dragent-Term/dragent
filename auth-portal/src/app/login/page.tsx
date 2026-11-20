@@ -78,7 +78,9 @@ function LoginDesktopContent() {
     }
   }, [searchParams]);
 
-  // Polling loop for session status check
+  // Polling loop for session status check. It only resolves once a sign-in
+  // finished elsewhere (a magic link opened on another device) has been
+  // approved there; the same-browser cases arrive by message or storage.
   useEffect(() => {
     if (!state || session || pollingTimedOut) return;
 
@@ -140,6 +142,36 @@ function LoginDesktopContent() {
     return () => clearInterval(timer);
   }, [state, session, pollingTimedOut]);
 
+  // The GitHub/Google popup hands its result back here (same origin only).
+  useEffect(() => {
+    if (!state) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data;
+      if (!data || data.type !== "dragent:oauth-complete" || data.state !== state) return;
+      if (typeof data.access_token !== "string" || !data.access_token) return;
+      setToken(data.access_token);
+      if (searchParams.get("state") && typeof data.refresh_token === "string") {
+        stashHandoff({ scheme, state, refresh_token: data.refresh_token, user_id: data.user_id ?? "" });
+      }
+      setSession({ access_token: data.access_token, refresh_token: data.refresh_token, user_id: data.user_id });
+      router.replace(safeNext(searchParams.get("next")));
+    };
+    // A magic link opened in another tab of this browser signs that tab in;
+    // follow it rather than waiting here.
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "dragent_token" && event.newValue) {
+        router.replace(safeNext(searchParams.get("next")));
+      }
+    };
+    window.addEventListener("message", onMessage);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [state, scheme, searchParams, router]);
+
   // Social Login Popup Launcher
   const handleSocialLogin = (provider: "github" | "google") => {
     if (loading) return;
@@ -181,12 +213,6 @@ function LoginDesktopContent() {
       });
 
       const data = await res.json();
-
-      if (res.status === 404 || data.error === "user does not exist") {
-        setError("No account found for this email. Create one below.");
-        setMode("signup");
-        return;
-      }
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to request magic link");

@@ -15,16 +15,40 @@ import (
 	"server/internal/platform/ratelimit"
 )
 
-// unknownUsers answers every lookup with "not found", so requests stop at
-// the 404 path without needing a token store or mailer.
+// unknownUsers answers every lookup with "not found".
 type unknownUsers struct{ model.UserRepository }
 
 func (unknownUsers) GetByEmail(context.Context, string) (*model.User, error) {
 	return nil, sql.ErrNoRows
 }
 
+// savedMagic records the magic links a request stores.
+type savedMagic struct {
+	model.TokenStore
+	registrations []bool
+}
+
+func (s *savedMagic) SaveMagicToken(_ context.Context, _ string, _ string, _ string, _ string, _ string, isRegistration bool) error {
+	s.registrations = append(s.registrations, isRegistration)
+	return nil
+}
+
+// sentMail counts the magic links sent.
+type sentMail struct{ to []string }
+
+func (m *sentMail) SendMagicLink(_ context.Context, email string, _ string, _ string) error {
+	m.to = append(m.to, email)
+	return nil
+}
+
+func newMagicHandlers(users model.UserRepository) (*AuthHandlers, *savedMagic, *sentMail) {
+	store, mail := &savedMagic{}, &sentMail{}
+	uc := components.NewSendMagicLinkUseCase(users, store, mail, model.NewTokenService("test-secret-test-secret-test-secret"))
+	return NewAuthHandlers(uc, nil, nil, nil, nil, nil), store, mail
+}
+
 func newLimitedHandlers(l MagicLinkLimits) *AuthHandlers {
-	h := NewAuthHandlers(components.NewSendMagicLinkUseCase(unknownUsers{}, nil, nil, nil), nil, nil, nil, nil, nil)
+	h, _, _ := newMagicHandlers(unknownUsers{})
 	h.SetMagicLinkLimits(l)
 	return h
 }
@@ -48,16 +72,16 @@ func serve(h *AuthHandlers, r *http.Request) *httptest.ResponseRecorder {
 func TestMagicLinkPerEmailLimit(t *testing.T) {
 	h := newLimitedHandlers(MagicLinkLimits{PerEmail: ratelimit.NewMemoryRateLimiter(2, 15*time.Minute, nil)})
 	for i, email := range []string{"a@example.com", " A@Example.com "} {
-		if w := serve(h, magicRequest(email, "198.51.100.1:1", nil)); w.Code != http.StatusNotFound {
-			t.Fatalf("request %d: status %d, want 404", i+1, w.Code)
+		if w := serve(h, magicRequest(email, "198.51.100.1:1", nil)); w.Code != http.StatusOK {
+			t.Fatalf("request %d: status %d, want 200", i+1, w.Code)
 		}
 	}
 	w := serve(h, magicRequest("a@example.com", "198.51.100.2:1", nil))
 	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
 		t.Fatalf("third request for the same inbox: status %d Retry-After %q, want 429 with Retry-After", w.Code, w.Header().Get("Retry-After"))
 	}
-	if w := serve(h, magicRequest("b@example.com", "198.51.100.2:1", nil)); w.Code != http.StatusNotFound {
-		t.Fatalf("other inbox: status %d, want 404", w.Code)
+	if w := serve(h, magicRequest("b@example.com", "198.51.100.2:1", nil)); w.Code != http.StatusOK {
+		t.Fatalf("other inbox: status %d, want 200", w.Code)
 	}
 }
 
@@ -70,12 +94,12 @@ func TestMagicLinkPerIPLimitUsesPortalForwardedIP(t *testing.T) {
 	visitor := func(ip string) map[string]string {
 		return map[string]string{PortalSecretHeader: "s3cret", PortalClientIPHeader: ip}
 	}
-	if w := serve(h, magicRequest("a@example.com", portal, visitor("203.0.113.7"))); w.Code != http.StatusNotFound {
-		t.Fatalf("first visitor: status %d, want 404", w.Code)
+	if w := serve(h, magicRequest("a@example.com", portal, visitor("203.0.113.7"))); w.Code != http.StatusOK {
+		t.Fatalf("first visitor: status %d, want 200", w.Code)
 	}
 	// A different visitor behind the same portal is not throttled.
-	if w := serve(h, magicRequest("b@example.com", portal, visitor("203.0.113.8"))); w.Code != http.StatusNotFound {
-		t.Fatalf("second visitor: status %d, want 404", w.Code)
+	if w := serve(h, magicRequest("b@example.com", portal, visitor("203.0.113.8"))); w.Code != http.StatusOK {
+		t.Fatalf("second visitor: status %d, want 200", w.Code)
 	}
 	if w := serve(h, magicRequest("c@example.com", portal, visitor("203.0.113.7"))); w.Code != http.StatusTooManyRequests {
 		t.Fatalf("repeat visitor: status %d, want 429", w.Code)
@@ -103,16 +127,16 @@ func TestMagicLinkCloudflareIPPreferred(t *testing.T) {
 	})
 	cf := func(ip string) map[string]string { return map[string]string{"CF-Connecting-IP": ip} }
 	serve(h, magicRequest("a@example.com", "172.64.0.1:1", cf("203.0.113.1")))
-	if w := serve(h, magicRequest("b@example.com", "172.64.0.1:1", cf("203.0.113.2"))); w.Code != http.StatusNotFound {
-		t.Fatalf("different Cloudflare visitor: status %d, want 404", w.Code)
+	if w := serve(h, magicRequest("b@example.com", "172.64.0.1:1", cf("203.0.113.2"))); w.Code != http.StatusOK {
+		t.Fatalf("different Cloudflare visitor: status %d, want 200", w.Code)
 	}
 }
 
 func TestMagicLinkSkipsIPLimitWithoutPortalSecret(t *testing.T) {
 	h := newLimitedHandlers(MagicLinkLimits{PerIP: ratelimit.NewMemoryRateLimiter(1, 15*time.Minute, nil)})
 	for i := 0; i < 3; i++ {
-		if w := serve(h, magicRequest(fmt.Sprintf("u%d@example.com", i), "10.0.0.5:443", nil)); w.Code != http.StatusNotFound {
-			t.Fatalf("request %d: status %d, want 404 (per-IP limit off without the portal secret)", i+1, w.Code)
+		if w := serve(h, magicRequest(fmt.Sprintf("u%d@example.com", i), "10.0.0.5:443", nil)); w.Code != http.StatusOK {
+			t.Fatalf("request %d: status %d, want 200 (per-IP limit off without the portal secret)", i+1, w.Code)
 		}
 	}
 }

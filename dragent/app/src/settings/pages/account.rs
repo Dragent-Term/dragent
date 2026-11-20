@@ -287,13 +287,16 @@ pub fn render_account(view: &SettingsView, theme: &Theme, app: &AppContext) -> B
             "Top-up credits",
             Some("Purchased credits never expire and are separate from your plan."),
             Box::new(
-                Text::new(format!("{credits} credits"), ui, crate::theme::text_size(12.5)).with_color(
-                    if deposit_mc > 0 {
-                        theme.main_text()
-                    } else {
-                        theme.sub_text()
-                    },
-                ),
+                Text::new(
+                    format!("{credits} credits"),
+                    ui,
+                    crate::theme::text_size(12.5),
+                )
+                .with_color(if deposit_mc > 0 {
+                    theme.main_text()
+                } else {
+                    theme.sub_text()
+                }),
             ),
         ));
         usage_rows.push(toggle_row(
@@ -348,13 +351,23 @@ pub fn render_account(view: &SettingsView, theme: &Theme, app: &AppContext) -> B
             ],
         )
     } else {
+        // While a browser sign-in waits, show the code the browser asks the
+        // user to match before approving.
+        let sign_in_desc = app
+            .read_model(&auth, |a, _| a.pending_sign_in_code())
+            .map(|code| {
+                format!(
+                    "Waiting for the browser. Your code: {code}. Approve there only if it shows the same code."
+                )
+            })
+            .unwrap_or_else(|| "Connect your Dragent account to unlock AI features.".to_string());
         card_rows(
             theme,
             vec![setting_row(
                 theme,
                 ui,
                 "Sign in",
-                Some("Connect your Dragent account to unlock AI features."),
+                Some(&sign_in_desc),
                 primary_button(
                     theme,
                     ui,

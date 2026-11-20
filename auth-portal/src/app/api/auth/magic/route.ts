@@ -92,64 +92,28 @@ export async function GET(request: Request) {
       );
     }
 
-    // Call the Go backend with redirect: "manual" to catch the 302 redirect
+    // Asked for JSON, the Go backend answers with the session itself: an
+    // access token for this browser and a separate refresh token for the
+    // Dragent app. (The app's copy is also parked for it to collect by
+    // polling, once the user approves it on the dashboard.)
     const goRes = await fetch(
-      `${GO_BACKEND_URL}/auth/magic?token=${token}&state=${state}`,
-      {
-        method: "GET",
-        redirect: "manual",
-      }
+      `${GO_BACKEND_URL}/auth/magic?token=${encodeURIComponent(token)}&state=${encodeURIComponent(state)}`,
+      { method: "GET", redirect: "manual", cache: "no-store", headers: { Accept: "application/json" } }
     );
 
-    const location = goRes.headers.get("location");
-    console.log("Go backend magic link redirect status:", goRes.status, "location:", location);
-
-    if (location && (location.startsWith("dragent://") || location.includes("/callback"))) {
-      // Parse query params from the redirect URL
-      const callbackUrl = new URL(location.replace("dragent://", "http://temp-placeholder.local/"));
-      const refresh_token = callbackUrl.searchParams.get("refresh_token");
-      const redirect_state = callbackUrl.searchParams.get("state");
-      const user_id = callbackUrl.searchParams.get("user_id");
-
-      if (refresh_token) {
-        // The backend's redirect only carries a REFRESH token, but the dashboard
-        // authenticates with a Bearer ACCESS token — so verifying a magic link
-        // was not by itself enough to browse signed in.
-        //
-        // VerifyMagicLink has already called AuthorizeState by the time it
-        // redirects, so the access token is sitting under `poll:<state>`. Read
-        // it the same way the desktop app and the polling /login tab do.
-        // GetAuthorizedState is a plain GET with a 10-minute TTL, not a
-        // consuming read, so this does not steal the session from either of
-        // them (see internal/identity/model/redis.go).
-        let access_token: string | null = null;
-        try {
-          const sessionRes = await fetch(
-            `${GO_BACKEND_URL}/auth/desktop/session?state=${encodeURIComponent(
-              redirect_state || state
-            )}`,
-            { cache: "no-store" }
-          );
-          if (sessionRes.ok) {
-            access_token = (await sessionRes.json()).access_token ?? null;
-          }
-        } catch (err) {
-          // Non-fatal: the link itself verified. The client reports that it
-          // cannot open the dashboard rather than pretending sign-in failed.
-          console.error("Magic link verified but access-token lookup failed:", err);
-        }
-
+    if (goRes.ok) {
+      const data = await goRes.json();
+      if (data?.access_token && data?.refresh_token) {
         return NextResponse.json({
           success: true,
-          access_token,
-          refresh_token,
-          state: redirect_state || state,
-          user_id,
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          state: data.state || state,
+          user_id: data.user_id,
         });
       }
     }
 
-    // If redirect didn't have the token, return error
     return NextResponse.json(
       { error: "Failed to verify magic link token. Link might be expired or invalid." },
       { status: 401 }

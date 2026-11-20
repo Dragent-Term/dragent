@@ -105,6 +105,8 @@ func main() {
 	userRepo := model.NewPostgresUserRepository(db.Pool)
 	txManager := model.NewPostgresTxManager(db.Pool)
 	tokenStore := model.NewRedisTokenStore(rClient.Rdb)
+	// Logout ends a session everywhere its access token is checked.
+	tokenService.SetSignedOutCheck(tokenStore.IsDeviceSignedOut)
 
 	appBaseURL := "http://localhost:" + cfg.Port
 	if os.Getenv("DRAGENT_WEB_ORIGIN") != "" {
@@ -501,6 +503,7 @@ func main() {
 		rr.Get("/auth/callback/github", authHandlers.GitHubCallback)
 		rr.Get("/auth/callback/google", authHandlers.GoogleCallback)
 		rr.Get("/auth/desktop/session", authHandlers.PollDesktopSession)
+		rr.With(RequireAuth).Post("/auth/desktop/approve", authHandlers.ApproveDesktopSession)
 
 		// GraphQL endpoint and playground
 		// No playground and no introspection outside dev/local; see
@@ -763,6 +766,8 @@ func AuthMiddleware(tokenService *model.TokenService) func(http.Handler) http.Ha
 			}
 
 			ctx = context.WithValue(ctx, "user_id", claims.UserID.String())
+			// The signed-in device, so logout can end this session only.
+			ctx = context.WithValue(ctx, "device_id", claims.DeviceID.String())
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

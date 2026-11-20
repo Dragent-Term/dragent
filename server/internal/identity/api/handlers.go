@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -92,21 +91,32 @@ func (h *AuthHandlers) RequestMagicLink(w http.ResponseWriter, r *http.Request) 
 		IsRegistration: req.IsRegistration,
 	}
 
-	err := h.sendMagicLinkUseCase.Execute(r.Context(), cmd)
-	if err != nil {
-		if errors.Is(err, components.ErrUserNotFound) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "user does not exist"})
-			return
-		}
+	if err := h.sendMagicLinkUseCase.Execute(r.Context(), cmd); err != nil {
 		slog.Error("failed to process magic link request", "error", err)
 		http.Error(w, "failed to request magic link", http.StatusInternalServerError)
 		return
 	}
 
+	// Same answer whether or not the address has an account.
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// wantsJSON is the sign-in portal calling server to server: it gets the
+// session in the response body instead of a redirect to the app.
+func wantsJSON(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "application/json")
+}
+
+func writeSignInJSON(w http.ResponseWriter, accessToken, refreshToken, stateID string, userID uuid.UUID) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+		"state":         stateID,
+		"user_id":       userID.String(),
+	})
 }
 
 // GET /auth/magic?token=xyz&state=abc
@@ -125,9 +135,13 @@ func (h *AuthHandlers) VerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("<html><body><h3>Link expired or invalid. Please try signing in again.</h3></body></html>"))
 		return
 	}
+	if wantsJSON(r) {
+		writeSignInJSON(w, result.AccessToken, result.RefreshToken, result.StateID, result.UserID)
+		return
+	}
 
 	deepLink := fmt.Sprintf("dragent://auth/callback?refresh_token=%s&state=%s&user_id=%s",
-		result.RefreshToken, result.StateID, result.UserID.String())
+		url.QueryEscape(result.RefreshToken), url.QueryEscape(result.StateID), url.QueryEscape(result.UserID.String()))
 
 	w.Header().Set("Location", deepLink)
 	w.WriteHeader(http.StatusFound)
@@ -172,6 +186,10 @@ func (h *AuthHandlers) oauthCallback(w http.ResponseWriter, r *http.Request, pro
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
+	if wantsJSON(r) {
+		writeSignInJSON(w, result.AccessToken, result.RefreshToken, result.StateID, result.UserID)
+		return
+	}
 
 	deepLink := fmt.Sprintf("dragent://auth/callback?refresh_token=%s&state=%s&user_id=%s",
 		url.QueryEscape(result.RefreshToken), url.QueryEscape(result.StateID), url.QueryEscape(result.UserID.String()))
@@ -189,6 +207,13 @@ func (h *AuthHandlers) oauthCallback(w http.ResponseWriter, r *http.Request, pro
 }
 
 // GET /auth/desktop/session?state=xyz
+//
+// The state is chosen by whoever starts a sign-in, so it isn't proof of
+// anything: someone could start one, send the link to another person, and
+// collect their session here. A finished sign-in is therefore only handed
+// out after the person who signed in approves it in their browser (POST
+// /auth/desktop/approve), having checked that the code shown there matches
+// the one on their desktop.
 func (h *AuthHandlers) PollDesktopSession(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	if state == "" {
@@ -211,9 +236,36 @@ func (h *AuthHandlers) PollDesktopSession(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 		"user_id":       userID,
 	})
+}
+
+// POST /auth/desktop/approve {"state": "..."}, signed in.
+//
+// Releases the sign-in parked under state to the desktop polling for it.
+// Only the user who signed in can approve it.
+func (h *AuthHandlers) ApproveDesktopSession(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value("user_id").(string)
+	if userID == "" {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	var body struct {
+		State string `json:"state"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil || body.State == "" {
+		http.Error(w, "state is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.tokenStore.ApproveState(r.Context(), body.State, userID); err != nil {
+		// Unknown, expired and someone else's all look the same.
+		http.Error(w, "no sign-in waiting for approval", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"approved": true})
 }

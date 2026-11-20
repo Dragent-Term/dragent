@@ -65,6 +65,23 @@ func (r *mutationResolver) RefreshToken(ctx context.Context, refreshToken string
 
 // Logout is the resolver for the logout field.
 func (r *mutationResolver) Logout(ctx context.Context) (bool, error) {
+	// Ends the caller's session on this device: its refresh tokens are
+	// revoked and its access tokens refused from now on (they'd otherwise
+	// keep working until they expire). Other devices stay signed in.
+	userID, err := uuid.Parse(stringFromContext(ctx, "user_id"))
+	if err != nil {
+		return false, errors.New("unauthorized")
+	}
+	deviceID, err := uuid.Parse(stringFromContext(ctx, "device_id"))
+	if err != nil || deviceID == uuid.Nil {
+		return false, errors.New("unauthorized")
+	}
+	if err := r.UserRepo.RevokeDeviceTokens(ctx, userID, deviceID); err != nil {
+		return false, errors.New("could not sign out, try again")
+	}
+	if err := r.TokenStore.SignOutDevice(ctx, deviceID.String()); err != nil {
+		return false, errors.New("could not sign out, try again")
+	}
 	return true, nil
 }
 

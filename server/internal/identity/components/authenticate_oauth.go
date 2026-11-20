@@ -2,8 +2,6 @@ package components
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -83,7 +81,9 @@ type AuthenticateOAuthCommand struct {
 }
 
 type AuthenticateOAuthResult struct {
-	UserID       uuid.UUID
+	UserID uuid.UUID
+	// AccessToken is the browser's session; RefreshToken is the app's,
+	// separate so signing out of one leaves the other.
 	AccessToken  string
 	RefreshToken string
 	StateID      string
@@ -101,8 +101,7 @@ func (uc *AuthenticateOAuthUseCase) Execute(ctx context.Context, cmd Authenticat
 	}
 
 	var user *model.User
-	var deviceID uuid.UUID = uuid.New()
-	var rawRefreshToken string
+	var sessions signInSessions
 	var isNewUser bool
 
 	err = uc.txManager.WithTx(ctx, func(tx any) error {
@@ -167,38 +166,9 @@ func (uc *AuthenticateOAuthUseCase) Execute(ctx context.Context, cmd Authenticat
 			}
 		}
 
-		device := &model.Device{
-			ID:         deviceID,
-			UserID:     user.ID,
-			Name:       fmt.Sprintf("%s OAuth Session", cmd.Provider),
-			Platform:   "WEB",
-			LastSeenAt: time.Now(),
-			CreatedAt:  time.Now(),
-		}
-		if err := txRepo.RegisterDevice(ctx, device); err != nil {
-			return fmt.Errorf("failed to register device: %w", err)
-		}
-
-		rawRefreshToken, txErr = uc.tokenService.GenerateSecureRandomToken()
+		sessions, txErr = issueSignInSessions(ctx, txRepo, uc.tokenService, user.ID, fmt.Sprintf("%s OAuth Session", cmd.Provider))
 		if txErr != nil {
 			return txErr
-		}
-
-		rtHashBytes := sha256.Sum256([]byte(rawRefreshToken))
-		rtHash := hex.EncodeToString(rtHashBytes[:])
-
-		refreshToken := &model.RefreshToken{
-			ID:        uuid.New(),
-			UserID:    user.ID,
-			DeviceID:  deviceID,
-			TokenHash: rtHash,
-			FamilyID:  uuid.New(),
-			ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
-			CreatedAt: time.Now(),
-		}
-
-		if err := txRepo.SaveRefreshToken(ctx, refreshToken); err != nil {
-			return fmt.Errorf("failed to store refresh token: %w", err)
 		}
 
 		return nil
@@ -216,12 +186,16 @@ func (uc *AuthenticateOAuthUseCase) Execute(ctx context.Context, cmd Authenticat
 		}
 	}
 
-	accessToken, err := uc.tokenService.GenerateAccessToken(user.ID, deviceID)
+	accessToken, err := uc.tokenService.GenerateAccessToken(user.ID, sessions.browserDevice)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate access token: %w", err)
+	}
+	desktopAccess, err := uc.tokenService.GenerateAccessToken(user.ID, sessions.desktopDevice)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate access token: %w", err)
 	}
 
-	err = uc.tokenStore.AuthorizeState(ctx, cmd.StateID, accessToken, rawRefreshToken)
+	err = uc.tokenStore.AuthorizeState(ctx, cmd.StateID, user.ID.String(), desktopAccess, sessions.desktopRefresh)
 	if err != nil {
 		return nil, fmt.Errorf("failed to store authorized session tokens in cache: %w", err)
 	}
@@ -229,7 +203,7 @@ func (uc *AuthenticateOAuthUseCase) Execute(ctx context.Context, cmd Authenticat
 	return &AuthenticateOAuthResult{
 		UserID:       user.ID,
 		AccessToken:  accessToken,
-		RefreshToken: rawRefreshToken,
+		RefreshToken: sessions.desktopRefresh,
 		StateID:      cmd.StateID,
 	}, nil
 }

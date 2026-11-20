@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { getToken } from "@/lib/token";
+import { signInCode } from "@/lib/signInCode";
 import { 
   CheckCircle2, 
   Copy, 
@@ -25,6 +27,35 @@ export default function SessionControl({ session, scheme, state }: SessionContro
   const [copiedLink, setCopiedLink] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   
+  const [code, setCode] = useState("");
+  const [approval, setApproval] = useState<"idle" | "busy" | "done" | "error">("idle");
+  const [approvalError, setApprovalError] = useState("");
+  useEffect(() => {
+    if (state) signInCode(state).then(setCode).catch(() => setCode(""));
+  }, [state]);
+
+  // The app collects its session by polling only after this approval, and
+  // only the signed-in user can give it. Approving is safe only if the app
+  // on the user's own screen shows the same code: someone who sent them a
+  // sign-in link would be the one waiting otherwise.
+  const approve = async () => {
+    setApproval("busy");
+    setApprovalError("");
+    try {
+      const res = await fetch("/api/auth/desktop/approve", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ state }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Couldn't approve. Try again.");
+      setApproval("done");
+    } catch (err: unknown) {
+      setApproval("error");
+      setApprovalError(err instanceof Error ? err.message : "Couldn't approve. Try again.");
+    }
+  };
+
   const refreshToken = session.refresh_token || "";
   const userId = session.user_id || "unknown-user-id";
   
@@ -93,6 +124,29 @@ export default function SessionControl({ session, scheme, state }: SessionContro
           <p className="text-xs text-gray-400">Your session is authenticated and ready to link.</p>
         </div>
       </div>
+
+      {/* Approve the waiting app, after matching its code */}
+      {code && (
+        <div className="rounded-xl border border-white/10 bg-[#101010] p-4 space-y-3">
+          <p className="text-xs text-gray-400">
+            Is the Dragent app on your screen showing this code? Approve only if it is.
+            If you didn&apos;t start this sign-in, don&apos;t approve.
+          </p>
+          <div className="text-center font-mono text-2xl tracking-[0.3em] text-white select-all">{code}</div>
+          {approval === "done" ? (
+            <p className="text-center text-xs text-brand-emerald">Approved. The app will finish signing in.</p>
+          ) : (
+            <button
+              onClick={approve}
+              disabled={approval === "busy"}
+              className="w-full py-2.5 bg-white text-black font-semibold rounded-lg transition-colors hover:bg-white/90 text-sm disabled:opacity-60"
+            >
+              {approval === "busy" ? "Approving..." : "The codes match, approve"}
+            </button>
+          )}
+          {approval === "error" && <p className="text-center text-xs text-rose-300">{approvalError}</p>}
+        </div>
+      )}
 
       {/* Connection options */}
       <div className="space-y-3">

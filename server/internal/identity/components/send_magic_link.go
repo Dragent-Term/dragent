@@ -40,13 +40,14 @@ type SendMagicLinkCommand struct {
 func (uc *SendMagicLinkUseCase) Execute(ctx context.Context, cmd SendMagicLinkCommand) error {
 	if !cmd.IsRegistration {
 		if _, err := uc.userRepo.GetByEmail(ctx, cmd.Email); err != nil {
-			// Only a real miss means "no such user" (the portal then offers
-			// sign-up). A DB outage or timeout is a server error, not a reason
-			// to tell a registered user they have no account.
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrUserNotFound
+			if !errors.Is(err, sql.ErrNoRows) {
+				// An outage isn't "no such user".
+				return fmt.Errorf("failed to look up user for magic link: %w", err)
 			}
-			return fmt.Errorf("failed to look up user for magic link: %w", err)
+			// No account: send a link that creates one. The reply is the
+			// same either way, so the sign-in form can't be used to find
+			// out who has an account; only the inbox's owner learns that.
+			cmd.IsRegistration = true
 		}
 	}
 

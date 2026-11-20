@@ -9,6 +9,7 @@
 mod browser;
 mod callback;
 mod clipboard_text;
+mod code;
 mod completion;
 mod deep_link;
 mod manager;
@@ -21,6 +22,7 @@ mod types;
 pub use browser::browser_sign_in_url;
 pub use callback::{is_auth_callback_url, parse_auth_callback, AuthCallback};
 pub use clipboard_text::extract_auth_paste;
+pub use code::sign_in_code;
 pub use completion::{parse_auth_completion, AuthCompletion};
 pub use deep_link::{
     get_deep_link_receiver, register_scheme_handler, set_deep_link_receiver, CUSTOM_SCHEME,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"server/internal/identity/components"
@@ -17,11 +18,17 @@ func (brokenUsers) GetByEmail(context.Context, string) (*model.User, error) {
 	return nil, errors.New("connection refused")
 }
 
-func TestMagicLinkUnknownUserIs404(t *testing.T) {
-	h := NewAuthHandlers(components.NewSendMagicLinkUseCase(unknownUsers{}, nil, nil, nil), nil, nil, nil, nil, nil)
+// An address with no account gets the same reply as one with an account,
+// so the form can't be used to find out who has one. The inbox gets a link
+// that creates the account.
+func TestMagicLinkUnknownUserLooksLikeKnownUser(t *testing.T) {
+	h, store, mail := newMagicHandlers(unknownUsers{})
 	w := serve(h, magicRequest("nobody@example.com", "203.0.113.1:1", nil))
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("unknown user: got %d, want 404", w.Code)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"success":true`) {
+		t.Fatalf("unknown user: got %d %q, want 200 success", w.Code, w.Body.String())
+	}
+	if len(mail.to) != 1 || len(store.registrations) != 1 || !store.registrations[0] {
+		t.Fatalf("want one sign-up link sent, got mail %v registrations %v", mail.to, store.registrations)
 	}
 }
 

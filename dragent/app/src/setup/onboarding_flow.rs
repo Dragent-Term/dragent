@@ -471,7 +471,7 @@ impl View for OnboardingFlow {
         "OnboardingFlow"
     }
 
-    fn render(&self, _app: &AppContext) -> Box<dyn Element> {
+    fn render(&self, app: &AppContext) -> Box<dyn Element> {
         let theme = self.current_theme();
         let flow_id = self.view_id;
         let ui_font = self.ui_font;
@@ -499,6 +499,11 @@ impl View for OnboardingFlow {
                     account_connected: self.account_connected,
                     browser_auth_active: self.browser_auth_active,
                     auth_error: self.auth_error.as_deref(),
+                    sign_in_code: warpui::ReadModel::read_model(
+                        app,
+                        &AuthManager::handle(app),
+                        |a: &AuthManager, _| a.pending_sign_in_code(),
+                    ),
                     provider: self.git_provider,
                     git: &self.git_cli_state,
                 },

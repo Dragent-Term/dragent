@@ -23,6 +23,7 @@ pub struct ChecklistViewState<'a> {
     pub account_connected: bool,
     pub browser_auth_active: bool,
     pub auth_error: Option<&'a str>,
+    pub sign_in_code: Option<String>,
     pub provider: GitProvider,
     pub git: &'a GitCliState,
 }
@@ -275,6 +276,7 @@ fn account_card(
             font,
             flow_id,
             state.auth_error,
+            state.sign_in_code.as_deref(),
             hover_for("copy_link"),
             hover_for("paste_callback"),
             hover_for("cancel_browser"),
