@@ -55,9 +55,14 @@ function readCookie(header: string, name: string): string | undefined {
 export function sameOrigin(req: Request): boolean {
   const origin = req.headers.get("origin");
   if (!origin) return true; // same-origin fetches from older browsers, server calls
+  let host: string;
   try {
-    return new URL(origin).host === (req.headers.get("x-forwarded-host") ?? req.headers.get("host"));
+    host = new URL(origin).host;
   } catch {
     return false;
   }
+  // Behind a proxy the public host may be in either header.
+  return [req.headers.get("x-forwarded-host"), req.headers.get("host")]
+    .flatMap((h) => (h ? h.split(",").map((v) => v.trim()) : []))
+    .includes(host);
 }
