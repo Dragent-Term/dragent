@@ -43,6 +43,41 @@ function isLoopback(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
+/** Dragent's own servers. Self-hosted builds can add theirs, comma separated,
+ * in EXPO_PUBLIC_TRUSTED_GATEWAYS (origins such as https://relay.example.com). */
+const OFFICIAL_DOMAIN = "dragent.dev";
+
+function extraTrustedGateways(): readonly string[] {
+  const raw = typeof process !== "undefined" ? process.env.EXPO_PUBLIC_TRUSTED_GATEWAYS : undefined;
+  return (raw ?? "").split(",").map((v: string) => v.trim()).filter(Boolean);
+}
+
+/**
+ * Whether a (normalized) gateway origin is one this app trusts without
+ * asking: Dragent's own HTTPS servers, origins the build lists, and in
+ * development a loopback server. A pairing link can come from anywhere (a
+ * web page, a message), so any other server is shown to the person first.
+ */
+export function isTrustedGateway(origin: string, allowLoopback = false): boolean {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (allowLoopback && isLoopback(url.hostname)) return true;
+  if (url.protocol === "https:" && (url.hostname === OFFICIAL_DOMAIN || url.hostname.endsWith(`.${OFFICIAL_DOMAIN}`))) {
+    return true;
+  }
+  return extraTrustedGateways().some((trusted) => {
+    try {
+      return new URL(trusted).origin === url.origin;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /**
  * Canonical pairing gateway: an https origin (wss mapped to https), or a
  * loopback http origin for development. Credentials, paths, queries and
