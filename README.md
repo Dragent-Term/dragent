@@ -14,7 +14,6 @@ agents are doing, what needs you, and a way to answer.
 | [`server/`](server/) | The API and the relay between desktops and phones | Go |
 | [`mobile/`](mobile/) | The phone companion | Expo / React Native |
 | [`auth-portal/`](auth-portal/) | Sign-in and account pages | Next.js |
-| [`marketing/`](marketing/) | The website and documentation | Next.js |
 | [`contracts/`](contracts/) | Wire formats shared by the apps | JSON / schemas |
 
 Phones and desktops talk end to end encrypted: the relay forwards ciphertext
@@ -28,7 +27,7 @@ it can't read.
   configuration is read from the environment, see
   `server/internal/platform/config`).
 - **Phone:** `cd mobile && pnpm install && pnpm start`.
-- **Auth portal / website:** `npm ci && npm run dev` in their folders.
+- **Auth portal:** `cd auth-portal && npm ci && npm run dev`.
 
 Each folder's README has the details.
 

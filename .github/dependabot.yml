@@ -52,21 +52,6 @@ updates:
       minor-and-patch:
         update-types: [minor, patch]
 
-  # Website
-  - package-ecosystem: npm
-    directory: /marketing
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 2
-    labels: [dependencies, javascript]
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      minor-and-patch:
-        update-types: [minor, patch]
-
   # Phone app (pnpm)
   - package-ecosystem: npm
     directory: /mobile

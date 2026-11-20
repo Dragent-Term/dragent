@@ -92,10 +92,6 @@ check Go and Rust formatting). Then set up only the parts you are changing:
   `dragent/Cargo.toml`; the app crate lives in `dragent/app/`.
 - **Auth portal** (`auth-portal/`, Next.js): `npm install`, `npm run dev`,
   `npm run build`. See [`auth-portal/README.md`](./auth-portal/README.md).
-- **Marketing site** (`marketing/`, Next.js): `npm ci`,
-  `npm run dev -- --hostname 127.0.0.1 --port 3100`,
-  `npm run lint`, `npx tsc --noEmit`, `npm run build`.
-  See [`marketing/README.md`](./marketing/README.md).
 - **Mobile** (`mobile/`, Expo / React Native): `pnpm install`,
   follow the Expo workflow in [`mobile/README.md`](./mobile/README.md).
 
