@@ -49,7 +49,6 @@ described in [SECURITY.md](SECURITY.md).
 Dragent is licensed under the GNU Affero General Public License, version 3
 only ([AGPL-3.0-only](LICENSE)). If you run a modified version for others
 over a network, you must offer them its source. See
-[LICENSING.md](LICENSING.md) for details, including commercial licensing,
-and [`dragent/NOTICE`](dragent/NOTICE) and
+[LICENSING.md](LICENSING.md) for details, and [`dragent/NOTICE`](dragent/NOTICE) and
 [`dragent/THIRD_PARTY_NOTICES.md`](dragent/THIRD_PARTY_NOTICES.md) for
 third-party components.

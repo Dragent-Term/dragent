@@ -9,14 +9,10 @@ By submitting a contribution you agree it is licensed under the
 **GNU Affero General Public License, version 3 only (AGPL-3.0-only)**,
 like the rest of this repository (inbound = outbound). You also agree to
 the Individual Contributor License Agreement in [`CLA.md`](./CLA.md)
-(currently a draft pending counsel review), which grants Nimbletech Ltd
-the rights to redistribute contributions under the AGPL-3.0-only and
-under any commercial license terms for the project, including future
-licensing needs. The repository offers a separate commercial license for
-users who cannot meet the AGPL terms (see [`LICENSING.md`](./LICENSING.md));
-the CLA is what lets the project offer contributed code under those
-commercial terms too — every contribution still lands under AGPL-3.0-only
-as well.
+(currently a draft pending counsel review). It grants Nimbletech Ltd a
+broad, irrevocable license to your contribution, including the right to
+sublicense it; you keep the copyright. Every contribution lands under
+AGPL-3.0-only (see [`LICENSING.md`](./LICENSING.md)).
 
 Copyright attribution policy: the single copyright line is
 `Copyright (c) 2026 Nimbletech Ltd`. Contributors keep copyright in their own
