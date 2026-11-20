@@ -354,6 +354,13 @@ impl WorkspacePipelineRequest {
                 reason: "The tool wants to read outside the project root.".into(),
             };
         }
+        if !crate::agent::local_tools::external_write_paths_for_tool(name, args, runtime_id)
+            .is_empty()
+        {
+            return WorkspaceToolDisposition::NeedsConsent {
+                reason: "The tool wants to change files outside the project root.".into(),
+            };
+        }
 
         let is_mutating = crate::agent::approval_policy::is_mutating_tool(name, command.as_deref());
         let contract_permission = self.launch.contract.permissions.iter().find(|grant| {
