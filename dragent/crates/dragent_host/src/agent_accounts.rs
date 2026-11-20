@@ -44,7 +44,9 @@ pub fn capability(provider: &str) -> Capability {
         "muse" => (false, "Independent native credential storage has not been verified against accessible primary documentation.", "https://muse.meta.com/"),
         _ => (false, "No verified account adapter. Existing system authentication remains available.", ""),
     };
-    Capability { isolated: supported && cfg!(unix), native_login: supported && cfg!(unix), native_status: supported && cfg!(unix), same_profile_resume: supported && cfg!(unix), cross_account_resume: false, reason: if !cfg!(unix) && supported { "Private profile ACL support is not implemented on this platform; use system authentication.".into() } else { reason.into() }, source: source.into() }
+    // Owner-only directories: POSIX modes on unix, a protected DACL on Windows.
+    let private = cfg!(any(unix, windows));
+    Capability { isolated: supported && private, native_login: supported && private, native_status: supported && private, same_profile_resume: supported && private, cross_account_resume: false, reason: if !private && supported { "Private profile ACL support is not implemented on this platform; use system authentication.".into() } else { reason.into() }, source: source.into() }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -82,7 +84,9 @@ pub struct Registry {
 pub(crate) fn root() -> PathBuf { dragent_paths::home().join("agent-accounts") }
 fn io_error(_: impl std::fmt::Display) -> String { "Could not access the private agent account store".into() }
 fn private_dir(path: &Path) -> Result<(), String> {
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    return windows_private::private_dir(path);
+    #[cfg(not(any(unix, windows)))]
     return Err("Private account directories are not supported on this platform yet".into());
     #[cfg(unix)] {
         use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
@@ -94,6 +98,169 @@ fn private_dir(path: &Path) -> Result<(), String> {
             return Err("Account directory ownership is invalid".into());
         }
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(io_error)
+    }
+}
+
+/// Windows' 0o700: a protected DACL that only this account (and SYSTEM)
+/// can use, inherited by everything the CLIs write inside.
+#[cfg(windows)]
+mod windows_private {
+    use super::io_error;
+    use std::{ffi::c_void, fs, os::windows::ffi::OsStrExt, path::Path};
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, LocalFree, ERROR_SUCCESS, HANDLE},
+        Security::{
+            Authorization::{
+                ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+                GetNamedSecurityInfoW, SetNamedSecurityInfoW, SE_FILE_OBJECT,
+            },
+            EqualSid, GetSecurityDescriptorControl, GetSecurityDescriptorDacl, GetTokenInformation,
+            TokenOwner, TokenUser, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+            SE_DACL_PROTECTED, TOKEN_INFORMATION_CLASS, TOKEN_QUERY,
+        },
+        Storage::FileSystem::CreateDirectoryW,
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+
+    fn wide(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(Some(0)).collect()
+    }
+
+    /// Frees a `LocalAlloc`ed descriptor when dropped.
+    struct Local(PSECURITY_DESCRIPTOR);
+    impl Drop for Local {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { LocalFree(self.0) };
+            }
+        }
+    }
+
+    /// One `TOKEN_USER`/`TOKEN_OWNER` of this process; both start with a
+    /// pointer to the SID, which lives further on in this same buffer.
+    fn token_sid(class: TOKEN_INFORMATION_CLASS) -> Result<Vec<usize>, String> {
+        unsafe {
+            let mut token: HANDLE = std::ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return Err(io_error("token"));
+            }
+            let mut len = 0u32;
+            GetTokenInformation(token, class, std::ptr::null_mut(), 0, &mut len);
+            // usize-aligned, as the SID pointer inside requires.
+            let mut buffer = vec![0usize; (len as usize).div_ceil(size_of::<usize>())];
+            let ok = GetTokenInformation(token, class, buffer.as_mut_ptr().cast(), len, &mut len);
+            CloseHandle(token);
+            if ok == 0 {
+                return Err(io_error("token"));
+            }
+            Ok(buffer)
+        }
+    }
+
+    /// The SID a `token_sid` buffer points at. The buffer must outlive it.
+    fn sid_of(buffer: &[usize]) -> *mut c_void {
+        buffer[0] as *mut c_void
+    }
+
+    /// Owner-only, inheritable, protected from the parent's ACEs.
+    fn descriptor(user: *mut c_void) -> Result<Local, String> {
+        unsafe {
+            let mut sid = std::ptr::null_mut::<u16>();
+            if ConvertSidToStringSidW(user, &mut sid) == 0 {
+                return Err(io_error("sid"));
+            }
+            let text = String::from_utf16_lossy(std::slice::from_raw_parts(sid, (0..).take_while(|&i| *sid.add(i) != 0).count()));
+            LocalFree(sid.cast());
+            let sddl: Vec<u16> = format!("D:P(A;OICI;FA;;;{text})(A;OICI;FA;;;SY)").encode_utf16().chain(Some(0)).collect();
+            let mut descriptor = std::ptr::null_mut();
+            if ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), 1, &mut descriptor, std::ptr::null_mut()) == 0 {
+                return Err(io_error("sddl"));
+            }
+            Ok(Local(descriptor))
+        }
+    }
+
+    pub(super) fn private_dir(path: &Path) -> Result<(), String> {
+        let user = token_sid(TokenUser)?;
+        let owner = token_sid(TokenOwner)?;
+        let descriptor = descriptor(sid_of(&user))?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(io_error)?;
+        }
+        let name = wide(path);
+        unsafe {
+            let attributes = SECURITY_ATTRIBUTES {
+                nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: descriptor.0,
+                bInheritHandle: 0,
+            };
+            // Created private from the start; an existing one is checked below.
+            CreateDirectoryW(name.as_ptr(), &attributes);
+        }
+        let meta = fs::symlink_metadata(path).map_err(io_error)?;
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            return Err("Account directory ownership is invalid".into());
+        }
+        unsafe {
+            let mut found_owner = std::ptr::null_mut();
+            let mut current = std::ptr::null_mut();
+            if GetNamedSecurityInfoW(
+                name.as_ptr(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                &mut found_owner,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut current,
+            ) != ERROR_SUCCESS
+            {
+                return Err(io_error("security"));
+            }
+            let current = Local(current);
+            // New objects are owned by the token's default owner, which is the
+            // Administrators group in an elevated session.
+            if EqualSid(found_owner, sid_of(&user)) == 0 && EqualSid(found_owner, sid_of(&owner)) == 0 {
+                return Err("Account directory ownership is invalid".into());
+            }
+            let mut control = 0u16;
+            let mut revision = 0u32;
+            GetSecurityDescriptorControl(current.0, &mut control, &mut revision);
+            if control & SE_DACL_PROTECTED != 0 {
+                return Ok(());
+            }
+            // Made before this was private (or by hand): lock it down once,
+            // which also reaches what is already inside.
+            let (mut present, mut defaulted) = (0, 0);
+            let mut dacl: *mut ACL = std::ptr::null_mut();
+            if GetSecurityDescriptorDacl(descriptor.0, &mut present, &mut dacl, &mut defaulted) == 0 {
+                return Err(io_error("dacl"));
+            }
+            if SetNamedSecurityInfoW(
+                name.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                dacl,
+                std::ptr::null(),
+            ) != ERROR_SUCCESS
+            {
+                return Err(io_error("dacl"));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn makes_an_owner_only_directory() {
+        let dir = std::env::temp_dir().join(format!("dragent-private-{}", uuid::Uuid::new_v4()));
+        private_dir(&dir.join("inner")).unwrap();
+        // Idempotent: the second call only checks.
+        private_dir(&dir.join("inner")).unwrap();
+        let _ = fs::remove_dir_all(&dir);
     }
 }
 fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
@@ -195,7 +362,9 @@ pub fn configure(command: &mut Command, binding: &Binding) -> Result<(), String>
     let dir = root().join(id.to_string());
     if !dir.is_dir() { return Err("Account storage is missing; launch refused".into()); }
     private_dir(&dir)?;
-    let dir = dir.canonicalize().map_err(io_error)?;
+    // Plain `C:\…` on Windows, not `\\?\C:\…`: the CLIs report this path
+    // back and the isolation check compares it.
+    let dir = dunce::canonicalize(dir).map_err(io_error)?;
     match binding.provider.as_str() {
         "claude" => {
             // Routing/provider overrides are rejected instead of bypassing
@@ -250,7 +419,8 @@ fn probe(mut command: Command) -> Result<(bool, Vec<u8>), String> {
     }
 }
 fn native_command(binding: &Binding, executable: &Path) -> Result<Command, String> {
-    let mut command = Command::new(executable);
+    // npm installs agents as `.cmd` shims on Windows, which a bare name misses.
+    let mut command = Command::new(crate::agent_sessions::program(&executable.to_string_lossy()));
     configure(&mut command, binding)?;
     Ok(command)
 }
@@ -267,7 +437,7 @@ pub fn status(binding: &Binding, executable: &Path) -> Result<&'static str, Stri
     if binding.provider == "claude" {
         let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| "Installed Claude CLI cannot verify profile isolation; update Claude Code")?;
         let Selection::Profile(id) = binding.selection else { return Err("Account selection is unresolved".into()); };
-        let expected = root().join(id.to_string()).canonicalize().map_err(io_error)?;
+        let expected = dunce::canonicalize(root().join(id.to_string())).map_err(io_error)?;
         if value.get("configDirectory").and_then(|v| v.as_str()).map(PathBuf::from).as_ref() != Some(&expected) {
             return Err("Claude profile isolation could not be verified; Claude Code 2.1.268 or later is required".into());
         }

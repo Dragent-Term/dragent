@@ -97,6 +97,12 @@ impl WorkspaceView {
 
     /// Header `+` → Browser: a new workspace tab holding one browser.
     pub(crate) fn open_browser_workspace_tab(&mut self, ctx: &mut ViewContext<Self>) {
+        self.open_browser_in_new_surface(None, ctx);
+    }
+
+    /// A new workspace tab holding one browser at `url`. The current one
+    /// keeps its panes and layout, ready to switch back to.
+    fn open_browser_in_new_surface(&mut self, url: Option<BrowserUrl>, ctx: &mut ViewContext<Self>) {
         self.new_tab_picker_open = false;
         if self.closing_worktree_tab.is_some() {
             return;
@@ -105,7 +111,7 @@ impl WorkspaceView {
         if self.begin_fresh_surface(ctx).is_none() {
             return;
         }
-        let new_tab = self.create_browser_tab(None, project_root, ctx);
+        let new_tab = self.create_browser_tab(url, project_root, ctx);
         self.show_new_browser_tab(new_tab, ctx);
     }
 
@@ -127,12 +133,12 @@ impl WorkspaceView {
         }
     }
 
-    /// A web page next to the pane it was clicked in: in the browser already
-    /// shown beside it, else in a new browser split to its right. Dragent
-    /// doesn't move the keyboard (a page that focuses itself as it loads
-    /// takes it, as a click on it would). A full page (Settings, Code reviews…)
-    /// gives way to the workspace first; an open document, whose layout
-    /// can't be split, gets a browser tab of its own.
+    /// A web page in a new browser split to the right of the pane it was
+    /// clicked in. It never replaces a pane, a browser's page or the layout.
+    /// Dragent doesn't move the keyboard (a page that focuses itself as it
+    /// loads takes it, as a click on it would). A full page (Settings, Code
+    /// reviews…) gives way to the workspace first; an open document, whose
+    /// layout can't be split, gets a workspace tab of its own.
     fn open_link_beside(&mut self, url: BrowserUrl, ctx: &mut ViewContext<Self>) {
         self.close_settings(ctx);
         #[cfg(not(target_family = "wasm"))]
@@ -142,23 +148,11 @@ impl WorkspaceView {
             self.close_tasks(ctx);
             self.close_pull_requests(ctx);
         }
-        let origin = self.active_tab_id;
-        if self.document_center_open || !self.tabs.iter().any(|tab| tab.id == origin) {
-            self.open_browser_pane_tab(Some(url), ctx);
+        if self.document_center_open {
+            self.open_browser_in_new_surface(Some(url), ctx);
             return;
         }
-        let shown = |id: usize| {
-            id == origin || self.split_tree.as_ref().is_some_and(|layout| layout.contains(id) && layout.contains(origin))
-        };
-        let beside = self.tabs.iter().find_map(|tab| match &tab.pane {
-            WorkspacePane::Browser(browser) if shown(tab.id) => Some(browser.clone()),
-            _ => None,
-        });
-        if let Some(browser) = beside {
-            browser.update(ctx, |browser, browser_ctx| browser.navigate(url, browser_ctx));
-            return;
-        }
-        self.split_browser(SplitSide::Right, Some(url), false, ctx);
+        self.split_browser_beside(self.active_tab_id, SplitSide::Right, Some(url), false, ctx);
     }
 
     /// Sidebar new-tab menu → Browser, or a page asking for a new window:
@@ -204,11 +198,8 @@ impl WorkspaceView {
         self.split_browser(side, None, true, ctx);
     }
 
-    /// Split the active pane with a browser on `side` of it, open at `url`;
-    /// with no active pane, a browser tab instead. `focus` gives the new
-    /// browser the keyboard; without it the active pane keeps it and nothing
-    /// has to be handed back (handing it back raced the page's own focus and
-    /// froze the app). Returns the new pane's id when it is a split.
+    /// Split the active pane with a browser on `side` of it, open at `url`.
+    /// Returns the new pane's id when it is a split.
     pub(crate) fn split_browser(
         &mut self,
         side: SplitSide,
@@ -216,15 +207,31 @@ impl WorkspaceView {
         focus: bool,
         ctx: &mut ViewContext<Self>,
     ) -> Option<usize> {
+        self.split_browser_beside(self.active_tab_id, side, url, focus, ctx)
+    }
+
+    /// Split `target` with a browser on `side` of it, open at `url`; with no
+    /// such pane, a workspace tab of its own, so the current layout is never
+    /// replaced. `focus` gives the new browser the keyboard; without it the
+    /// active pane keeps it and nothing has to be handed back (handing it
+    /// back raced the page's own focus and froze the app). Returns the new
+    /// pane's id when it is a split.
+    fn split_browser_beside(
+        &mut self,
+        target: usize,
+        side: SplitSide,
+        url: Option<BrowserUrl>,
+        focus: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
         self.new_tab_picker_open = false;
-        let target = self.active_tab_id;
         let Some(project_root) = self
             .tabs
             .iter()
             .find(|tab| tab.id == target)
             .map(|tab| tab.project_root.clone())
         else {
-            self.open_browser_pane_tab(url, ctx);
+            self.open_browser_in_new_surface(url, ctx);
             return None;
         };
         let project_root = project_root.or_else(|| self.active_project_root());
@@ -687,9 +694,10 @@ pub(crate) fn subscribe_browser_pane(
                 view.select_tab_with_focus(tab_id, false, ctx);
             }
         }
+        // A page asking for a new window: a browser beside this one, which
+        // keeps its own page.
         BrowserEvent::OpenInNewTab(url) => {
-            let url = url.clone();
-            view.open_browser_pane_tab(Some(url), ctx);
+            view.split_browser_beside(tab_id, SplitSide::Right, Some(url.clone()), false, ctx);
         }
         // Same behaviour as a terminal pane's header: split along the
         // opposite of the parent split, so nested layouts alternate.

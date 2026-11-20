@@ -1420,7 +1420,7 @@ fn install_capture(
 /// matches `<name>.exe`, but npm installs agents as `.cmd` shims that the
 /// shell found through PATHEXT: resolve it the same way, or wrapping would
 /// stop those agents from starting.
-fn program(executable: &str) -> PathBuf {
+pub(crate) fn program(executable: &str) -> PathBuf {
     #[cfg(windows)]
     if let Some(found) = resolve_program(
         executable,

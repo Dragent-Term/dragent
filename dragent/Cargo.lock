@@ -3326,6 +3326,7 @@ dependencies = [
  "dragent_shell_hooks",
  "dragent_terminal",
  "dragent_workspace_model",
+ "dunce",
  "env_logger",
  "hmac",
  "indexmap 2.14.0",
