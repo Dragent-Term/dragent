@@ -37,7 +37,7 @@ dirs = { workspace = true }
 # Built in, not linked from the system: Windows ships no sqlite3.lib, so this
 # crate (and anything built with it alone, like its tests) failed to link.
 [target.'cfg(windows)'.dependencies]
-libsqlite3-sys = { version = "0.28", features = ["bundled"] }
+libsqlite3-sys = { version = "0.39", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -20,12 +20,18 @@ jobs:
   # Skip heavy jobs for docs-only PRs; every other job depends on this one.
   paths:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # the filter lists a pull request's files through the API
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # On pushes the filter diffs against the previous commit with git,
+          # and without stored credentials it can't fetch it, so take it all.
+          fetch-depth: 0
       - id: filter
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:

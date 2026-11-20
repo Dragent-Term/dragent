@@ -15,8 +15,12 @@ permissions: read-all
 
 jobs:
   analysis:
+    # Scorecard only rates public repositories.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     permissions:
+      contents: read
+      actions: read
       security-events: write # upload the results to code scanning
       id-token: write # publish the results
     steps:

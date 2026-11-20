@@ -4,7 +4,7 @@
 
 mod support;
 
-use support::{Harness, wait};
+use support::{wait, Harness};
 
 /// A one-liner that greets, then echoes every further stdin line back out,
 /// exiting at EOF — the `echo greeting; cat` idiom, for whichever shell

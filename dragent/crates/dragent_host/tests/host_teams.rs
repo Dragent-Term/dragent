@@ -140,6 +140,7 @@ fn a_team_runs_through_the_host_and_survives_its_restart() {
             kind: MessageKind::Note,
             body: "Invites go out through the existing mailer".into(),
             reply_to: None,
+            choices: Vec::new(),
         })
         .unwrap();
     let (response, waited) = lead.join().unwrap();
@@ -240,6 +241,7 @@ fn a_team_runs_through_the_host_and_survives_its_restart() {
             kind: MessageKind::Note,
             body: "Ship it when QA passes".into(),
             reply_to: None,
+            choices: Vec::new(),
         })
         .unwrap();
     let take = || match restarted
