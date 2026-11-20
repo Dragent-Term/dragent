@@ -90,6 +90,9 @@ jobs:
           rust-src-dir: dragent
           components: rustfmt
           cache-workspaces: dragent
+          # The action's default is -D warnings; the codebase predates that,
+          # so warnings stay warnings until they're cleaned up.
+          rustflags: ''
       - name: cargo metadata (manifests valid, locked)
         run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
       - name: rustfmt (files this change touches)
@@ -128,6 +131,7 @@ jobs:
         with:
           rust-src-dir: dragent
           cache-workspaces: dragent
+          rustflags: '' # see the check job
       - name: Linux libraries the desktop app links
         working-directory: .
         # GTK and WebKitGTK for the embedded browser, D-Bus for the keyring
