@@ -18,7 +18,8 @@ permissions:
 jobs:
   dependency-review:
     name: dependency-review
-    if: github.event_name == 'pull_request'
+    # Needs GitHub Advanced Security, which is free only on public repositories.
+    if: github.event_name == 'pull_request' && !github.event.repository.private
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -35,6 +36,8 @@ jobs:
 
   codeql:
     name: codeql (${{ matrix.language }})
+    # Code scanning needs GitHub Advanced Security, free only on public repositories.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -83,7 +86,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: server/go.mod
+          # The newest Go release: govulncheck itself needs a recent one, and
+          # the standard library is checked as of the version we'd ship.
+          go-version: stable
       # Fails only when the code reaches a vulnerable function.
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
