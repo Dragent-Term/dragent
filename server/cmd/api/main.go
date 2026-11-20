@@ -503,6 +503,8 @@ func main() {
 		rr.Get("/auth/callback/github", authHandlers.GitHubCallback)
 		rr.Get("/auth/callback/google", authHandlers.GoogleCallback)
 		rr.Get("/auth/desktop/session", authHandlers.PollDesktopSession)
+		rr.Post("/auth/desktop/session", authHandlers.PollDesktopSessionWithProof)
+		rr.Post("/auth/desktop/exchange", authHandlers.ExchangeDesktopHandoff)
 		rr.With(RequireAuth).Post("/auth/desktop/approve", authHandlers.ApproveDesktopSession)
 
 		// GraphQL endpoint and playground

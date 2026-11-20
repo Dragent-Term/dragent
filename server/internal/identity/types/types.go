@@ -11,6 +11,8 @@ type MagicRequest struct {
 	FirstName      string `json:"first_name"`
 	LastName       string `json:"last_name"`
 	IsRegistration bool   `json:"is_registration"`
+	// Challenge is the desktop's PKCE challenge, when a desktop started it.
+	Challenge string `json:"challenge,omitempty"`
 }
 
 type AuthPayload struct {
