@@ -10,7 +10,7 @@ import {
   Terminal, 
   LogOut 
 } from "lucide-react";
-import { appDeepLink } from "@/lib/desktopHandoff";
+import { APP_SCHEME, appDeepLink } from "@/lib/desktopHandoff";
 
 interface SessionControlProps {
   session: {
@@ -64,7 +64,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
 
   // The link that hands the sign-in to the app: a one-time code the app
   // redeems with its own secret, or (older builds) the refresh token.
-  const deepLinkUrl = appDeepLink({ scheme, state, code: session.code, refresh_token: refreshToken, user_id: userId });
+  const deepLinkUrl = appDeepLink({ state, code: session.code, refresh_token: refreshToken, user_id: userId });
 
   // Print system logs and trigger deep link automatically on mount
   useEffect(() => {
@@ -76,7 +76,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
 
     addLog("Session established. Resolving credentials...", 100);
     addLog(`User identity verified: ${userId.substring(0, 8)}...`, 500);
-    addLog(`Constructing handoff packet for ${scheme}://...`, 900);
+    addLog(`Constructing handoff packet for ${APP_SCHEME}://...`, 900);
     addLog("Attempting auto-launch redirect...", 1300);
 
     // Auto-launch deep link
@@ -96,7 +96,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
     }, 1500);
 
     return () => clearTimeout(triggerRedirect);
-  }, [deepLinkUrl, scheme, userId]);
+  }, [deepLinkUrl, userId]);
 
   // Copy token to clipboard
   const handleCopyToken = () => {

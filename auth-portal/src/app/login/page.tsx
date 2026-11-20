@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Loader2, Mail, ShieldAlert, ShieldCheck } from "lucide-react";
 import SessionControl from "@/components/SessionControl";
 import { SIGNED_IN_KEY, markSignedIn } from "@/lib/token";
-import { appPart, stashHandoff } from "@/lib/desktopHandoff";
+import { APP_SCHEME, appPart, stashHandoff } from "@/lib/desktopHandoff";
 
 // Custom Google SVG icon
 const GoogleIcon = () => (
@@ -30,7 +30,7 @@ function LoginDesktopContent() {
   
   // URL Parameters
   const router = useRouter();
-  const [scheme, setScheme] = useState("dragent");
+  const scheme = APP_SCHEME;
   const [state, setState] = useState("");
   const isDesktopFlow = Boolean(searchParams.get("state"));
   // The desktop's PKCE challenge: passed on so the app's half of the sign-in
@@ -59,10 +59,8 @@ function LoginDesktopContent() {
   
   // Load and check URL parameters
   useEffect(() => {
-    const urlScheme = searchParams.get("scheme") || "dragent";
+    // `scheme` in the URL is ignored: the app's scheme is fixed (APP_SCHEME).
     const urlState = searchParams.get("state");
-    
-    setScheme(urlScheme);
     
     if (urlState) {
       // Opened BY the desktop app: it owns the state and is waiting on it, so

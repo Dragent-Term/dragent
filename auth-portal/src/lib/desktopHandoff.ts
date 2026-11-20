@@ -35,12 +35,19 @@ export function appPart(data: { handoff_code?: unknown; refresh_token?: unknown 
   return {};
 }
 
+/**
+ * The app's URL scheme. Fixed on purpose: the login page used to take it from
+ * `?scheme=`, so a crafted link could send the sign-in to another app
+ * (`evilapp://`) or run script on this site (`javascript:`).
+ */
+export const APP_SCHEME = "dragent";
+
 /** The dragent:// link that hands a finished sign-in to the app. */
-export function appDeepLink(h: { scheme: string; state: string; code?: string; refresh_token?: string; user_id?: string }): string {
+export function appDeepLink(h: { state: string; code?: string; refresh_token?: string; user_id?: string }): string {
   const part = h.code
     ? `code=${encodeURIComponent(h.code)}`
     : `refresh_token=${encodeURIComponent(h.refresh_token || "")}`;
-  return `${h.scheme}://auth/callback?${part}&state=${encodeURIComponent(h.state)}&user_id=${encodeURIComponent(h.user_id || "")}`;
+  return `${APP_SCHEME}://auth/callback?${part}&state=${encodeURIComponent(h.state)}&user_id=${encodeURIComponent(h.user_id || "")}`;
 }
 
 export function stashHandoff(h: DesktopHandoff): void {

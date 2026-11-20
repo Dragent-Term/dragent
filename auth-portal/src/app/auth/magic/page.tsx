@@ -4,7 +4,7 @@ import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ArrowRight } from "lucide-react";
 import { markSignedIn } from "@/lib/token";
-import { appPart, stashHandoff } from "@/lib/desktopHandoff";
+import { APP_SCHEME, appPart, stashHandoff } from "@/lib/desktopHandoff";
 
 function MagicVerificationContent() {
   const searchParams = useSearchParams();
@@ -17,7 +17,8 @@ function MagicVerificationContent() {
   useEffect(() => {
     const token = searchParams.get("token");
     const state = searchParams.get("state");
-    const scheme = searchParams.get("scheme") || "dragent";
+    // The app's scheme is fixed; `?scheme=` is ignored (see APP_SCHEME).
+    const scheme = APP_SCHEME;
 
     if (!token || !state) {
       setError("Invalid link. Missing token or state verification parameters.");
