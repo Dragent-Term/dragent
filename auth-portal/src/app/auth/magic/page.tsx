@@ -4,7 +4,7 @@ import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ArrowRight } from "lucide-react";
 import { setToken } from "@/lib/token";
-import { stashHandoff } from "@/lib/desktopHandoff";
+import { appPart, stashHandoff } from "@/lib/desktopHandoff";
 
 function MagicVerificationContent() {
   const searchParams = useSearchParams();
@@ -59,7 +59,7 @@ function MagicVerificationContent() {
         stashHandoff({
           scheme,
           state: data.state || state,
-          refresh_token: data.refresh_token,
+          ...appPart(data),
           user_id: data.user_id ?? "",
         });
 

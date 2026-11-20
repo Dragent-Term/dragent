@@ -11,10 +11,14 @@ import {
   Terminal, 
   LogOut 
 } from "lucide-react";
+import { appDeepLink } from "@/lib/desktopHandoff";
 
 interface SessionControlProps {
   session: {
     access_token?: string;
+    /** One-time code for the app (desktop builds with PKCE). */
+    code?: string;
+    /** The app's refresh token (desktop builds from before PKCE). */
     refresh_token?: string;
     user_id?: string;
   };
@@ -58,11 +62,10 @@ export default function SessionControl({ session, scheme, state }: SessionContro
 
   const refreshToken = session.refresh_token || "";
   const userId = session.user_id || "unknown-user-id";
-  
-  // Format deep link
-  const deepLinkUrl = `${scheme}://auth/callback?refresh_token=${encodeURIComponent(
-    refreshToken
-  )}&state=${encodeURIComponent(state)}&user_id=${encodeURIComponent(userId)}`;
+
+  // The link that hands the sign-in to the app: a one-time code the app
+  // redeems with its own secret, or (older builds) the refresh token.
+  const deepLinkUrl = appDeepLink({ scheme, state, code: session.code, refresh_token: refreshToken, user_id: userId });
 
   // Print system logs and trigger deep link automatically on mount
   useEffect(() => {
@@ -158,7 +161,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
           <ExternalLink className="w-4 h-4" />
         </button>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className={`grid ${refreshToken ? "grid-cols-2" : "grid-cols-1"} gap-3`}>
           <button
             onClick={handleCopyLink}
             className="py-2.5 bg-[#141414] hover:bg-[#1c1c1f] text-gray-300 hover:text-white border border-white/5 rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs"
@@ -167,6 +170,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
             <span>{copiedLink ? "Copied Link!" : "Copy Link"}</span>
           </button>
           
+          {refreshToken && (
           <button
             onClick={handleCopyToken}
             className="py-2.5 bg-[#141414] hover:bg-[#1c1c1f] text-gray-300 hover:text-white border border-white/5 rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs"
@@ -174,6 +178,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
             {copiedToken ? <Check className="w-4 h-4 text-brand-emerald" /> : <Copy className="w-4 h-4" />}
             <span>{copiedToken ? "Copied Token!" : "Copy Token"}</span>
           </button>
+          )}
         </div>
       </div>
 

@@ -35,11 +35,15 @@ export async function GET(
 
     if (goRes.ok) {
       const data = await goRes.json();
-      if (data?.access_token && data?.refresh_token) {
+      // The app's part: a one-time code when the desktop started with a
+      // PKCE challenge, or (older desktop builds) its refresh token.
+      if (data?.access_token && (data?.handoff_code || data?.refresh_token)) {
         return NextResponse.json({
           success: true,
           access_token: data.access_token,
-          refresh_token: data.refresh_token,
+          ...(data.handoff_code
+            ? { handoff_code: data.handoff_code }
+            : { refresh_token: data.refresh_token }),
           state: data.state || state,
           user_id: data.user_id,
         });

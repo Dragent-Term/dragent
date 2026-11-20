@@ -13,6 +13,7 @@ mod code;
 mod completion;
 mod deep_link;
 mod manager;
+mod pkce;
 mod poll;
 mod session_store;
 mod token_exchange;

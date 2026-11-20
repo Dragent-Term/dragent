@@ -10,7 +10,7 @@ use warpui::{Entity, ModelContext, SingletonEntity};
 use super::browser::browser_sign_in_url;
 use super::callback::AuthCallback;
 use super::completion::{parse_auth_completion, AuthCompletion};
-use super::poll::{try_poll_pending_session, PollResult};
+use super::poll::{redeem_handoff, try_poll_pending_session, PollResult};
 use super::session_store::{clear_refresh_token, load_refresh_token, save_refresh_token};
 use super::types::{AuthManagerEvent, AuthStatus, AuthUser};
 
@@ -46,6 +46,9 @@ enum RestoreKind {
 pub struct AuthManager {
     status: AuthStatus,
     pending_state: Option<String>,
+    /// PKCE verifier of the pending browser sign-in; never leaves this app
+    /// except to the server, to collect that sign-in.
+    pending_verifier: Option<String>,
     refresh_token: Option<String>,
     /// Cached short-lived access token and its expiry instant.
     access_token: Option<String>,
@@ -69,6 +72,7 @@ impl AuthManager {
         Self {
             status: AuthStatus::LoggedOut,
             pending_state: None,
+            pending_verifier: None,
             refresh_token: None,
             access_token: None,
             access_token_expires_at: None,
@@ -155,6 +159,7 @@ impl AuthManager {
             Self {
                 status: AuthStatus::Restoring,
                 pending_state: None,
+                pending_verifier: None,
                 refresh_token: Some(token),
                 access_token: None,
                 access_token_expires_at: None,
@@ -164,6 +169,7 @@ impl AuthManager {
             Self {
                 status: AuthStatus::LoggedOut,
                 pending_state: None,
+                pending_verifier: None,
                 refresh_token: None,
                 access_token: None,
                 access_token_expires_at: None,
@@ -195,6 +201,7 @@ impl AuthManager {
     /// Forget the current session's tokens and invalidate its scheduled timers.
     fn reset_session_state(&mut self) {
         self.pending_state = None;
+        self.pending_verifier = None;
         self.refresh_token = None;
         self.access_token = None;
         self.access_token_expires_at = None;
@@ -263,15 +270,19 @@ impl AuthManager {
     /// background polling, or manual paste — redirect is optional.
     pub fn begin_browser_sign_in(&mut self, ctx: &mut ModelContext<Self>) -> String {
         let state = uuid::Uuid::new_v4().to_string();
+        let verifier = super::pkce::new_verifier();
+        let challenge = super::pkce::challenge(&verifier);
         self.pending_state = Some(state.clone());
+        self.pending_verifier = Some(verifier);
         self.status = AuthStatus::SigningIn;
         self.schedule_poll(ctx);
-        browser_sign_in_url(&state)
+        browser_sign_in_url(&state, &challenge)
     }
 
     pub fn cancel_browser_sign_in(&mut self) {
         if matches!(self.status, AuthStatus::SigningIn) {
             self.pending_state = None;
+            self.pending_verifier = None;
             self.status = if self.refresh_token.is_some() {
                 AuthStatus::LoggedIn(AuthUser {
                     user_id: self.user_id_from_status(),
@@ -301,8 +312,11 @@ impl AuthManager {
     ) {
         match completion {
             AuthCompletion::Callback(callback) => {
-                if source == CompletionSource::ManualPaste {
+                // A pasted link with a one-time code is redeemed like a
+                // deep link (it needs this sign-in's verifier).
+                if source == CompletionSource::ManualPaste && callback.code.is_none() {
                     self.pending_state = None;
+                    self.pending_verifier = None;
                     self.finish_sign_in(callback.refresh_token, callback.user_id, ctx);
                     return;
                 }
@@ -321,6 +335,24 @@ impl AuthManager {
                     return;
                 }
 
+                // A one-time code: redeem it with the verifier first, then
+                // finish with the refresh token it yields.
+                if let Some(code) = callback.code.clone() {
+                    let Some(verifier) = self.pending_verifier.clone() else {
+                        self.emit_failure("Sign-in link expired. Try again.".to_string(), ctx);
+                        return;
+                    };
+                    // Keep the sign-in pending until the redemption answers.
+                    self.pending_state = Some(expected_state.clone());
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    crate::bg::detach(move || {
+                        let _ = tx.send(redeem_handoff(&expected_state, &code, &verifier));
+                    });
+                    self.await_redemption(rx, ctx);
+                    return;
+                }
+
+                self.pending_verifier = None;
                 self.finish_sign_in(callback.refresh_token, callback.user_id, ctx);
             }
             AuthCompletion::RefreshTokenOnly(token) => {
@@ -511,7 +543,9 @@ impl AuthManager {
             if !matches!(auth.status, AuthStatus::SigningIn) {
                 return;
             }
-            let Some(state) = auth.pending_state.clone() else {
+            let (Some(state), Some(verifier)) =
+                (auth.pending_state.clone(), auth.pending_verifier.clone())
+            else {
                 return;
             };
 
@@ -521,7 +555,7 @@ impl AuthManager {
             // the request on a worker thread; the UI only checks a channel.
             let (tx, rx) = std::sync::mpsc::channel();
             crate::bg::detach(move || {
-                let _ = tx.send(try_poll_pending_session(&state));
+                let _ = tx.send(try_poll_pending_session(&state, &verifier));
             });
             auth.await_poll_result(rx, ctx);
         });
@@ -547,6 +581,26 @@ impl AuthManager {
                     // Worker died (should not happen) — resume the normal cadence.
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => auth.schedule_poll(ctx),
                 }
+            },
+        );
+    }
+
+    /// Non-blocking wait for a one-time code's redemption.
+    fn await_redemption(
+        &mut self,
+        rx: std::sync::mpsc::Receiver<Result<AuthCallback, String>>,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        ctx.spawn(
+            Timer::after(Duration::from_millis(100)),
+            move |auth, _, ctx| match rx.try_recv() {
+                Ok(Ok(callback)) => auth.handle_auth_callback(callback, ctx),
+                Ok(Err(message)) => {
+                    // Polling may still deliver this sign-in once approved.
+                    auth.emit_failure(message, ctx);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => auth.await_redemption(rx, ctx),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
             },
         );
     }

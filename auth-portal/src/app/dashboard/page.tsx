@@ -330,7 +330,7 @@ export default function DashboardPage() {
               </button>
             </div>
             <SessionControl
-              session={{ refresh_token: handoff.refresh_token, user_id: handoff.user_id }}
+              session={{ code: handoff.code, refresh_token: handoff.refresh_token, user_id: handoff.user_id }}
               scheme={handoff.scheme}
               state={handoff.state}
             />

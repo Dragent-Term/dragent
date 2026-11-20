@@ -18,7 +18,7 @@ const PORTAL_PROXY_SECRET = process.env.AUTH_PORTAL_PROXY_SECRET || "";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { email, state, first_name, last_name, is_registration } = body;
+    const { email, state, first_name, last_name, is_registration, challenge } = body;
 
     if (!email || !state) {
       return NextResponse.json(
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
             }
           : {}),
       },
-      body: JSON.stringify({ email, state, first_name, last_name, is_registration }),
+      body: JSON.stringify({ email, state, first_name, last_name, is_registration, challenge }),
     });
 
     if (goRes.status === 429) {
@@ -103,11 +103,15 @@ export async function GET(request: Request) {
 
     if (goRes.ok) {
       const data = await goRes.json();
-      if (data?.access_token && data?.refresh_token) {
+      // The app's part: a one-time code when the desktop started with a
+      // PKCE challenge, or (older desktop builds) its refresh token.
+      if (data?.access_token && (data?.handoff_code || data?.refresh_token)) {
         return NextResponse.json({
           success: true,
           access_token: data.access_token,
-          refresh_token: data.refresh_token,
+          ...(data.handoff_code
+            ? { handoff_code: data.handoff_code }
+            : { refresh_token: data.refresh_token }),
           state: data.state || state,
           user_id: data.user_id,
         });
