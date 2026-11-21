@@ -277,8 +277,6 @@ fn account_card(
             flow_id,
             state.auth_error,
             state.sign_in_code.as_deref(),
-            hover_for("copy_link"),
-            hover_for("paste_callback"),
             hover_for("cancel_browser"),
         ));
     } else if let Some(error) = state.auth_error {

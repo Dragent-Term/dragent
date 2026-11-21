@@ -157,7 +157,7 @@ fn task_row(task: &Task) -> Value {
 // ── Commands ─────────────────────────────────────────────────────────────────
 
 fn list(flags: &Flags) -> Result<Value, String> {
-    let org = client::active_org()?;
+    // Arguments are checked before anything needs a sign-in or a request.
     let status = match flags.value("status").map(str::trim) {
         None | Some("") | Some("open") => None,
         Some("closed") => Some("closed".to_string()),
@@ -174,6 +174,7 @@ fn list(flags: &Flags) -> Result<Value, String> {
             Some(keys.to_string())
         }
     };
+    let org = client::active_org()?;
     let assignee = match flags.value("assignee").map(str::trim) {
         None | Some("") => None,
         Some("me") | Some("none") => flags.value("assignee").map(str::to_string),

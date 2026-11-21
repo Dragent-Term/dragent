@@ -1,4 +1,4 @@
-//! Browser wait step — spinner copy, copy link, paste callback fallback.
+//! Browser wait step: the code to match in the browser, and a way back.
 
 use warpui::elements::{
     Border, Container, CrossAxisAlignment, Element, Flex, MainAxisSize, ParentElement, Text,
@@ -10,7 +10,7 @@ use warpui_core::scene::{CornerRadius, Radius};
 
 use crate::theme::Theme;
 
-use super::chrome::{render_naked_button, render_secondary_button, CAPTION_SIZE, SUBTITLE_SIZE};
+use super::chrome::{render_naked_button, CAPTION_SIZE, SUBTITLE_SIZE};
 use super::onboarding_flow::OnboardingAction;
 
 pub fn render_browser_auth_view(
@@ -19,8 +19,6 @@ pub fn render_browser_auth_view(
     flow_id: EntityId,
     auth_error: Option<&str>,
     sign_in_code: Option<&str>,
-    copy_hover: MouseStateHandle,
-    paste_hover: MouseStateHandle,
     cancel_hover: MouseStateHandle,
 ) -> Box<dyn Element> {
     let mut body = Flex::column()
@@ -46,14 +44,7 @@ pub fn render_browser_auth_view(
         ));
 
     if let Some(code) = sign_in_code {
-        body = body.with_child(Box::new(
-            Text::new(
-                format!("Your code: {code}. If the browser asks, approve only when it shows the same code."),
-                ui_font,
-                crate::theme::text_size(CAPTION_SIZE),
-            )
-            .with_color(theme.foreground),
-        ));
+        body = body.with_child(render_code(theme, ui_font, code));
     }
 
     if let Some(error) = auth_error {
@@ -67,53 +58,51 @@ pub fn render_browser_auth_view(
         ));
     }
 
-    body = body.with_child(
-        Container::new(
-            Flex::column()
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_spacing(12.0)
-                .with_child(Box::new(
-                    Text::new(
-                        "HAVING TROUBLE?".to_string(),
-                        ui_font,
-                        crate::theme::text_size(11.0),
-                    )
-                    .with_color(theme.accent),
-                ))
-                .with_child(render_secondary_button(
-                    theme,
-                    ui_font,
-                    flow_id,
-                    copy_hover,
-                    "Copy sign-in link",
-                    OnboardingAction::CopySignInLink,
-                    true,
-                ))
-                .with_child(render_secondary_button(
-                    theme,
-                    ui_font,
-                    flow_id,
-                    paste_hover,
-                    "Paste token or callback URL",
-                    OnboardingAction::PasteAuthCallback,
-                    true,
-                ))
-                .with_child(render_naked_button(
-                    theme,
-                    ui_font,
-                    flow_id,
-                    cancel_hover,
-                    "← Back to setup",
-                    OnboardingAction::CancelBrowserAuth,
-                ))
-                .finish(),
-        )
-        .with_background_color(theme.surface_1())
-        .with_border(Border::all(1.0).with_border_color(theme.outline()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.0)))
-        .with_uniform_padding(18.0)
-        .finish(),
-    );
+    body = body.with_child(render_naked_button(
+        theme,
+        ui_font,
+        flow_id,
+        cancel_hover,
+        "← Back to setup",
+        OnboardingAction::CancelBrowserAuth,
+    ));
 
     body.finish()
+}
+
+/// The sign-in code, large and spaced out like the browser shows it, so the
+/// two are easy to compare before approving.
+pub(crate) fn render_code(theme: &Theme, ui_font: FamilyId, code: &str) -> Box<dyn Element> {
+    let spaced = code.chars().map(String::from).collect::<Vec<_>>().join(" ");
+    Container::new(
+        Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(10.0)
+            .with_child(Box::new(
+                Text::new(
+                    "YOUR CODE".to_string(),
+                    ui_font,
+                    crate::theme::text_size(11.0),
+                )
+                .with_color(theme.sub_text()),
+            ))
+            .with_child(Box::new(
+                Text::new(spaced, ui_font, crate::theme::text_size(28.0))
+                    .with_color(theme.foreground),
+            ))
+            .with_child(Box::new(
+                Text::new(
+                    "Approve in your browser only if it shows this same code.".to_string(),
+                    ui_font,
+                    crate::theme::text_size(CAPTION_SIZE),
+                )
+                .with_color(theme.sub_text()),
+            ))
+            .finish(),
+    )
+    .with_background_color(theme.surface_1())
+    .with_border(Border::all(1.0).with_border_color(theme.outline()))
+    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.0)))
+    .with_uniform_padding(20.0)
+    .finish()
 }

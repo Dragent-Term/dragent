@@ -352,22 +352,20 @@ pub fn render_account(view: &SettingsView, theme: &Theme, app: &AppContext) -> B
         )
     } else {
         // While a browser sign-in waits, show the code the browser asks the
-        // user to match before approving.
-        let sign_in_desc = app
-            .read_model(&auth, |a, _| a.pending_sign_in_code())
-            .map(|code| {
-                format!(
-                    "Waiting for the browser. Your code: {code}. Approve there only if it shows the same code."
-                )
-            })
-            .unwrap_or_else(|| "Connect your Dragent account to unlock AI features.".to_string());
-        card_rows(
+        // user to match before approving, large enough to compare.
+        let pending_code = app.read_model(&auth, |a, _| a.pending_sign_in_code());
+        let sign_in_desc = if pending_code.is_some() {
+            "Waiting for the browser. Approve there only if it shows the code below."
+        } else {
+            "Connect your Dragent account to unlock AI features."
+        };
+        let rows = card_rows(
             theme,
             vec![setting_row(
                 theme,
                 ui,
                 "Sign in",
-                Some(&sign_in_desc),
+                Some(sign_in_desc),
                 primary_button(
                     theme,
                     ui,
@@ -377,7 +375,18 @@ pub fn render_account(view: &SettingsView, theme: &Theme, app: &AppContext) -> B
                     SettingsAction::SignIn,
                 ),
             )],
-        )
+        );
+        match pending_code {
+            Some(code) => Flex::column()
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_spacing(12.0)
+                .with_child(rows)
+                .with_child(crate::setup::browser_auth_view::render_code(
+                    theme, ui, &code,
+                ))
+                .finish(),
+            None => rows,
+        }
     };
 
     let refresh_label = if account_loading {

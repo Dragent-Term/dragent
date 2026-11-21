@@ -277,6 +277,13 @@ pub(crate) fn build_prompt_command(
 mod tests {
     use super::*;
 
+    /// The shells of `shells` this machine has (a Linux runner may lack zsh).
+    fn installed<const N: usize>(shells: [&'static str; N]) -> impl Iterator<Item = &'static str> {
+        shells
+            .into_iter()
+            .filter(|shell| std::path::Path::new(shell).exists())
+    }
+
     fn run(shell: &str, script: &str) -> String {
         let output = std::process::Command::new(shell)
             .args(["-c", script])
@@ -293,7 +300,7 @@ mod tests {
     #[test]
     fn argument_prompt_and_suffix_reach_shell_unchanged() {
         let prompt = "quotes ' \" $HOME $(exit 42) `exit 42` \\ unicode λ\nsecond line";
-        for shell in ["/bin/sh", "/bin/bash", "/bin/zsh"] {
+        for shell in installed(["/bin/sh", "/bin/bash", "/bin/zsh"]) {
             let command = build_prompt_command(
                 "capture",
                 "capture --before",
@@ -314,7 +321,7 @@ mod tests {
 
     #[test]
     fn stdin_fallback_suffix_and_delimiter_collision() {
-        for shell in ["/bin/sh", "/bin/bash", "/bin/zsh"] {
+        for shell in installed(["/bin/sh", "/bin/bash", "/bin/zsh"]) {
             let prompt = "first\nDRAGENT_PROMPT_test\nlast $HOME 'quote'";
             let command = build_prompt_command(
                 "capture --before",
@@ -422,7 +429,7 @@ mod tests {
     fn prompt_files_reach_the_shell_unchanged() {
         let folder = scratch_folder();
         let path = stage_prompt_in(&folder, TRICKY).unwrap();
-        for shell in ["/bin/sh", "/bin/bash", "/bin/zsh"] {
+        for shell in installed(["/bin/sh", "/bin/bash", "/bin/zsh"]) {
             let command = build_prompt_command(
                 "capture",
                 "capture --before",

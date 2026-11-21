@@ -289,9 +289,7 @@ impl DemoViews {
                             signed_in: true,
                             email: Some("me@example.com".into()),
                             plan: Some("max".into()),
-                            kind: Some(
-                                dragent_host::agent_accounts::CredentialKind::Subscription,
-                            ),
+                            kind: Some(dragent_host::agent_accounts::CredentialKind::Subscription),
                             error: None,
                             credentials_changed_at: Some(1_700_000_000),
                         },
@@ -341,9 +339,12 @@ impl DemoViews {
                         label: "Server".into(),
                         kind: dragent_host::agent_accounts::CredentialKind::Subscription,
                     }],
-                    defaults: [("claude".to_string(), dragent_host::agent_accounts::Selection::System)]
-                        .into_iter()
-                        .collect(),
+                    defaults: [(
+                        "claude".to_string(),
+                        dragent_host::agent_accounts::Selection::System,
+                    )]
+                    .into_iter()
+                    .collect(),
                     identities: vec![dragent_host::development::AccountIdentityView {
                         target: Some(remote_work),
                         provider: "claude".into(),

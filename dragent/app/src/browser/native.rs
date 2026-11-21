@@ -148,7 +148,9 @@ impl Engine {
     pub fn pump_events() {
         let start = std::time::Instant::now();
         for _ in 0..16 {
-            if !gtk::events_pending() || start.elapsed() >= std::time::Duration::from_millis(2) { break; }
+            if !gtk::events_pending() || start.elapsed() >= std::time::Duration::from_millis(2) {
+                break;
+            }
             gtk::main_iteration_do(false);
         }
     }
@@ -255,7 +257,9 @@ impl Engine {
                     _ if message.starts_with("dragent-design:") => {
                         let message = &message[15..];
                         let queued: usize = page.design_messages.iter().map(String::len).sum();
-                        if page.design_messages.len() < 8 && queued + message.len() <= super::design::MAX_MESSAGE {
+                        if page.design_messages.len() < 8
+                            && queued + message.len() <= super::design::MAX_MESSAGE
+                        {
                             page.design_messages.push_back(message.to_string());
                         }
                     }
@@ -405,11 +409,13 @@ impl Engine {
             mac::snapshot(
                 &self.view.webview(),
                 Box::new(move |image| {
-                    done(image.and_then(|image| unsafe { mac::rgba(&image) }).and_then(
-                        |(width, height, pixels)| {
-                            warpui::image_cache::StaticImage::from_rgba(width, height, pixels)
-                        },
-                    ))
+                    done(
+                        image
+                            .and_then(|image| unsafe { mac::rgba(&image) })
+                            .and_then(|(width, height, pixels)| {
+                                warpui::image_cache::StaticImage::from_rgba(width, height, pixels)
+                            }),
+                    )
                 }),
             );
         }
@@ -484,7 +490,9 @@ impl Engine {
     }
 
     pub fn script(&self, script: &str) -> Result<(), String> {
-        self.view.evaluate_script(script).map_err(|error| error.to_string())
+        self.view
+            .evaluate_script(script)
+            .map_err(|error| error.to_string())
     }
 
     /// A PNG of the visible page at most `width` points wide: much less to
@@ -493,14 +501,20 @@ impl Engine {
         #[cfg(target_os = "macos")]
         {
             use wry::WebViewExtMacOS;
-            let page_width = self.parked.or(self.bounds).map(|b| b.width() as f64).unwrap_or(width);
+            let page_width = self
+                .parked
+                .or(self.bounds)
+                .map(|b| b.width() as f64)
+                .unwrap_or(width);
             mac::snapshot_width(
                 &self.view.webview(),
                 Some(width.min(page_width.max(1.0))),
                 Box::new(move |image| {
-                    done(image
-                        .and_then(|image| unsafe { mac::png(&image) })
-                        .ok_or_else(|| "The page couldn't be captured.".to_string()))
+                    done(
+                        image
+                            .and_then(|image| unsafe { mac::png(&image) })
+                            .ok_or_else(|| "The page couldn't be captured.".to_string()),
+                    )
                 }),
             );
         }
@@ -519,29 +533,46 @@ impl Engine {
             mac::snapshot(
                 &self.view.webview(),
                 Box::new(move |image| {
-                    done(image
-                        .and_then(|image| unsafe { mac::png(&image) })
-                        .ok_or_else(|| "The page couldn't be captured.".to_string()))
+                    done(
+                        image
+                            .and_then(|image| unsafe { mac::png(&image) })
+                            .ok_or_else(|| "The page couldn't be captured.".to_string()),
+                    )
                 }),
             );
         }
         #[cfg(target_os = "linux")]
         {
-            use webkit2gtk::{prelude::WebViewExt, SnapshotOptions, SnapshotRegion};
+            use webkit2gtk::{SnapshotOptions, SnapshotRegion, WebViewExt};
             use wry::WebViewExtUnix;
-            self.view.webview().snapshot(SnapshotRegion::Visible, SnapshotOptions::NONE,
-                None::<&gtk::gio::Cancellable>, move |result| {
-                    done(result.map_err(|error| error.to_string()).and_then(|surface| {
-                        let mut bytes = Vec::new();
-                        surface.write_to_png(&mut bytes).map_err(|error| error.to_string())?;
-                        Ok(bytes)
-                    }));
-                });
+            self.view.webview().snapshot(
+                SnapshotRegion::Visible,
+                SnapshotOptions::NONE,
+                None::<&gtk::gio::Cancellable>,
+                move |result| {
+                    done(
+                        result
+                            .map_err(|error| error.to_string())
+                            .and_then(|surface| {
+                                let mut bytes = Vec::new();
+                                surface
+                                    .write_to_png(&mut bytes)
+                                    .map_err(|error| error.to_string())?;
+                                Ok(bytes)
+                            }),
+                    );
+                },
+            );
         }
         #[cfg(target_os = "windows")]
         {
-            use webview2_com::{CapturePreviewCompletedHandler, Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG};
-            use windows::Win32::System::Com::{StructuredStorage::CreateStreamOnHGlobal, STATSTG, STATFLAG_NONAME, STREAM_SEEK_SET};
+            use webview2_com::{
+                CapturePreviewCompletedHandler,
+                Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+            };
+            use windows::Win32::System::Com::{
+                StructuredStorage::CreateStreamOnHGlobal, STATFLAG_NONAME, STATSTG, STREAM_SEEK_SET,
+            };
             use wry::WebViewExtWindows;
             let done = Rc::new(RefCell::new(Some(done)));
             let complete = done.clone();
@@ -552,24 +583,49 @@ impl Engine {
                     let result = (|| -> Result<Vec<u8>, String> {
                         status.map_err(|error| error.to_string())?;
                         let mut stat = STATSTG::default();
-                        unsafe { output.Stat(&mut stat, STATFLAG_NONAME).map_err(|e| e.to_string())?; }
-                        if stat.cbSize > 32 * 1024 * 1024 { return Err("The page capture is too large.".into()); }
+                        unsafe {
+                            output
+                                .Stat(&mut stat, STATFLAG_NONAME)
+                                .map_err(|e| e.to_string())?;
+                        }
+                        if stat.cbSize > 32 * 1024 * 1024 {
+                            return Err("The page capture is too large.".into());
+                        }
                         let mut bytes = vec![0; stat.cbSize as usize];
                         let mut read = 0;
                         unsafe {
-                            output.Seek(0, STREAM_SEEK_SET, None).map_err(|e| e.to_string())?;
-                            output.Read(bytes.as_mut_ptr().cast(), bytes.len() as u32, Some(&mut read)).ok().map_err(|e| e.to_string())?;
+                            output
+                                .Seek(0, STREAM_SEEK_SET, None)
+                                .map_err(|e| e.to_string())?;
+                            output
+                                .Read(
+                                    bytes.as_mut_ptr().cast(),
+                                    bytes.len() as u32,
+                                    Some(&mut read),
+                                )
+                                .ok()
+                                .map_err(|e| e.to_string())?;
                         }
                         bytes.truncate(read as usize);
                         Ok(bytes)
                     })();
-                    if let Some(done) = complete.borrow_mut().take() { done(result); }
+                    if let Some(done) = complete.borrow_mut().take() {
+                        done(result);
+                    }
                     Ok(())
                 }));
-                unsafe { self.view.webview().CapturePreview(COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG, &stream, &handler) }
+                unsafe {
+                    self.view.webview().CapturePreview(
+                        COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+                        &stream,
+                        &handler,
+                    )
+                }
             })();
             if let Err(error) = result {
-                if let Some(done) = done.borrow_mut().take() { done(Err(error.to_string())); }
+                if let Some(done) = done.borrow_mut().take() {
+                    done(Err(error.to_string()));
+                }
             }
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -582,11 +638,18 @@ impl Engine {
 
     /// Add one imported cookie to this pane's profile (shared by every pane
     /// of the organisation).
-    pub fn import_cookie(&self, imported: &dragent_host::browser_cookies::ImportedCookie) -> Result<(), String> {
+    pub fn import_cookie(
+        &self,
+        imported: &dragent_host::browser_cookies::ImportedCookie,
+    ) -> Result<(), String> {
         use dragent_host::browser_cookies::SameSite;
         let mut cookie = cookie::Cookie::build((imported.name.clone(), imported.value.clone()))
             .domain(imported.domain.clone())
-            .path(if imported.path.is_empty() { "/".to_string() } else { imported.path.clone() })
+            .path(if imported.path.is_empty() {
+                "/".to_string()
+            } else {
+                imported.path.clone()
+            })
             .secure(imported.secure)
             .http_only(imported.http_only);
         if let Some(same_site) = imported.same_site {
@@ -596,10 +659,15 @@ impl Engine {
                 SameSite::Strict => cookie::SameSite::Strict,
             });
         }
-        if let Some(at) = imported.expires.and_then(|at| time::OffsetDateTime::from_unix_timestamp(at).ok()) {
+        if let Some(at) = imported
+            .expires
+            .and_then(|at| time::OffsetDateTime::from_unix_timestamp(at).ok())
+        {
             cookie = cookie.expires(at);
         }
-        self.view.set_cookie(&cookie.build()).map_err(|error| error.to_string())
+        self.view
+            .set_cookie(&cookie.build())
+            .map_err(|error| error.to_string())
     }
 
     /// Cookies, cache and site storage of this pane's profile: every pane of
@@ -750,13 +818,16 @@ mod mac {
         unsafe {
             // Held until the call returns; WebKit copies what it needs.
             let configured: Option<Retained<AnyObject>> = width.map(|width| {
-                let configuration: Retained<AnyObject> = msg_send![class!(WKSnapshotConfiguration), new];
-                let number: Retained<AnyObject> = msg_send![class!(NSNumber), numberWithDouble: width];
+                let configuration: Retained<AnyObject> =
+                    msg_send![class!(WKSnapshotConfiguration), new];
+                let number: Retained<AnyObject> =
+                    msg_send![class!(NSNumber), numberWithDouble: width];
                 let _: () = msg_send![&*configuration, setSnapshotWidth: &*number];
                 configuration
             });
-            let configuration: *const AnyObject =
-                configured.as_deref().map_or(std::ptr::null(), |c| c as *const AnyObject);
+            let configuration: *const AnyObject = configured
+                .as_deref()
+                .map_or(std::ptr::null(), |c| c as *const AnyObject);
             let _: () = msg_send![
                 webview,
                 takeSnapshotWithConfiguration: configuration,
@@ -798,8 +869,10 @@ mod mac {
         }
         #[link(name = "ImageIO", kind = "framework")]
         extern "C" {
-            fn CGImageSourceCreateWithData(data: *const c_void, options: *const c_void)
-                -> *mut c_void;
+            fn CGImageSourceCreateWithData(
+                data: *const c_void,
+                options: *const c_void,
+            ) -> *mut c_void;
             fn CGImageSourceCreateImageAtIndex(
                 source: *mut c_void,
                 index: usize,
@@ -1046,7 +1119,9 @@ impl Engine {
     pub fn eval(&self, _: &str, _: impl Fn(String) + Send + 'static) -> Result<(), String> {
         Err("The built-in browser is available in the desktop app.".into())
     }
-    pub fn script(&self, _: &str) -> Result<(), String> { Ok(()) }
+    pub fn script(&self, _: &str) -> Result<(), String> {
+        Ok(())
+    }
     pub fn screenshot(&self, done: Box<dyn FnOnce(Result<Vec<u8>, String>)>) {
         done(Err(
             "The built-in browser is available in the desktop app.".into()
