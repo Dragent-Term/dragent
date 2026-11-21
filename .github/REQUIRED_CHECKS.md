@@ -12,7 +12,6 @@ Set these in **Settings → Branches → Branch protection** (or a ruleset) for
 | `dragent (tests)` | ci.yml | The desktop workspace's tests |
 | `auth-portal (typecheck / lint / build)` | ci.yml | Types, lint and a production build |
 | `mobile (typecheck / lint / test)` | ci.yml | Types, lint and the phone app's tests |
-| `marketing (typecheck / lint / build)` | ci.yml | Types, lint and a production build |
 | `ciphertext-only-proof`, `clients` | e2ee.yml | The relay never sees plaintext; clients interoperate |
 | `secret-scan (gitleaks)` | security.yml | No credentials in the change or the history |
 | `dependency-review` | security.yml | No new dependency with a known vulnerability or a disallowed license |
