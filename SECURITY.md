@@ -32,7 +32,7 @@ request.
 
 In scope: this repository's application surfaces — the desktop app
 (`dragent/`, Rust), the relay/server (`server/`, Go), the auth portal
-(`auth-portal/`), the marketing site (`marketing/`), and the mobile
+(`auth-portal/`), and the mobile
 companion (`mobile/`).
 
 Out of scope: denial-of-service/volumetric findings, social engineering,
