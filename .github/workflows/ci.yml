@@ -128,7 +128,7 @@ jobs:
     needs: paths
     if: needs.paths.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30 # a normal run takes ~13 minutes; a hung test fails fast
     defaults:
       run:
         working-directory: dragent
