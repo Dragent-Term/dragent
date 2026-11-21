@@ -2,10 +2,8 @@
 
 This Individual Contributor License Agreement ("Agreement") documents the
 terms under which You contribute to the project owned by **Nimbletech Ltd**
-("Project Owner"). The project's community edition is licensed under the
-**GNU Affero General Public License, version 3 only (AGPL-3.0-only)**, with
-a separate commercial license available for users who cannot meet the AGPL
-terms (see `LICENSING.md`).
+("Project Owner"). The project is licensed under the **GNU Affero General
+Public License, version 3 only (AGPL-3.0-only)** (see `LICENSING.md`).
 
 ## 1. Definitions
 
@@ -18,25 +16,15 @@ terms (see `LICENSING.md`).
 
 ## 2. Copyright license grant
 
-You hereby grant to Nimbletech Ltd a perpetual, worldwide, non-exclusive,
+You hereby grant to Nimbletech Ltd, and to recipients of software
+distributed by Nimbletech Ltd, a perpetual, worldwide, non-exclusive,
 no-charge, royalty-free, irrevocable copyright license to reproduce, prepare
 derivative works of, publicly display, publicly perform, sublicense, and
-distribute Your Contributions and such derivative works, under:
+distribute Your Contributions and such derivative works.
 
-(a) the GNU Affero General Public License, version 3 only (AGPL-3.0-only);
-    and
-
-(b) any commercial license terms the Project Owner offers for the Project,
-    including the right to relicense, sublicense, and distribute Your
-    Contributions (modified or not, alone or combined with other works)
-    under such commercial terms, for any present or future licensing needs
-    of the Project.
-
-This grant covers redistribution of Your Contributions under the Project's
-licenses as they exist now or as the Project Owner structures them in the
-future, including dual licensing where the same code is offered under both
-the AGPL-3.0-only community terms and separate commercial terms. You keep
-copyright in Your own work; this Agreement does not transfer ownership.
+You reserve all right, title, and interest in and to Your Contributions
+other than the license granted in this Agreement: You keep copyright in
+Your own work, and this Agreement does not transfer ownership.
 
 ## 3. Patent license grant and retaliation
 
@@ -73,16 +61,15 @@ You represent that:
 
 (c) Your Contributions are submitted under the inbound terms stated in
     `CONTRIBUTING.md` and `LICENSING.md` (inbound = outbound under
-    AGPL-3.0-only, plus the grants in this Agreement).
+    AGPL-3.0-only, plus the licenses granted in this Agreement).
 
 ## 5. Other terms
 
 - This Agreement does not create employment, agency, or joint-venture
   relations. You contribute voluntarily.
 - You provide Contributions "AS IS", without warranties of any kind.
-- This Agreement is governed by the same choice of law the Project Owner
-  designates for the Project's commercial terms, or, absent such a
-  designation, the law of the Project Owner's place of organization.
+- This Agreement is governed by the law of the Project Owner's place of
+  organization.
 - If any provision is held unenforceable, the remaining provisions continue
   in full effect.
 

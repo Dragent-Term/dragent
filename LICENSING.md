@@ -10,14 +10,6 @@ This repository's own code is licensed under the
   (canonical version: <https://www.gnu.org/licenses/agpl-3.0.html>)
 - Copyright holder: Nimbletech Ltd (Copyright (c) 2026)
 
-This is the community edition. If you cannot or do not wish to comply with
-the AGPL's obligations — for example, you want to run a modified version as
-a hosted service without offering Corresponding Source — a separate
-commercial license is available. Contact: **licensing@dragent.dev**
-([PLACEHOLDER — replace with the real monitored licensing contact before
-publishing]). Commercial terms live in a separate agreement, never inside
-the AGPL text.
-
 ## What the AGPL-3.0-only allows
 
 The AGPL-3.0 lets anyone dealing in the software do anything with it,
@@ -33,9 +25,7 @@ The AGPL-3.0 lets anyone dealing in the software do anything with it,
 
 There is no commercial-use restriction: commercial use, paid hosting,
 embedding in paid products, and internal business/production use are all
-permitted — provided you meet the copyleft conditions below. Anyone who
-wants the software's freedoms without the copyleft obligations needs the
-separate commercial license above instead.
+permitted — provided you meet the copyleft conditions below.
 
 ## The network rule (Section 13)
 
@@ -112,10 +102,11 @@ By contributing to this repository you agree that your contributions are
 licensed inbound under the same terms — the GNU Affero General Public License,
 version 3 only (**inbound = outbound**). This keeps the whole tree under one
 license. Every contributor must sign [`CLA.md`](./CLA.md) (sign-once via the
-bot; see [`CONTRIBUTING.md`](./CONTRIBUTING.md)), which additionally grants
-Nimbletech Ltd redistribution under AGPL-3.0-only and commercial license
-terms. Contributors keep copyright in their own work; do not add per-file
-author tags and do not strip existing third-party headers.
+bot; see [`CONTRIBUTING.md`](./CONTRIBUTING.md)), which also grants
+Nimbletech Ltd a broad, irrevocable license to the contribution, including
+the right to sublicense it. Contributors keep copyright in their own work;
+do not add per-file author tags and do not strip existing third-party
+headers.
 
 ## Open Source
 
