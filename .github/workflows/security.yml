@@ -7,7 +7,7 @@ name: security
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, staging]
   schedule:
     - cron: '0 6 * * 1' # weekly, so advisories surface even without PRs
   workflow_dispatch:

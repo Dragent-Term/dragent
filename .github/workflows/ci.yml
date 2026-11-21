@@ -7,7 +7,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, staging]
 
 permissions:
   contents: read
@@ -35,6 +35,9 @@ jobs:
       - id: filter
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
+          # staging (the private sync) is replaced on each push: compare it
+          # with main, which is what moving main up to it would change.
+          base: ${{ github.ref == 'refs/heads/staging' && 'main' || '' }}
           filters: |
             code:
               - 'server/**'
