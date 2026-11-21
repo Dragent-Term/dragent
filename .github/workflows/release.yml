@@ -55,6 +55,12 @@ jobs:
             echo "::error::Tag v$TAG != app/Cargo.toml version $CRATE — bump the crate version first"
             exit 1
           fi
+          # Desktops fetch the remote runtime from releases/download/v<host version>.
+          HOST=$(grep -m1 -E '^version = ' dragent/crates/dragent_host/Cargo.toml | sed -E 's/version = "([^"]+)"/\1/')
+          if [ "$TAG" != "$HOST" ]; then
+            echo "::error::Tag v$TAG != crates/dragent_host/Cargo.toml version $HOST — bump it too"
+            exit 1
+          fi
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
 
   # ── macOS: arm64 + x86_64 DMGs ──────────────────────────────────────────────
@@ -236,7 +242,12 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: "{macos,windows}-*"
+          pattern: macos-*
+          path: built
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: windows-*
           path: built
           merge-multiple: true
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -343,11 +354,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" release/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Dragent $VERSION" \
-            --generate-notes \
-            --verify-tag
+          # A re-run finds the release already there: replace its files.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Dragent $VERSION" \
+              --generate-notes \
+              --verify-tag
+          fi
           echo "Published $TAG: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
 
       # TEMPORARY bridge: apps from before this change check CloudFront's
