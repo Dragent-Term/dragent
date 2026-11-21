@@ -1,0 +1,18 @@
+# Known false positives for gitleaks, pinned by fingerprint (commit:file:rule:line).
+# Each is a made-up test value or plain text; a new secret anywhere still fails.
+# Prefer rotating a real secret over adding it here.
+
+# prose ("public key …"), not a key
+8f119ea40cb2d98ba0a3e6424b41a371812ffdb4:dragent/app/src/autoupdate/README.md:generic-api-key:166
+# made-up sk-/Bearer values the redaction test must hide
+8f119ea40cb2d98ba0a3e6424b41a371812ffdb4:dragent/app/src/cli/doctor.rs:generic-api-key:1654
+# docs example: Bearer mock-desktop-token against localhost
+8f119ea40cb2d98ba0a3e6424b41a371812ffdb4:mobile/README.md:curl-auth-header:242
+# published test vector for the push decryption tests
+8f119ea40cb2d98ba0a3e6424b41a371812ffdb4:mobile/plugins/e2ee-nse/fixtures/push-fixtures.json:generic-api-key:80
+# made-up Sentry token in a handler test
+8f119ea40cb2d98ba0a3e6424b41a371812ffdb4:server/internal/integrations/handler_test.go:generic-api-key:112
+# test-only JWT secret checking the length rule
+8f119ea40cb2d98ba0a3e6424b41a371812ffdb4:server/internal/platform/config/jwt_secret_test.go:generic-api-key:17
+# config key names, not secrets
+8f119ea40cb2d98ba0a3e6424b41a371812ffdb4:server/migrations/00035_drop_session_and_weekly_windows.sql:generic-api-key:33

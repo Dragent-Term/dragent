@@ -56,3 +56,25 @@ allow-git = [
 
 [advisories]
 yanked = "warn"
+# Unmaintained notices fail only for crates this workspace depends on
+# directly; for indirect ones there's nothing to do until the parent moves.
+unmaintained = "workspace"
+# Each ignore needs a reason and a way out. Keep in step with the cargo
+# audit ignore list in .github/workflows/security.yml.
+ignore = [
+  # rmcp: a misbehaving MCP server the user added can make the client buffer
+  # a large reply. Fixed in rmcp 3.9, a major upgrade still to be done.
+  { id = "RUSTSEC-2026-0462", reason = "needs the rmcp 3.x upgrade" },
+  # quick-xml 0.37 / 0.39: only reached through Windows toast notifications
+  # (our own XML) and wayland-scanner at build time (protocol files from the
+  # crate itself). Neither parses outside input. Clears when they update.
+  { id = "RUSTSEC-2026-0194", reason = "quick-xml only parses our own XML" },
+  { id = "RUSTSEC-2026-0195", reason = "quick-xml only parses our own XML" },
+  # Direct dependencies marked unmaintained (no known vulnerability). Each
+  # needs a replacement; listed so a new notice still fails the check.
+  { id = "RUSTSEC-2025-0141", reason = "bincode: replace (e.g. postcard)" },
+  { id = "RUSTSEC-2026-0543", reason = "chrono: replace (e.g. jiff)" },
+  { id = "RUSTSEC-2026-0555", reason = "chrono-tz: goes with chrono" },
+  { id = "RUSTSEC-2024-0388", reason = "derivative: replace with derive-where" },
+  { id = "RUSTSEC-2024-0384", reason = "instant: replace with web-time" },
+]
