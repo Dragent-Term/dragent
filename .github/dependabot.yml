@@ -7,21 +7,6 @@ version: 2
 # updates).
 
 updates:
-  # Go server
-  - package-ecosystem: gomod
-    directory: /server
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 2
-    labels: [dependencies, go]
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      minor-and-patch:
-        update-types: [minor, patch]
-
   # Desktop app (Rust workspace)
   - package-ecosystem: cargo
     directory: /dragent
