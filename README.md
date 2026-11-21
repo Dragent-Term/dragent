@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <img src=".github/assets/readme/coordination.png" alt="An Agent Coordination page: the lead's plan with each task's state, a permission waiting for you and the lead's question" width="880" />
+  <img src=".github/assets/readme/team-demo.webp" alt="Giving Dragent a goal: the lead plans, three agents build in their own worktrees, the team asks you once, and the work is ready for review" width="880" />
 </p>
 
 ## Features
@@ -39,7 +39,7 @@ worker gets its own worktree and files. You follow one page: who started what,
 what finished, and the questions that are yours to answer. Reply there, or from
 your phone.
 
-<a href="https://dragent.dev/docs/coordination"><img src=".github/assets/readme/team-prompt.png" alt="The new-workspace prompt with Claude Code leading a team of three agents" width="880" /></a>
+<a href="https://dragent.dev/docs/coordination"><img src=".github/assets/readme/coordination.png" alt="An Agent Coordination page: the lead's plan with each task's state, a permission waiting for you and the lead's question" width="880" /></a>
 
 ### A real workspace for every agent
 
@@ -47,7 +47,7 @@ Each worker gets a modern terminal, an editor and its own branch. Failed
 commands get fixed where they broke, and finished work goes straight to
 review. Open any of them when you want the inside view.
 
-<a href="https://dragent.dev/docs/workspaces"><img src=".github/assets/readme/workspace.png" alt="A workspace terminal: git status, the tests passing and the team's agents at work" width="880" /></a>
+<a href="https://dragent.dev/docs/workspaces"><img src=".github/assets/readme/workspace-demo.webp" alt="A workspace: a dev server fails, Dragent diagnoses the port clash and retries, then the agent adds a test and runs it" width="880" /></a>
 
 ### An agent built into the workspace
 
@@ -84,7 +84,7 @@ subscription or API key, signed in on that machine.
 <table>
   <tr>
     <td width="300" valign="top">
-      <a href="https://dragent.dev/docs/mobile"><img src=".github/assets/readme/phone-workspaces.png" alt="Dragent on an iPhone: a desktop's workspaces, sorted so the ones that need you come first" width="280" /></a>
+      <a href="https://dragent.dev/docs/mobile"><img src=".github/assets/readme/phone-demo.webp" alt="Dragent on an iPhone: a desktop's workspaces, then Claude Code working on a fix and finishing with the tests passing" width="280" /></a>
     </td>
     <td valign="top">
       Pair your phone once by scanning a code on your desktop. When an agent
@@ -108,6 +108,8 @@ Every workspace has a real browser beside the code. Agents open the app they
 built, click through it and check the screen at desktop and phone widths, and
 you can step in whenever you like.
 [More about the browser](https://dragent.dev/docs/browser)
+
+<a href="https://dragent.dev/docs/browser"><img src=".github/assets/readme/browser-demo.webp" alt="Claude Code opening a checkout page in the built-in browser, paying, confirming the result and checking the phone width" width="680" /></a>
 
 <details>
 <summary><strong>And more</strong>: automations, integrations, CLI and MCP</summary>
