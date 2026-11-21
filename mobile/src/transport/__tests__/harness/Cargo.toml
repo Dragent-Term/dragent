@@ -17,7 +17,7 @@ name = "dragent_e2ee_transport_harness"
 version = "0.0.0"
 edition = "2021"
 publish = false
-license = "LicenseRef-Proprietary"
+license = "AGPL-3.0-only"
 
 [[bin]]
 name = "e2ee-transport-harness"
