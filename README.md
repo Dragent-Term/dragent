@@ -172,7 +172,9 @@ Each folder's README has the details.
 The hosted service (accounts, sync and the relay between desktops and
 phones) is run by Dragent and isn't in this repository. The apps, the
 end-to-end encryption and the wire formats they speak are all here, so you
-can check that the relay only ever sees encrypted data.
+can check what the relay can see: everything your devices send each other
+is end-to-end encrypted, and the relay sees only what it needs to connect
+them (which devices are paired, and routing and sign-in details).
 
 ## Contributing
 
