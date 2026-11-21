@@ -1,13 +1,21 @@
-# Desktop app release: push a tag `v<version>` (matching dragent/app/Cargo.toml)
-# to build all four artifacts and publish them + the update manifest to
-# S3/CloudFront. The app's auto-updater polls stable/latest.json.
+# Release: push a tag `v<version>` (matching dragent/app/Cargo.toml). Every
+# file is published on that tag's GitHub Release, so GitHub serves the
+# downloads. Fixed file names mean `releases/latest/download/<name>` always
+# fetches the newest build (the website's Download buttons use those).
 #
-#   macOS  arm64 + x86_64  → .dmg          (signed + notarized when secrets exist)
-#   Windows x64 + arm64    → -setup.exe    (Inno Setup; unsigned for now)
+#   macOS  arm64 + x86_64  → Dragent-macos-<arch>.dmg   (signed + notarized when secrets exist)
+#   Windows x64 + arm64    → Dragent-windows-<arch>-setup.exe (Inno Setup; unsigned for now)
+#   Remote host runtime    → dragent-host-<os>-<arch> + .sha256 (installed over SSH)
+#   latest.json            → the signed update manifest the desktop app polls
 #
-# Baked-in config (compile-time env, see api/backend.rs + autoupdate/mod.rs):
+# Baked-in config (compile-time env, see api/backend.rs + autoupdate/):
 #   DRAGENT_BACKEND_URL_DEFAULT         ← repo var RELEASE_BACKEND_URL (fallback: staging)
-#   DRAGENT_UPDATE_MANIFEST_URL_DEFAULT ← the CloudFront manifest URL
+#   DRAGENT_UPDATE_MANIFEST_URL_DEFAULT ← releases/latest/download/latest.json
+#   DRAGENT_UPDATE_PUBLIC_KEYS          ← repo var RELEASE_MANIFEST_PUBLIC_KEYS
+#
+# Update manifest signing (see dragent/app/src/autoupdate/README.md):
+#   secret RELEASE_MANIFEST_ED25519_PRIVATE_KEY (PEM). Without it the release
+#   still publishes, but no latest.json, so installed apps don't update.
 #
 # Optional macOS signing secrets (workflow auto-detects; unsigned/ad-hoc without):
 #   MACOS_CERT_P12 (base64 .p12), MACOS_CERT_PASSWORD,
@@ -19,19 +27,15 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: read # the publish job adds what it needs (OIDC, attestations)
+  contents: read # the publish job adds what it needs
 
 env:
-  RELEASES_CDN: https://d8d93sixrrr9g.cloudfront.net
-  RELEASES_BUCKET: dragent-releases-269235677023
-  CLOUDFRONT_DISTRIBUTION: E1QRLYB4AQW3ZR
-  AWS_RELEASE_ROLE: arn:aws:iam::269235677023:role/dragent-release-github-actions
-  AWS_REGION: us-east-1
   # Compile-time bakes (option_env!) picked up by cargo builds in the scripts.
   DRAGENT_BACKEND_URL_DEFAULT: ${{ vars.RELEASE_BACKEND_URL || 'https://beta.api.dragent.dev' }}
   # Web frontend origin: browser sign-in page + desktop session polling.
   DRAGENT_WEB_ORIGIN_DEFAULT: ${{ vars.RELEASE_WEB_ORIGIN || 'https://beta.dragent.dev' }}
-  DRAGENT_UPDATE_MANIFEST_URL_DEFAULT: https://d8d93sixrrr9g.cloudfront.net/stable/latest.json
+  DRAGENT_UPDATE_MANIFEST_URL_DEFAULT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+  DRAGENT_UPDATE_PUBLIC_KEYS: ${{ vars.RELEASE_MANIFEST_PUBLIC_KEYS }}
 
 jobs:
   # ── Guard: tag must match the crate version (scripts name artifacts by it) ──
@@ -151,31 +155,120 @@ jobs:
           path: dragent/dist/Dragent-*-windows-${{ matrix.arch }}-setup.exe
           if-no-files-found: error
 
-  # ── Publish artifacts + manifest to S3/CloudFront ───────────────────────────
+  # ── Remote host runtime: installed on SSH machines by the desktop app ──────
+  host:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+          - runner: macos-15
+            platform: macos-arm64
+          - runner: macos-15-intel
+            platform: macos-x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - name: Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev libdbus-1-dev pkg-config
+      - name: Test the headless runtime
+        working-directory: dragent
+        run: cargo test --locked -p dragent_host --lib --test host_tools_run_path
+      # Linux servers run what's built here. Debian 11 sets the glibc floor
+      # (2.31, matching MIN_GLIBC in dragent_host/src/remote.rs), and SQLite
+      # and libdbus are compiled in, so nothing else must be installed.
+      - name: Build the headless runtime (Linux, Debian 11)
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src/dragent rust:1-bullseye \
+            cargo build --locked --release -p dragent_host --bin dragent-host
+          sudo chown -R "$(id -u):$(id -g)" dragent/target
+          if ldd dragent/target/release/dragent-host | grep -E 'libdbus|libsqlite3|not found'; then
+            echo 'The runtime must not need libdbus or libsqlite3 on the server' >&2
+            exit 1
+          fi
+          needs=$(objdump -T dragent/target/release/dragent-host | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "The runtime needs glibc $needs"
+          if [ "$(printf '%s\n2.31\n' "$needs" | sort -V | tail -1)" != 2.31 ]; then
+            echo "glibc $needs is above the 2.31 floor servers are promised" >&2
+            exit 1
+          fi
+      - name: Build the headless runtime (macOS)
+        if: runner.os == 'macOS'
+        working-directory: dragent
+        run: cargo build --locked --release -p dragent_host --bin dragent-host
+      # The checksum names the file `dragent-host`: the installer downloads
+      # both files under those names and checks one against the other.
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p remote-artifact
+          cp dragent/target/release/dragent-host remote-artifact/dragent-host
+          cd remote-artifact
+          if command -v sha256sum >/dev/null; then sha256sum dragent-host > dragent-host.sha256; else shasum -a 256 dragent-host > dragent-host.sha256; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: remote-host-${{ matrix.platform }}
+          path: remote-artifact/
+          if-no-files-found: error
+
+  # ── Publish everything on the tag's GitHub Release ─────────────────────────
   publish:
-    needs: [version, macos, windows]
+    needs: [version, macos, windows, host]
     runs-on: ubuntu-latest
     permissions:
-      id-token: write # OIDC: AWS role, and signing the attestations
-      contents: read
+      contents: write # create the GitHub Release
+      id-token: write # signing the attestations; the legacy CDN bridge
       attestations: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: artifacts
+          pattern: "{macos,windows}-*"
+          path: built
           merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: remote-host-*
+          path: host
 
-      # Anyone can check an installer came from this workflow and commit:
-      #   gh attestation verify Dragent-….dmg --repo <owner>/<repo>
+      # Fixed names, so releases/latest/download/<name> is always the newest.
+      - name: Name the release files
+        run: |
+          mkdir release
+          for pair in macos-arm64.dmg macos-x86_64.dmg windows-x64-setup.exe windows-arm64-setup.exe; do
+            src="built/Dragent-$VERSION-$pair"
+            [ -f "$src" ] || { echo "::error::missing artifact $src"; exit 1; }
+            cp "$src" "release/Dragent-$pair"
+          done
+          for platform in linux-x86_64 linux-arm64 macos-arm64 macos-x86_64; do
+            dir="host/remote-host-$platform"
+            [ -f "$dir/dragent-host" ] || { echo "::error::missing host runtime for $platform"; exit 1; }
+            cp "$dir/dragent-host" "release/dragent-host-$platform"
+            cp "$dir/dragent-host.sha256" "release/dragent-host-$platform.sha256"
+          done
+          ls -l release
+
+      # Anyone can check a file came from this workflow and commit:
+      #   gh attestation verify Dragent-macos-arm64.dmg --repo <owner>/<repo>
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
-            artifacts/Dragent-*.dmg
-            artifacts/Dragent-*-setup.exe
+            release/Dragent-*
+            release/dragent-host-*
 
       # What the desktop app is made of, published beside the installers.
       - name: SBOM (SPDX) for the desktop app
@@ -183,58 +276,95 @@ jobs:
         with:
           path: dragent
           format: spdx-json
-          output-file: artifacts/Dragent-${{ needs.version.outputs.version }}-sbom.spdx.json
+          output-file: release/Dragent-${{ needs.version.outputs.version }}-sbom.spdx.json
           upload-artifact: false
 
-      - name: Configure AWS credentials (OIDC)
+      # The signed update manifest (format: dragent/app/src/autoupdate/README.md).
+      # Its URLs name this tag, so an app updates to exactly what was signed.
+      - name: Signed update manifest
+        id: manifest
+        env:
+          RELEASE_MANIFEST_ED25519_PRIVATE_KEY: ${{ secrets.RELEASE_MANIFEST_ED25519_PRIVATE_KEY }}
+          RELEASE_MANIFEST_PUBLIC_KEYS: ${{ vars.RELEASE_MANIFEST_PUBLIC_KEYS }}
+          BASE: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+        run: |
+          if [ -z "$RELEASE_MANIFEST_ED25519_PRIVATE_KEY" ] || [ -z "$RELEASE_MANIFEST_PUBLIC_KEYS" ]; then
+            echo "::warning::No update signing key (secret RELEASE_MANIFEST_ED25519_PRIVATE_KEY, var RELEASE_MANIFEST_PUBLIC_KEYS): publishing without latest.json, so installed apps won't update to this release."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pip install --quiet 'cryptography==44.0.2'
+          python3 - <<'PY'
+          import hashlib, json, os
+          from datetime import datetime, timezone
+          from cryptography.hazmat.primitives import serialization
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+
+          base, version = os.environ['BASE'], os.environ['VERSION']
+          files = {
+              'darwin-aarch64': 'Dragent-macos-arm64.dmg',
+              'darwin-x86_64': 'Dragent-macos-x86_64.dmg',
+              'windows-x86_64': 'Dragent-windows-x64-setup.exe',
+              'windows-aarch64': 'Dragent-windows-arm64-setup.exe',
+          }
+          def sha256(name):
+              h = hashlib.sha256()
+              with open(f'release/{name}', 'rb') as f:
+                  for chunk in iter(lambda: f.read(1 << 20), b''):
+                      h.update(chunk)
+              return h.hexdigest()
+          stable = {
+              'platforms': {key: {'sha256': sha256(name), 'url': f'{base}/{name}'} for key, name in files.items()},
+              'pub_date': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+              'version': version,
+          }
+          canonical = json.dumps(stable, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+          message = b'dragent-desktop-update-v1\n' + canonical
+          key = serialization.load_pem_private_key(os.environ['RELEASE_MANIFEST_ED25519_PRIVATE_KEY'].encode(), password=None)
+          assert isinstance(key, Ed25519PrivateKey)
+          signature = key.sign(message)
+          # It must verify against a key the apps were built with.
+          publics = [k.strip() for k in os.environ['RELEASE_MANIFEST_PUBLIC_KEYS'].split(',') if k.strip()]
+          def verifies(hex_key):
+              try:
+                  Ed25519PublicKey.from_public_bytes(bytes.fromhex(hex_key)).verify(signature, message)
+                  return True
+              except Exception:
+                  return False
+          assert any(verifies(k) for k in publics), 'signature does not verify against RELEASE_MANIFEST_PUBLIC_KEYS'
+          with open('release/latest.json', 'w') as f:
+              json.dump({'stable': stable, 'signature': signature.hex()}, f, ensure_ascii=False, separators=(',', ':'))
+          print(json.dumps(stable, indent=2))
+          PY
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Dragent $VERSION" \
+            --generate-notes \
+            --verify-tag
+          echo "Published $TAG: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+
+      # TEMPORARY bridge: apps from before this change check CloudFront's
+      # stable/latest.json. Point it at this release's GitHub files so they
+      # update across; drop this step once installs are past this version.
+      - name: Configure AWS credentials (legacy update bridge)
+        if: steps.manifest.outputs.signed == 'true'
+        continue-on-error: true
+        id: aws
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
-          role-to-assume: ${{ env.AWS_RELEASE_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Generate latest.json
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
+          role-to-assume: arn:aws:iam::269235677023:role/dragent-release-github-actions
+          aws-region: us-east-1
+      - name: Legacy update bridge (CloudFront latest.json)
+        if: steps.manifest.outputs.signed == 'true' && steps.aws.outcome == 'success'
+        continue-on-error: true
         run: |
-          BASE="$RELEASES_CDN/stable/$VERSION"
-          cat > artifacts/latest.json <<EOF
-          {
-            "stable": {
-              "version": "$VERSION",
-              "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-              "platforms": {
-                "darwin-aarch64":  { "url": "$BASE/Dragent-$VERSION-macos-arm64.dmg" },
-                "darwin-x86_64":   { "url": "$BASE/Dragent-$VERSION-macos-x86_64.dmg" },
-                "windows-x86_64":  { "url": "$BASE/Dragent-$VERSION-windows-x64-setup.exe" },
-                "windows-aarch64": { "url": "$BASE/Dragent-$VERSION-windows-arm64-setup.exe" }
-              }
-            }
-          }
-          EOF
-          # Every URL in the manifest must be an artifact we actually built.
-          for f in Dragent-$VERSION-macos-arm64.dmg Dragent-$VERSION-macos-x86_64.dmg \
-                   Dragent-$VERSION-windows-x64-setup.exe Dragent-$VERSION-windows-arm64-setup.exe; do
-            [ -f "artifacts/$f" ] || { echo "::error::missing artifact $f"; exit 1; }
-          done
-          cat artifacts/latest.json
-
-      - name: Upload to S3 & refresh manifest
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          # Immutable versioned artifacts, long cache.
-          aws s3 cp artifacts/ "s3://$RELEASES_BUCKET/stable/$VERSION/" --recursive \
-            --exclude latest.json --cache-control "public, max-age=31536000, immutable"
-
-          # Upload static generic links for stable/latest/ downloads
-          aws s3 cp "artifacts/Dragent-$VERSION-macos-arm64.dmg" "s3://$RELEASES_BUCKET/stable/latest/Dragent-macos-arm64.dmg" --cache-control "no-cache, no-store, must-revalidate"
-          aws s3 cp "artifacts/Dragent-$VERSION-macos-x86_64.dmg" "s3://$RELEASES_BUCKET/stable/latest/Dragent-macos-x86_64.dmg" --cache-control "no-cache, no-store, must-revalidate"
-          aws s3 cp "artifacts/Dragent-$VERSION-windows-x64-setup.exe" "s3://$RELEASES_BUCKET/stable/latest/Dragent-windows-x64-setup.exe" --cache-control "no-cache, no-store, must-revalidate"
-          aws s3 cp "artifacts/Dragent-$VERSION-windows-arm64-setup.exe" "s3://$RELEASES_BUCKET/stable/latest/Dragent-windows-arm64-setup.exe" --cache-control "no-cache, no-store, must-revalidate"
-
-          # The moving manifest, short cache + explicit invalidation.
-          aws s3 cp artifacts/latest.json "s3://$RELEASES_BUCKET/stable/latest.json" \
+          aws s3 cp release/latest.json s3://dragent-releases-269235677023/stable/latest.json \
             --cache-control "public, max-age=300" --content-type application/json
-          aws cloudfront create-invalidation \
-            --distribution-id "$CLOUDFRONT_DISTRIBUTION" --paths "/stable/latest.json" "/stable/latest/*"
-          echo "Published $VERSION → $RELEASES_CDN/stable/latest.json"
+          aws cloudfront create-invalidation --distribution-id E1QRLYB4AQW3ZR --paths "/stable/latest.json"
