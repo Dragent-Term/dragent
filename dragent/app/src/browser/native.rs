@@ -527,7 +527,7 @@ impl Engine {
         }
         #[cfg(target_os = "linux")]
         {
-            use webkit2gtk::{prelude::WebViewExt, SnapshotOptions, SnapshotRegion};
+            use webkit2gtk::{SnapshotOptions, SnapshotRegion, WebViewExt};
             use wry::WebViewExtUnix;
             self.view.webview().snapshot(SnapshotRegion::Visible, SnapshotOptions::NONE,
                 None::<&gtk::gio::Cancellable>, move |result| {
