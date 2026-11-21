@@ -62,6 +62,21 @@ jobs:
             exit 1
           fi
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
+      # Every build bakes this list; one malformed entry would make those
+      # apps refuse all updates. Empty entries are ignored by the app.
+      - name: Check the update public keys
+        env:
+          KEYS: ${{ vars.RELEASE_MANIFEST_PUBLIC_KEYS }}
+        run: |
+          IFS=',' read -ra entries <<< "$KEYS"
+          for key in "${entries[@]}"; do
+            key=$(echo "$key" | tr -d '[:space:]')
+            [ -z "$key" ] && continue
+            if ! [[ "$key" =~ ^[0-9a-fA-F]{64}$ ]]; then
+              echo "::error::RELEASE_MANIFEST_PUBLIC_KEYS has an entry that isn't a 32-byte hex key"
+              exit 1
+            fi
+          done
 
   # ── macOS: arm64 + x86_64 DMGs ──────────────────────────────────────────────
   macos:
@@ -356,7 +371,17 @@ jobs:
         run: |
           # A re-run finds the release already there: replace its files.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Installers must always match the published signed manifest.
+            has_manifest=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]|index("latest.json") != null')
+            if [ "$has_manifest" = true ] && [ ! -f release/latest.json ]; then
+              echo "::error::$TAG already has a signed latest.json, and this run couldn't sign one: not replacing its installers"
+              exit 1
+            fi
             gh release upload "$TAG" release/* --repo "$GITHUB_REPOSITORY" --clobber
+            # A run that died mid-create leaves a draft: publish it now.
+            if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true ]; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+            fi
           else
             gh release create "$TAG" release/* \
               --repo "$GITHUB_REPOSITORY" \
