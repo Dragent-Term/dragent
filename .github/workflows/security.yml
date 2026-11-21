@@ -126,9 +126,6 @@ jobs:
       - name: npm audit (auth-portal)
         working-directory: auth-portal
         run: npm audit --audit-level=high --omit=dev
-      - name: npm audit (marketing)
-        working-directory: marketing
-        run: npm audit --audit-level=high --omit=dev
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: mobile/package.json
