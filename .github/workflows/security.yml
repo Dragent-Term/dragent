@@ -116,13 +116,24 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: cargo audit
+      # Weekly: the action also opens an issue for new advisories.
+      - name: cargo audit (weekly, opens issues)
+        if: github.event_name == 'schedule'
         uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: dragent
           # Same accepted advisories as dragent/deny.toml, with reasons there.
           ignore: RUSTSEC-2026-0462,RUSTSEC-2026-0194,RUSTSEC-2026-0195
+      # Pushes and pull requests: plain cargo audit. The action reports
+      # through a check run whose update intermittently fails ("Not Found")
+      # even when nothing is vulnerable.
+      - name: cargo audit
+        if: github.event_name != 'schedule'
+        run: |
+          cargo install cargo-audit --locked --version 0.23.0
+          cargo audit --file dragent/Cargo.lock \
+            --ignore RUSTSEC-2026-0462 --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
       - name: npm audit (auth-portal)
         working-directory: auth-portal
         run: npm audit --audit-level=high --omit=dev
