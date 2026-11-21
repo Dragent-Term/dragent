@@ -13,8 +13,7 @@ social media.** Please report privately through one of these channels:
 
 - Preferred: GitHub private vulnerability reporting
   (repository **Security** tab → **Report a vulnerability**); or
-- Email: **security@dragent.dev** — [PLACEHOLDER — replace with the real
-  monitored security contact before publishing] — with "Security" in the
+- Email: **security@dragent.dev** — with "Security" in the
   subject line.
 
 Please include: the affected version/commit, steps to reproduce (proof of
