@@ -139,6 +139,23 @@ impl WorkspaceView {
 
         let pane_id = attempt_id.0;
         let worker_request = request.clone();
+        // A write outside the project only gets here after the person
+        // consented (the policy asks for it), so grant this one call the
+        // folders involved; the executor refuses it otherwise.
+        let external_writes = crate::agent::local_tools::external_write_paths_for_tool(
+            &request.tool_name,
+            &request.args_json,
+            pane_id,
+        );
+        if !external_writes.is_empty() {
+            crate::agent::local_tools::grant_external_read_once(
+                &request.call_id,
+                external_writes
+                    .iter()
+                    .map(|path| path.parent().unwrap_or(path).to_path_buf())
+                    .collect(),
+            );
+        }
         let (tx, rx) = async_channel::bounded(1);
         crate::bg::detach(move || {
             let (output, is_error) = crate::agent::local_tools::execute_with_call_id(

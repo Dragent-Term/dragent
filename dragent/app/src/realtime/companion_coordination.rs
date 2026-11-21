@@ -85,6 +85,11 @@ struct Registry {
     owner: Option<AccountKey>,
     generation: u64,
     projects: HashMap<String, HashSet<String>>,
+    /// Coordinations each window's sidebar shows: team id -> the sidebar
+    /// project it sits under (None when it's grouped under none). A team
+    /// shown there may be opened from the phone even when it runs in a
+    /// worktree folder that isn't itself a sidebar project.
+    teams: HashMap<String, HashMap<String, Option<String>>>,
 }
 
 impl Registry {
@@ -93,6 +98,7 @@ impl Registry {
             self.owner = Some(account);
             self.generation = self.generation.wrapping_add(1);
             self.projects.clear();
+            self.teams.clear();
         }
         let kept: HashSet<String> = projects
             .into_iter()
@@ -102,8 +108,36 @@ impl Registry {
         self.projects.insert(contributor, kept);
     }
 
+    /// The coordinations this window's sidebar shows. Only for the account
+    /// whose projects it noted: another account's note never mixes in.
+    fn note_teams(&mut self, contributor: &str, account: &AccountKey, teams: Vec<(String, Option<String>)>) {
+        if self.owner.as_ref() != Some(account) || !self.projects.contains_key(contributor) {
+            return;
+        }
+        let kept = teams
+            .into_iter()
+            .filter(|(id, _)| valid_team_id(id))
+            .take(MAX_TEAMS)
+            .collect();
+        self.teams.insert(contributor.to_string(), kept);
+    }
+
+    fn shown_teams(&self, owner: &Owner) -> HashMap<String, Option<String>> {
+        if self.owner.as_ref() != Some(&owner.account) || self.generation != owner.generation {
+            return HashMap::new();
+        }
+        let mut out = HashMap::new();
+        for set in self.teams.values() {
+            for (id, project) in set {
+                out.entry(id.clone()).or_insert_with(|| project.clone());
+            }
+        }
+        out
+    }
+
     fn retire(&mut self, contributor: &str) {
         self.projects.remove(contributor);
+        self.teams.remove(contributor);
         if self.projects.is_empty() {
             self.owner = None;
             self.generation = self.generation.wrapping_add(1);
@@ -175,6 +209,25 @@ pub(crate) fn note_projects(contributor: String, account: AccountKey, projects: 
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .note(contributor, account, projects);
+}
+
+/// Note the coordinations this window's sidebar shows (call right after
+/// [`note_projects`] for the same window and account).
+pub(crate) fn note_teams(contributor: &str, account: &AccountKey, teams: Vec<(String, Option<String>)>) {
+    core()
+        .registry
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .note_teams(contributor, account, teams);
+}
+
+/// The coordinations the sidebar shows for `owner`.
+fn shown_teams(owner: &Owner) -> HashMap<String, Option<String>> {
+    core()
+        .registry
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .shown_teams(owner)
 }
 
 pub(crate) fn note_removed(contributor: &str) {
@@ -333,11 +386,24 @@ pub(crate) fn project_list_item(team: &dragent_host::team::TeamSummary) -> (Valu
 /// project filter (already validated to be allowlisted). Sorts most-recent
 /// first, caps at [`MAX_TEAMS`].
 pub(crate) fn build_list_result(
-    mut teams: Vec<dragent_host::team::TeamSummary>,
+    teams: Vec<dragent_host::team::TeamSummary>,
     allowed: &HashSet<String>,
     filter: Option<&str>,
 ) -> Value {
-    teams.retain(|t| allowed.contains(&t.project_root));
+    build_list_result_with(teams, allowed, &HashSet::new(), filter)
+}
+
+/// [`build_list_result`], also keeping the teams the sidebar shows
+/// (`shown`, by id) whatever folder they run in.
+pub(crate) fn build_list_result_with(
+    mut teams: Vec<dragent_host::team::TeamSummary>,
+    allowed: &HashSet<String>,
+    shown: &HashSet<String>,
+    filter: Option<&str>,
+) -> Value {
+    teams.retain(|t| allowed.contains(&t.project_root) || shown.contains(&t.id));
+    let mut seen = HashSet::new();
+    teams.retain(|t| seen.insert(t.id.clone()));
     if let Some(want) = filter {
         teams.retain(|t| t.project_root == want);
     }
@@ -752,6 +818,26 @@ pub(crate) fn execute_list(
         }
     }
 
+    // Coordinations the sidebar shows that run in a folder of their own
+    // (a worktree, say): listed under the sidebar project they sit under.
+    let shown = shown_teams(&owner);
+    for (id, project) in &shown {
+        if let Some(team) = merged.iter_mut().find(|team| &team.id == id) {
+            if let Some(project) = project {
+                team.project_root = project.clone();
+            }
+            continue;
+        }
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else { break };
+        if let Ok(TeamResponse::Team(team)) = client.team_with_timeout(TeamRequest::Get { team: id.clone() }, remaining) {
+            let mut summary = team.summary();
+            if let Some(project) = project {
+                summary.project_root = project.clone();
+            }
+            merged.push(summary);
+        }
+    }
+
     // Post-I/O: owner, lease and allowlist still hold, or the result is stale.
     if !core().is_current(&owner)
         || dragent_paths::organisation_id() != expected.org
@@ -763,9 +849,11 @@ pub(crate) fn execute_list(
     if fresh.0 != owner {
         return Err(Failure::Gone);
     }
-    Ok(build_list_result(
+    let shown_ids: HashSet<String> = shown_teams(&owner).into_keys().collect();
+    Ok(build_list_result_with(
         merged,
         &fresh.1,
+        &shown_ids,
         args.project_id.as_deref(),
     ))
 }
@@ -818,7 +906,7 @@ pub(crate) fn execute_get(
     if fresh.0 != owner {
         return Err(Failure::Gone);
     }
-    if !fresh.1.contains(&team.project_root) {
+    if !fresh.1.contains(&team.project_root) && !shown_teams(&owner).contains_key(&team.id) {
         return Err(Failure::Gone);
     }
     let mut result = build_detail_result(&team);

@@ -19,7 +19,13 @@ use serde_json::{json, Map, Value};
 use super::companion_host::Failure;
 use super::desktop_catalog::AccountKey;
 
-pub(crate) const METHODS: &[&str] = &["accounts.list", "accounts.add", "accounts.rename", "accounts.remove", "accounts.use"];
+pub(crate) const METHODS: &[&str] = &[
+    "accounts.list",
+    "accounts.add",
+    "accounts.rename",
+    "accounts.remove",
+    "accounts.use",
+];
 
 /// The agents whose accounts can be kept apart on one desktop.
 const PROVIDERS: &[(&str, &str)] = &[("claude", "Claude Code"), ("codex", "Codex")];
@@ -28,7 +34,11 @@ type Job = Box<dyn FnOnce() -> Result<Value, Failure> + Send>;
 
 fn text(object: &Map<String, Value>, key: &str, max: usize) -> Result<String, Failure> {
     match object.get(key) {
-        Some(Value::String(value)) if !value.trim().is_empty() && value.chars().count() <= max && !value.chars().any(char::is_control) => {
+        Some(Value::String(value))
+            if !value.trim().is_empty()
+                && value.chars().count() <= max
+                && !value.chars().any(char::is_control) =>
+        {
             Ok(value.trim().to_string())
         }
         _ => Err(Failure::Invalid),
@@ -44,24 +54,35 @@ fn only(object: &Map<String, Value>, keys: &[&str]) -> Result<(), Failure> {
 
 fn provider(object: &Map<String, Value>) -> Result<String, Failure> {
     let key = text(object, "provider", 16)?;
-    PROVIDERS.iter().any(|(id, _)| *id == key).then_some(key).ok_or(Failure::Invalid)
+    PROVIDERS
+        .iter()
+        .any(|(id, _)| *id == key)
+        .then_some(key)
+        .ok_or(Failure::Invalid)
 }
 
 fn profile_id(object: &Map<String, Value>) -> Result<uuid::Uuid, Failure> {
-    text(object, "account", 64)?.parse().map_err(|_| Failure::Invalid)
+    text(object, "account", 64)?
+        .parse()
+        .map_err(|_| Failure::Invalid)
 }
 
 /// "Signed in", "Sign-in required", or why it couldn't be checked.
 fn status(registry: &Registry, provider: &str, selection: &Selection) -> String {
-    let program = dragent_host::host_tools::command(provider).get_program().to_owned();
+    let program = dragent_host::host_tools::command(provider)
+        .get_program()
+        .to_owned();
     match registry.resolve(provider, None, selection) {
-        Ok(binding) => agent_accounts::status(&binding, std::path::Path::new(&program)).map_or_else(|error| error, str::to_string),
+        Ok(binding) => agent_accounts::status(&binding, std::path::Path::new(&program))
+            .map_or_else(|error| error, str::to_string),
         Err(error) => error,
     }
 }
 
 fn windows(usage: Option<&AccountUsage>) -> (Option<String>, Vec<Value>) {
-    let Some(reading) = usage.and_then(|row| row.usage.as_ref()) else { return (None, Vec::new()) };
+    let Some(reading) = usage.and_then(|row| row.usage.as_ref()) else {
+        return (None, Vec::new());
+    };
     let windows = reading
         .windows
         .iter()
@@ -137,7 +158,14 @@ pub(crate) fn job(_expected: &AccountKey, method: &str, params: &Value) -> Resul
             let provider = provider(object)?;
             let label = text(object, "label", 64)?;
             Ok(Box::new(move || {
-                let profile = Registry::update(|registry| registry.add(&provider, &label)).map_err(|_| Failure::Unavailable)?;
+                let profile = Registry::update(|registry| {
+                    registry.add(
+                        &provider,
+                        &label,
+                        agent_accounts::CredentialKind::Subscription,
+                    )
+                })
+                .map_err(|_| Failure::Unavailable)?;
                 let mut value = agents_json();
                 value["account"] = json!(profile.id.to_string());
                 Ok(value)
@@ -147,14 +175,21 @@ pub(crate) fn job(_expected: &AccountKey, method: &str, params: &Value) -> Resul
             only(object, &["account", "label"])?;
             let id = profile_id(object)?;
             let label = text(object, "label", 64)?;
-            Ok(Box::new(move || changed(Registry::update(|registry| registry.rename(id, &label)))))
+            Ok(Box::new(move || {
+                changed(Registry::update(|registry| registry.rename(id, &label)))
+            }))
         }
         "accounts.remove" => {
             only(object, &["account"])?;
             let id = profile_id(object)?;
             Ok(Box::new(move || {
                 changed(Registry::update(|registry| {
-                    let provider = registry.profiles.iter().find(|p| p.id == id).map(|p| p.provider.clone()).ok_or("Account no longer exists")?;
+                    let provider = registry
+                        .profiles
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map(|p| p.provider.clone())
+                        .ok_or("Account no longer exists")?;
                     // New sessions mustn't be left pointing at a removed
                     // account: they go back to the system login.
                     if registry.defaults.get(&provider) == Some(&Selection::Profile(id)) {
@@ -171,7 +206,9 @@ pub(crate) fn job(_expected: &AccountKey, method: &str, params: &Value) -> Resul
             if account != "system" && account.parse::<uuid::Uuid>().is_err() {
                 return Err(Failure::Invalid);
             }
-            Ok(Box::new(move || changed(agent_usage::set_default(&provider, &account))))
+            Ok(Box::new(move || {
+                changed(agent_usage::set_default(&provider, &account))
+            }))
         }
         _ => Err(Failure::Invalid),
     }
@@ -186,11 +223,47 @@ mod tests {
         let key = AccountKey::new("u", "o");
         assert!(job(&key, "accounts.list", &json!({})).is_ok());
         assert!(job(&key, "accounts.list", &json!({"x": 1})).is_err());
-        assert!(job(&key, "accounts.add", &json!({"provider": "gemini", "label": "Work"})).is_err(), "only agents with separate accounts");
-        assert!(job(&key, "accounts.add", &json!({"provider": "claude", "label": " "})).is_err());
-        assert!(job(&key, "accounts.add", &json!({"provider": "claude", "label": "Work"})).is_ok());
-        assert!(job(&key, "accounts.rename", &json!({"account": "system", "label": "x"})).is_err(), "the system login can't be renamed");
-        assert!(job(&key, "accounts.use", &json!({"provider": "codex", "account": "../x"})).is_err());
-        assert!(job(&key, "accounts.use", &json!({"provider": "codex", "account": "system"})).is_ok());
+        assert!(
+            job(
+                &key,
+                "accounts.add",
+                &json!({"provider": "gemini", "label": "Work"})
+            )
+            .is_err(),
+            "only agents with separate accounts"
+        );
+        assert!(job(
+            &key,
+            "accounts.add",
+            &json!({"provider": "claude", "label": " "})
+        )
+        .is_err());
+        assert!(job(
+            &key,
+            "accounts.add",
+            &json!({"provider": "claude", "label": "Work"})
+        )
+        .is_ok());
+        assert!(
+            job(
+                &key,
+                "accounts.rename",
+                &json!({"account": "system", "label": "x"})
+            )
+            .is_err(),
+            "the system login can't be renamed"
+        );
+        assert!(job(
+            &key,
+            "accounts.use",
+            &json!({"provider": "codex", "account": "../x"})
+        )
+        .is_err());
+        assert!(job(
+            &key,
+            "accounts.use",
+            &json!({"provider": "codex", "account": "system"})
+        )
+        .is_ok());
     }
 }

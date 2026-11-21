@@ -57,9 +57,9 @@ func TestAuthMiddlewareIgnoresQueryTokenOnE2EEPrefixes(t *testing.T) {
 	}
 }
 
-// The Authorization header still authenticates on those prefixes, and
-// /realtime (deferred, §14) plus every other route keep today's behaviour.
-func TestAuthMiddlewareQueryTokenElsewhereUnchanged(t *testing.T) {
+// The Authorization header still authenticates on those prefixes, and a
+// token in the URL is refused on every other route too.
+func TestAuthMiddlewareQueryTokenRefusedEverywhere(t *testing.T) {
 	svc, token := testTokenService(t)
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid, _ := r.Context().Value("user_id").(string)
@@ -86,7 +86,8 @@ func TestAuthMiddlewareQueryTokenElsewhereUnchanged(t *testing.T) {
 		}
 	}
 
-	// Query tokens still authenticate outside the E2EE prefixes.
+	// Access tokens in a URL are refused everywhere, /realtime included
+	// (the browser viewer uses a short-lived ticket there).
 	for _, target := range []string{
 		"/realtime?access_token=" + token,
 		"/realtime/socket?access_token=" + token,
@@ -94,8 +95,8 @@ func TestAuthMiddlewareQueryTokenElsewhereUnchanged(t *testing.T) {
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-		if rec.Code != http.StatusOK {
-			t.Errorf("GET %s with query token: got %d, want 200 (behaviour unchanged)", target, rec.Code)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s with query token: got %d, want 401 (URL tokens refused)", target, rec.Code)
 		}
 	}
 }

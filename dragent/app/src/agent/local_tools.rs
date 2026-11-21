@@ -183,6 +183,81 @@ mod tests {
     }
 
     #[test]
+    fn writes_outside_the_project_need_this_calls_grant() {
+        let base = tempfile::tempdir().unwrap();
+        let project = base.path().join("project");
+        let home = base.path().join("home");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let pane = Uuid::new_v4();
+        set_project_cwd(&project, pane);
+
+        // Inside the project: no question.
+        let inside = serde_json::json!({"path": "notes.txt", "content": "ok"}).to_string();
+        let (out, is_err) = execute_with_call_id("w-inside", "write_file", &inside, pane);
+        assert!(!is_err, "got: {out}");
+        assert!(project.join("notes.txt").exists());
+
+        // Outside: refused for every write tool until the call is granted.
+        let rc = home.join("rc");
+        let outside = serde_json::json!({"path": rc, "content": "evil"}).to_string();
+        for (tool, args) in [
+            ("write_file", outside.clone()),
+            (
+                "create_directory",
+                serde_json::json!({"path": home.join("d")}).to_string(),
+            ),
+            (
+                "batch_edit",
+                serde_json::json!({"edits": [{"path": rc, "old_str": "a", "new_str": "b"}]})
+                    .to_string(),
+            ),
+            (
+                "apply_patch",
+                serde_json::json!({"patch": format!(
+                    "--- a/{0}\n+++ b/{0}\n@@ -0,0 +1 @@\n+evil\n", rc.display()
+                )})
+                .to_string(),
+            ),
+        ] {
+            let (out, is_err) = execute_with_call_id("w-denied", tool, &args, pane);
+            assert!(
+                is_err && out.contains("outside the project"),
+                "{tool}: {out}"
+            );
+        }
+        assert!(!rc.exists());
+
+        grant_external_read_once("w-approved", vec![home.clone()]);
+        let (out, is_err) = execute_with_call_id("w-approved", "write_file", &outside, pane);
+        assert!(!is_err, "got: {out}");
+        // The grant was for that call only.
+        let (_, is_err) = execute_with_call_id("w-approved", "write_file", &outside, pane);
+        assert!(is_err);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_file_under_a_symlink_out_of_the_project_counts_as_outside() {
+        let base = tempfile::tempdir().unwrap();
+        let project = base.path().join("project");
+        let elsewhere = base.path().join("elsewhere");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, project.join("link")).unwrap();
+        let pane = Uuid::new_v4();
+        set_project_cwd(&project, pane);
+        let args = serde_json::json!({"path": "link/new.txt", "content": "x"}).to_string();
+        assert_eq!(
+            external_write_paths_for_tool("write_file", &args, pane).len(),
+            1
+        );
+        let (out, is_err) = execute_with_call_id("w-link", "write_file", &args, pane);
+        assert!(is_err, "got: {out}");
+        assert!(!elsewhere.join("new.txt").exists());
+    }
+
+    #[test]
     fn quoted_external_path_in_safe_command_requires_scope() {
         let base = tempfile::tempdir().unwrap();
         let project = base.path().join("project");

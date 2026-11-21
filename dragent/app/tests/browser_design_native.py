@@ -7,6 +7,7 @@ import http.server
 import json
 import os
 import re
+import secrets
 from pathlib import Path
 import signal
 import socket
@@ -99,16 +100,21 @@ def main():
     threading.Thread(target=site.serve_forever, daemon=True).start()
     port = free_port()
     env = {k: v for k, v in os.environ.items() if not k.startswith("DRAGENT_")}
-    env.update(DRAGENT_HOME=str(profile), DRAGENT_AUTOMATION_PORT=str(port), DRAGENT_REFRESH_TOKEN="design-test-offline",
+    automation_token = secrets.token_hex(24)
+    env.update(DRAGENT_HOME=str(profile), DRAGENT_AUTOMATION_PORT=str(port),
+               DRAGENT_AUTOMATION_TOKEN=automation_token, DRAGENT_REFRESH_TOKEN="design-test-offline",
                PATH=str(mockbin) + os.pathsep + env.get("PATH", ""),
                ZDOTDIR=str(scratch / "shell"), HISTFILE=str(scratch / "shell/history"), TMPDIR=str(scratch / "tmp"))
     log = (scratch / "native.log").open("wb")
     process = None
 
     def command(cmd, **args):
-        with socket.create_connection(("127.0.0.1", port), timeout=50) as sock:
+        with socket.create_connection(("127.0.0.1", int(env["DRAGENT_AUTOMATION_PORT"])), timeout=50) as sock:
+            replies = sock.makefile("rb")
+            sock.sendall((json.dumps({"cmd": "auth", "token": automation_token}) + "\n").encode())
+            assert json.loads(replies.readline()).get("ok"), "automation auth refused"
             sock.sendall((json.dumps({"cmd": cmd, **args}) + "\n").encode())
-            result = json.loads(sock.makefile("rb").readline())
+            result = json.loads(replies.readline())
             assert result.get("ok"), result
             return result
 

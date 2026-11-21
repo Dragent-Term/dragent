@@ -1426,6 +1426,7 @@ impl WorkspaceView {
             document_terminal_tabs_scroll: ClippedScrollStateHandle::new(),
             new_tab_picker_open: false,
             agent_account_picker: None,
+            machine_account_caches: HashMap::new(),
             pending_close_tab: None,
             closing_worktree_tab: None,
             closed_worktree_main_checkout: None,

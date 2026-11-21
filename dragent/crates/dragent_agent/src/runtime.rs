@@ -165,13 +165,23 @@ pub trait ToolHost: ToolExecutor {
     fn clear_shell_state(&self, pane_id: uuid::Uuid);
     fn kill_command(&self, task_id: &str) -> bool;
     fn read_paths_for_tool(&self, name: &str, args_json: &str, pane_id: uuid::Uuid)
-    -> Vec<PathBuf>;
+        -> Vec<PathBuf>;
     fn external_read_paths_for_tool(
         &self,
         name: &str,
         args_json: &str,
         pane_id: uuid::Uuid,
     ) -> Vec<PathBuf>;
+    /// Files a tool would change outside the project: these ask in every
+    /// approval mode, and the executor refuses them without this call's grant.
+    fn external_write_paths_for_tool(
+        &self,
+        _name: &str,
+        _args_json: &str,
+        _pane_id: uuid::Uuid,
+    ) -> Vec<PathBuf> {
+        Vec::new()
+    }
     fn grant_external_read_once(&self, call_id: &str, roots: Vec<PathBuf>);
     fn execute_with_call_id(
         &self,

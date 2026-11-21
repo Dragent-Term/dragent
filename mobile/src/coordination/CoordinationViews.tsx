@@ -11,8 +11,8 @@ import { radii, spacing } from "../theme/tokens";
 import type { CoordinationTaskStatus, CoordinationTeamStatus } from "./types";
 
 export const COORDINATION_STATUS_META: Record<CoordinationTeamStatus, { label: string; tone: StatusTone }> = {
-  planning: { label: "Planning", tone: "accent" },
-  running: { label: "Running", tone: "success" },
+  planning: { label: "Planning", tone: "working" },
+  running: { label: "Running", tone: "working" },
   done: { label: "Done", tone: "success" },
   stopped: { label: "Stopped", tone: "neutral" },
 };
@@ -33,8 +33,8 @@ export function matchesCoordinationFilter(status: CoordinationTeamStatus, filter
 
 export const COORDINATION_TASK_META: Record<CoordinationTaskStatus, { label: string; tone: StatusTone }> = {
   pending: { label: "Pending", tone: "neutral" },
-  starting: { label: "Starting", tone: "accent" },
-  running: { label: "Running", tone: "accent" },
+  starting: { label: "Starting", tone: "working" },
+  running: { label: "Running", tone: "working" },
   blocked: { label: "Blocked", tone: "warning" },
   done: { label: "Done", tone: "success" },
   failed: { label: "Failed", tone: "warning" },

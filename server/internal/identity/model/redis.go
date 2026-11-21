@@ -43,6 +43,8 @@ const (
 	pollTTL = 10 * time.Minute
 	// Once approved, it only needs to last until the desktop's next poll.
 	approvedPollTTL = 2 * time.Minute
+	// A deep link's one-time code: the app exchanges it right away.
+	handoffTTL = 2 * time.Minute
 	// Longer than an access token lives (24h), so a signed-out device's
 	// tokens have all expired by the time the mark goes.
 	signedOutTTL = 25 * time.Hour
@@ -133,15 +135,94 @@ func (s *RedisTokenStore) ApproveState(ctx context.Context, stateID string, user
 	return s.rdb.Set(ctx, "poll:"+stateID, data, approvedPollTTL).Err()
 }
 
-func (s *RedisTokenStore) GetAuthorizedState(ctx context.Context, stateID string) (string, string, error) {
-	payload, err := s.readState(ctx, stateID)
+// takeIfApproved deletes a parked sign-in and returns it only when it has
+// been approved, in one step, so two pollers can't both collect it.
+var takeIfApproved = redis.NewScript(`
+local v = redis.call('GET', KEYS[1])
+if not v then return false end
+local ok, p = pcall(cjson.decode, v)
+if ok and p['approved'] == true then
+  redis.call('DEL', KEYS[1])
+  return v
+end
+return 'pending'
+`)
+
+func (s *RedisTokenStore) TakeAuthorizedState(ctx context.Context, stateID string) (string, string, error) {
+	val, err := takeIfApproved.Run(ctx, s.rdb, []string{"poll:" + stateID}).Text()
 	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return "", "", errors.New("authorization state not ready or expired")
+		}
 		return "", "", err
 	}
-	if !payload.Approved {
+	if val == "pending" {
 		return "", "", ErrStateNotApproved
 	}
+	var payload authPayload
+	if err := json.Unmarshal([]byte(val), &payload); err != nil {
+		return "", "", err
+	}
 	return payload.AccessToken, payload.RefreshToken, nil
+}
+
+// ErrChallengeTaken is a second, different challenge for a state that
+// already has one.
+var ErrChallengeTaken = errors.New("sign-in already started with another challenge")
+
+func (s *RedisTokenStore) SetSignInChallenge(ctx context.Context, stateID string, challenge string) error {
+	set, err := s.rdb.SetNX(ctx, "pkce:"+stateID, challenge, pollTTL).Result()
+	if err != nil {
+		return err
+	}
+	if set {
+		return nil
+	}
+	existing, err := s.rdb.Get(ctx, "pkce:"+stateID).Result()
+	if err != nil {
+		return err
+	}
+	if existing != challenge {
+		return ErrChallengeTaken
+	}
+	return nil
+}
+
+func (s *RedisTokenStore) SignInChallenge(ctx context.Context, stateID string) (string, error) {
+	val, err := s.rdb.Get(ctx, "pkce:"+stateID).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	return val, err
+}
+
+type handoffPayload struct {
+	StateID      string `json:"state_id"`
+	RefreshToken string `json:"refresh_token"`
+	UserID       string `json:"user_id"`
+}
+
+func (s *RedisTokenStore) SaveHandoff(ctx context.Context, code string, stateID string, refreshToken string, userID string) error {
+	data, err := json.Marshal(handoffPayload{StateID: stateID, RefreshToken: refreshToken, UserID: userID})
+	if err != nil {
+		return err
+	}
+	return s.rdb.Set(ctx, "handoff:"+code, data, handoffTTL).Err()
+}
+
+func (s *RedisTokenStore) TakeHandoff(ctx context.Context, code string) (string, string, string, error) {
+	val, err := s.rdb.GetDel(ctx, "handoff:"+code).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return "", "", "", errors.New("handoff code used or expired")
+		}
+		return "", "", "", err
+	}
+	var payload handoffPayload
+	if err := json.Unmarshal([]byte(val), &payload); err != nil {
+		return "", "", "", err
+	}
+	return payload.StateID, payload.RefreshToken, payload.UserID, nil
 }
 
 func (s *RedisTokenStore) SignOutDevice(ctx context.Context, deviceID string) error {

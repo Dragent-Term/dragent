@@ -24,7 +24,7 @@ use crate::block::AgentBlockKind;
 use crate::files::recommended_read_grant_root;
 use crate::permissions::{AllowedRoots, DenyReason};
 use crate::pipeline::{PipelineEvent, WorkspaceToolDisposition};
-use crate::runtime::{CoreEvent, spawn_background};
+use crate::runtime::{spawn_background, CoreEvent};
 use crate::state::ConversationState;
 use crate::types::{PendingToolCall, TurnToolCall};
 
@@ -333,7 +333,8 @@ impl super::core::AgentController {
         let command = if tool_name == "run_command" {
             approval_policy::command_from_args(&args_json)
         } else if tool_name == "computer" {
-            serde_json::from_str::<serde_json::Value>(&args_json).ok()
+            serde_json::from_str::<serde_json::Value>(&args_json)
+                .ok()
                 .and_then(|args| args["action"].as_str().map(str::to_string))
         } else {
             None
@@ -371,7 +372,14 @@ impl super::core::AgentController {
             self.deps
                 .tools
                 .external_read_paths_for_tool(&tool_name, &args_json, self.pane_uuid);
-        let out_of_cwd_read = !external_read_paths.is_empty();
+        let external_write_paths =
+            self.deps
+                .tools
+                .external_write_paths_for_tool(&tool_name, &args_json, self.pane_uuid);
+        let out_of_cwd_write = !external_write_paths.is_empty();
+        // A change outside the project asks like a read outside it, in every
+        // mode ("Accept edits" covers the project, not `~/.zshrc`).
+        let out_of_cwd_read = !external_read_paths.is_empty() || out_of_cwd_write;
 
         // Sensitive locations are a hard denial, not an approval choice.
         // Keep this aligned with the executor-side check so even an
@@ -395,9 +403,16 @@ impl super::core::AgentController {
             }));
             return true;
         }
+        // Approving grants this one call the folders involved; for writes,
+        // the folder the file goes in.
         let mut external_read_roots = external_read_paths
             .iter()
             .map(|path| recommended_read_grant_root(path))
+            .chain(
+                external_write_paths
+                    .iter()
+                    .map(|path| path.parent().unwrap_or(path).to_path_buf()),
+            )
             .collect::<Vec<_>>();
         external_read_roots.sort();
         external_read_roots.dedup();
@@ -476,7 +491,9 @@ impl super::core::AgentController {
             tool_name: &tool_name,
             command: run_command_arg.as_deref(),
             out_of_project_read: out_of_cwd_read,
+            // A remembered read grant never waives asking to write.
             external_read_allowed: out_of_cwd_read
+                && !out_of_cwd_write
                 && external_read_paths
                     .iter()
                     .all(|path| self.permission_store.is_read_path_allowed(path)),
@@ -532,7 +549,7 @@ impl super::core::AgentController {
             }
         };
         log::info!(
-            "[approval] tool={} mode={:?} auto_run_safe={} effect={:?} out_of_cwd_read={} cmd_safe={:?} -> {:?} ({})",
+            "[approval] tool={} mode={:?} auto_run_safe={} effect={:?} out_of_cwd={} cmd_safe={:?} -> {:?} ({})",
             tool_name,
             autonomy.approval_mode(),
             autonomy.auto_run_safe_commands,
@@ -555,7 +572,11 @@ impl super::core::AgentController {
             && approval_policy::is_service_write(&tool_name)
             && !self.unattended_service_writes
         {
-            return self.answer_unattended(&call_id, UNATTENDED_SERVICE_READ_ONLY.to_string(), true);
+            return self.answer_unattended(
+                &call_id,
+                UNATTENDED_SERVICE_READ_ONLY.to_string(),
+                true,
+            );
         }
 
         // What still asks in Auto (a read outside the project, a contract's
@@ -597,6 +618,19 @@ impl super::core::AgentController {
                 .join(", ");
             let (display_command, display_reason) = if let Some(reason) = policy_reason.clone() {
                 (summary.clone(), reason)
+            } else if out_of_cwd_write {
+                let targets = external_write_paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                (
+                    summary.clone(),
+                    format!(
+                        "Agent wants to change files outside your project: {targets}. \
+                             Approve only if you expected this."
+                    ),
+                )
             } else if out_of_cwd_read {
                 (
                     summary.clone(),

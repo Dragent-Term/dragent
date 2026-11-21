@@ -163,10 +163,10 @@ func TestLoggingAllowlistStatic(t *testing.T) {
 	if strings.Contains(main, "middleware.Logger") {
 		t.Fatal("main.go still mounts chi middleware.Logger (H1)")
 	}
-	for _, prefix := range []string{"/v1/relay/", "/v1/companion/", "/v1/push/"} {
-		if !strings.Contains(main, `"`+prefix+`"`) {
-			t.Fatalf("main.go queryToken does not refuse %s (H2)", prefix)
-		}
+	// No access token is read from a URL anywhere (H2, extended to every
+	// route: the browser viewer uses a ticket on /realtime).
+	if strings.Contains(main, `Query().Get("access_token")`) {
+		t.Fatal("main.go accepts access_token in the query string (H2)")
 	}
 
 	// Push and pairing authenticate from the Authorization header only: no

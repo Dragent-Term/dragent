@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { getToken } from "@/lib/token";
 import { signInCode } from "@/lib/signInCode";
 import { 
   CheckCircle2, 
@@ -11,10 +10,14 @@ import {
   Terminal, 
   LogOut 
 } from "lucide-react";
+import { APP_SCHEME, appDeepLink } from "@/lib/desktopHandoff";
 
 interface SessionControlProps {
   session: {
     access_token?: string;
+    /** One-time code for the app (desktop builds with PKCE). */
+    code?: string;
+    /** The app's refresh token (desktop builds from before PKCE). */
     refresh_token?: string;
     user_id?: string;
   };
@@ -44,7 +47,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
     try {
       const res = await fetch("/api/auth/desktop/approve", {
         method: "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state }),
       });
       const data = await res.json().catch(() => ({}));
@@ -58,11 +61,10 @@ export default function SessionControl({ session, scheme, state }: SessionContro
 
   const refreshToken = session.refresh_token || "";
   const userId = session.user_id || "unknown-user-id";
-  
-  // Format deep link
-  const deepLinkUrl = `${scheme}://auth/callback?refresh_token=${encodeURIComponent(
-    refreshToken
-  )}&state=${encodeURIComponent(state)}&user_id=${encodeURIComponent(userId)}`;
+
+  // The link that hands the sign-in to the app: a one-time code the app
+  // redeems with its own secret, or (older builds) the refresh token.
+  const deepLinkUrl = appDeepLink({ state, code: session.code, refresh_token: refreshToken, user_id: userId });
 
   // Print system logs and trigger deep link automatically on mount
   useEffect(() => {
@@ -74,7 +76,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
 
     addLog("Session established. Resolving credentials...", 100);
     addLog(`User identity verified: ${userId.substring(0, 8)}...`, 500);
-    addLog(`Constructing handoff packet for ${scheme}://...`, 900);
+    addLog(`Constructing handoff packet for ${APP_SCHEME}://...`, 900);
     addLog("Attempting auto-launch redirect...", 1300);
 
     // Auto-launch deep link
@@ -94,7 +96,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
     }, 1500);
 
     return () => clearTimeout(triggerRedirect);
-  }, [deepLinkUrl, scheme, userId]);
+  }, [deepLinkUrl, userId]);
 
   // Copy token to clipboard
   const handleCopyToken = () => {
@@ -158,7 +160,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
           <ExternalLink className="w-4 h-4" />
         </button>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className={`grid ${refreshToken ? "grid-cols-2" : "grid-cols-1"} gap-3`}>
           <button
             onClick={handleCopyLink}
             className="py-2.5 bg-[#141414] hover:bg-[#1c1c1f] text-gray-300 hover:text-white border border-white/5 rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs"
@@ -167,6 +169,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
             <span>{copiedLink ? "Copied Link!" : "Copy Link"}</span>
           </button>
           
+          {refreshToken && (
           <button
             onClick={handleCopyToken}
             className="py-2.5 bg-[#141414] hover:bg-[#1c1c1f] text-gray-300 hover:text-white border border-white/5 rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs"
@@ -174,6 +177,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
             {copiedToken ? <Check className="w-4 h-4 text-brand-emerald" /> : <Copy className="w-4 h-4" />}
             <span>{copiedToken ? "Copied Token!" : "Copy Token"}</span>
           </button>
+          )}
         </div>
       </div>
 

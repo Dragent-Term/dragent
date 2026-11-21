@@ -40,6 +40,11 @@ use super::widgets::{primary_button, secondary_button, CONTENT_MAX_WIDTH, CONTEN
 
 pub enum SettingsEvent {
     AgentAccountLogin(uuid::Uuid),
+    AgentAccountSignIn {
+        machine_id: Option<String>,
+        title: String,
+        command: String,
+    },
     AgentAccountError(String),
     Project(super::ProjectSettingsAction),
     /// A machine was added, edited, renamed, removed or (dis)connected.
@@ -1224,7 +1229,7 @@ impl SettingsView {
             SettingsSection::AgentModels => pages::render_agent_models(self, &theme, app),
             SettingsSection::AgentMcp => pages::render_agent_mcp(self, &theme),
             SettingsSection::AgentSkills => pages::render_skills(self, &theme),
-            SettingsSection::AgentAccounts => super::agent_accounts::render(self, &theme),
+            SettingsSection::AgentAccounts => super::agent_accounts::render(self, &theme, app),
             SettingsSection::Usage => super::usage::render(self, &theme),
             SettingsSection::AgentCommands => pages::render_agent_commands(self, &theme),
             SettingsSection::Editor => pages::render_editor(self, &theme),

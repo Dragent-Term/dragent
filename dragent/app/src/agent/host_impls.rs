@@ -145,6 +145,15 @@ impl ToolHost for AppToolHost {
         crate::agent::local_tools::external_read_paths_for_tool(name, args_json, pane_id)
     }
 
+    fn external_write_paths_for_tool(
+        &self,
+        name: &str,
+        args_json: &str,
+        pane_id: Uuid,
+    ) -> Vec<PathBuf> {
+        crate::agent::local_tools::external_write_paths_for_tool(name, args_json, pane_id)
+    }
+
     fn grant_external_read_once(&self, call_id: &str, roots: Vec<PathBuf>) {
         crate::agent::local_tools::grant_external_read_once(call_id, roots);
     }
@@ -274,12 +283,23 @@ impl PipelineLauncher for AppPipeline {
         // Provider resumes above retain the model of the existing run.
         #[cfg(not(target_family = "wasm"))]
         let model_name = if allowed_tools.is_none() {
-            self.pane.lock().ok().and_then(|pane| *pane)
+            self.pane
+                .lock()
+                .ok()
+                .and_then(|pane| *pane)
                 .and_then(|pane| crate::cli::team::led_by(&pane.to_string()))
                 .and_then(|team| team.lead_model)
-                .map(|model| if model == crate::settings::AUTO_MODEL_ID { String::new() } else { model })
+                .map(|model| {
+                    if model == crate::settings::AUTO_MODEL_ID {
+                        String::new()
+                    } else {
+                        model
+                    }
+                })
                 .unwrap_or(model_name)
-        } else { model_name };
+        } else {
+            model_name
+        };
         let turn_tools = if allowed_tools.is_none() {
             self.turn_tools()
         } else {

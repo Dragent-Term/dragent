@@ -551,6 +551,15 @@ pub(crate) fn exec_apply_patch(args: &serde_json::Value) -> (String, bool) {
     if patches.is_empty() {
         return ("No files found in patch".to_string(), true);
     }
+    // Relative paths are the project's, like every other file tool (they
+    // used to resolve against the app's own working directory).
+    let patches: Vec<FilePatch> = patches
+        .into_iter()
+        .map(|mut fp| {
+            fp.path = resolve_path(&fp.path).to_string_lossy().into_owned();
+            fp
+        })
+        .collect();
 
     // Read all files and backups before applying
     let mut contents: HashMap<String, Vec<String>> = HashMap::new();

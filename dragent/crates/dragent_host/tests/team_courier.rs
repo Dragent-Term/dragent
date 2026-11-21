@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dragent_host::agent_sessions;
 use dragent_host::team::{Member, MessageKind, Party, TaskResult, TeamRequest, TeamResponse};
-use support::{Harness, wait};
+use support::{wait, Harness};
 use uuid::Uuid;
 
 fn now_ms() -> u64 {
@@ -103,6 +103,7 @@ fn the_courier_waits_for_a_turn_to_end_then_types_it_in() {
             kind: MessageKind::Answer,
             body: "Use Resend for the emails".into(),
             reply_to: None,
+            choices: Vec::new(),
         })
         .unwrap();
     std::thread::sleep(Duration::from_secs(5));
@@ -119,11 +120,9 @@ fn the_courier_waits_for_a_turn_to_end_then_types_it_in() {
             .contains("|Use Resend for the emails")
             .then_some(())
     });
-    assert!(
-        harness
-            .output(&worker_terminal)
-            .contains("dragent msg reply 1")
-    );
+    assert!(harness
+        .output(&worker_terminal)
+        .contains("dragent msg reply 1"));
     // Delivered counts as read (recorded once the typing is done).
     wait(|| {
         match client
@@ -215,6 +214,7 @@ fn the_courier_waits_for_a_turn_to_end_then_types_it_in() {
             kind: MessageKind::Handoff,
             body: "POST /invites returns id and url".into(),
             reply_to: None,
+            choices: Vec::new(),
         })
         .unwrap();
     wait(|| {
@@ -230,11 +230,9 @@ fn the_courier_waits_for_a_turn_to_end_then_types_it_in() {
         "{}",
         harness.output(&second_terminal)
     );
-    assert!(
-        !harness
-            .output(&worker_terminal)
-            .contains("returns id and url")
-    );
+    assert!(!harness
+        .output(&worker_terminal)
+        .contains("returns id and url"));
     // The lead is mid-turn: it hears once its turn ends.
     std::thread::sleep(Duration::from_secs(3));
     assert!(!harness.output(&lead_terminal).contains("t1 → t2"));

@@ -252,8 +252,55 @@ pub(crate) fn person_messages(team: &Team) -> Vec<&Message> {
         .collect()
 }
 
+/// Replies that only say "go on": the page's Carry on button, "ok",
+/// "thanks"… They ask nothing, so the lead answers them with work, not a
+/// message (a reply would only draw another "ok").
+pub(crate) fn is_acknowledgement(body: &str) -> bool {
+    const ACKS: &[&str] = &[
+        "carry on", "continue", "go on", "go ahead", "keep going", "proceed", "ok", "okay", "k",
+        "ok thanks", "ok thank you", "ok no problem", "no problem", "thanks", "thank you", "got it",
+        "sounds good", "great", "nice", "cool", "perfect", "alright", "all right", "fine", "sure",
+        "noted", "👍", "👌",
+    ];
+    let normal: String = body
+        .trim()
+        .trim_end_matches(|c: char| matches!(c, '.' | '!' | ','))
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace([',', '.', '!'], "");
+    ACKS.contains(&normal.as_str())
+}
+
 /// The person's messages as the lead gets them: whole, and plainly theirs.
 pub(crate) fn person_text(team: &Team, messages: &[&Message], voice: Voice) -> String {
+    // An "ok" to something the lead asked is an answer, not a nod.
+    let answers_a_question = |message: &Message| {
+        message.reply_to.is_some_and(|id| {
+            team.messages.iter().any(|asked| {
+                asked.id == id
+                    && (matches!(asked.kind, MessageKind::Question | MessageKind::NeedsUser)
+                        || !asked.choices.is_empty())
+            })
+        })
+    };
+    if !messages.is_empty()
+        && messages
+            .iter()
+            .all(|message| is_acknowledgement(&message.body) && !answers_a_question(message))
+    {
+        let said = messages
+            .iter()
+            .map(|message| format!("#{} \"{}\"", message.id, one_line(&message.body)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return format!(
+            "[Dragent team {}] The person acknowledged on the team's page ({said}). Nothing to answer: \
+             don't reply on the page, just carry on with the work.",
+            team.id
+        );
+    }
     let mut text = format!(
         "[Dragent team {}] The person wrote to you from the team's page. This is from them, not news from \
          the workers: deal with it first.\n\n",
@@ -273,13 +320,15 @@ pub(crate) fn person_text(team: &Team, messages: &[&Message], voice: Voice) -> S
         .unwrap_or_default();
     text.push_str(&match voice {
         Voice::Terminal => format!(
-            "Answer on that page, where they're reading: `dragent msg reply {last} \"…\"`. If it changes the \
-             plan, update the plan you have (`dragent team guide` says how): don't cancel work or stop the \
-             team for it. If a `tasks wait` already showed you #{last}, it's the same message."
+            "Act on it now. Reply on that page (`dragent msg reply {last} \"…\"`) only when it asks you \
+             something or you need their input; don't reply to acknowledgements like \"Carry on\" or \"ok\". \
+             If it changes the plan, update the plan you have (`dragent team guide` says how): don't cancel \
+             work or stop the team for it. If a `tasks wait` already showed you #{last}, it's the same message."
         ),
         Voice::Tools => format!(
-            "Answer on that page, where they're reading: coord_msg_send to user, reply_to {last}. If it changes \
-             the plan, update the plan you have: don't cancel work or stop the team for it."
+            "Act on it now. Reply on that page (coord_msg_send to user, reply_to {last}) only when it asks you \
+             something or you need their input; don't reply to acknowledgements like \"Carry on\" or \"ok\". \
+             If it changes the plan, update the plan you have: don't cancel work or stop the team for it."
         ),
     });
     text
@@ -1567,6 +1616,42 @@ mod tests {
         );
         // Once.
         assert!(act(&mut store, &team, now + 60_000, &fake).is_empty());
+    }
+
+    #[test]
+    fn acknowledgements_are_recognised_and_instructions_are_not() {
+        for ack in ["Carry on.", "ok", "OK!", "ok no problem", "Ok, thanks", "  got it ", "👍"] {
+            assert!(is_acknowledgement(ack), "{ack}");
+        }
+        for not in ["ok but use Resend", "Carry on with Codex instead", "stop", "why?", ""] {
+            assert!(!is_acknowledgement(not), "{not}");
+        }
+    }
+
+    #[test]
+    fn an_acknowledgement_asks_for_no_reply_and_an_instruction_only_when_needed() {
+        let (_scratch, mut store, team) = running_team();
+        let fake = fake_with(&[("lead", view("lead-term", None))]);
+        person_writes(&mut store, &team, "Carry on.");
+        assert_eq!(act(&mut store, &team, 10_000_000, &fake).len(), 1);
+        let (_, text) = fake.typed.borrow()[0].clone();
+        assert!(text.contains("acknowledged") && text.contains("don't reply"), "{text}");
+        assert!(!text.contains("msg reply"), "invites a reply: {text}");
+
+        let state = store.team(&team).unwrap();
+        let instruction = Message { id: 9, from: Party::User, to: Party::Lead, kind: MessageKind::Note, body: "Use Codex for t3".into(), reply_to: None, at_ms: 0, read: false, choices: Vec::new() };
+        let text = person_text(state, &[&instruction], Voice::Terminal);
+        assert!(text.contains("Act on it now") && text.contains("only when"), "{text}");
+    }
+
+    #[test]
+    fn ok_to_a_leads_question_is_an_answer_not_an_acknowledgement() {
+        let (_scratch, store, team) = running_team();
+        let mut state = store.team(&team).unwrap().clone();
+        state.messages.push(Message { id: 1, from: Party::Lead, to: Party::User, kind: MessageKind::NeedsUser, body: "Delete the old branch?".into(), reply_to: None, at_ms: 0, read: true, choices: Vec::new() });
+        let ok = Message { id: 2, from: Party::User, to: Party::Lead, kind: MessageKind::Answer, body: "ok".into(), reply_to: Some(1), at_ms: 0, read: false, choices: Vec::new() };
+        let text = person_text(&state, &[&ok], Voice::Terminal);
+        assert!(text.contains("Message #2") && !text.contains("acknowledged"), "{text}");
     }
 
     #[test]

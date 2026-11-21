@@ -10,7 +10,7 @@
 
 use super::persistence;
 use super::project_naming::{default_pane_cwd, worktree_main_checkout};
-use super::view::{PaneTab, WorkspaceView};
+use super::view::{MachineAccountCache, PaneTab, WorkspaceView};
 use super::view_tabs::{apply_sidebar_visibility, refresh_sidebar_projects};
 use super::pane::WorkspacePane;
 use super::workspace_tab::WorkspaceTab;
@@ -466,6 +466,18 @@ impl WorkspaceView {
                     self.agent_account_picker = None;
                 } else {
                     self.agent_account_picker = Some(agent_id.clone());
+                    // Remote projects list the machine's accounts: refresh
+                    // its cache so the picker shows them (loading state
+                    // while the first fetch is in flight).
+                    if let Some(machine) =
+                        self.machine_agents(self.active_project_root().as_deref(), ctx)
+                    {
+                        self.refresh_machine_accounts(
+                            machine.machine_id.clone(),
+                            machine.machine.clone(),
+                            ctx,
+                        );
+                    }
                 }
                 ctx.notify();
             }
@@ -576,20 +588,16 @@ impl WorkspaceView {
             return;
         }
         let project_root = self.active_project_root();
-        let binding = if machine.is_some() {
-            if !matches!(account, dragent_host::agent_accounts::Selection::Inherit | dragent_host::agent_accounts::Selection::System) {
-                self.show_error_notice("Agent account", "Local accounts cannot be used on a remote host. Authenticate and launch on that host.", ctx);
-                return;
-            }
-            None
-        } else {
-            match dragent_host::agent_accounts::Registry::load().and_then(|r| {
-                let project = project_root.as_deref().and_then(|p| dragent_host::agent_accounts::project_for(p, &r).or_else(|| Some(p.to_path_buf())));
-                r.resolve(&agent_id, project.as_deref(), account)
-            }) {
-                Ok(binding) => Some(binding),
-                Err(error) => { self.show_error_notice("Agent account", error, ctx); return; }
-            }
+        if let Some(machine) = machine {
+            self.open_agent_on_machine(agent_id, account.clone(), machine, project_root, ctx);
+            return;
+        }
+        let binding = match dragent_host::agent_accounts::Registry::load().and_then(|r| {
+            let project = project_root.as_deref().and_then(|p| dragent_host::agent_accounts::project_for(p, &r).or_else(|| Some(p.to_path_buf())));
+            r.resolve(&agent_id, project.as_deref(), account)
+        }) {
+            Ok(binding) => Some(binding),
+            Err(error) => { self.show_error_notice("Agent account", error, ctx); return; }
         };
         if definition.builtin == Some(PromptAgent::Dragent) {
             if self.begin_fresh_surface(ctx).is_none() {
@@ -608,10 +616,11 @@ impl WorkspaceView {
         let detected = definition
             .builtin
             .is_some_and(|agent| self.prompt_installed_agents.contains(&agent));
-        let command = match &machine {
-            Some(machine) => agent_launch_line(&definition, &settings, false).map(|line| machine.launch_line(&line)),
-            None if detected => agent_launch_line(&definition, &settings, false),
-            None => agent_launch_command(&definition, &settings),
+        // Remote machines returned above: this is always a local launch.
+        let command = if detected {
+            agent_launch_line(&definition, &settings, false)
+        } else {
+            agent_launch_command(&definition, &settings)
         };
         let label = definition.name.clone();
         let Some(command) = command else {
@@ -643,6 +652,215 @@ impl WorkspaceView {
             });
         }
         self.after_agent_surface_created(ctx);
+    }
+
+    /// Remote launch for the agent rail: the session runs on the active
+    /// project's machine, using an account stored on that machine. `System`
+    /// launches with the machine's login directly; any other selection asks
+    /// the machine for its `LaunchEnv` off the UI thread and prefixes the
+    /// remote launch line with it (`Inherit` resolves the machine's own
+    /// default there). Failures show an error notice and launch nothing.
+    /// No local staging: the env prefix carries the account, and the
+    /// conversation lands in that profile's home on the machine, which is
+    /// what a later resume reads back.
+    fn open_agent_on_machine(
+        &mut self,
+        agent_id: String,
+        account: dragent_host::agent_accounts::Selection,
+        machine: super::remote_project::MachineAgents,
+        project_root: Option<std::path::PathBuf>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        use super::action::PromptAgent;
+        use super::agent_definition::definition_by_id;
+        use dragent_host::development::{
+            AccountsRequest, AccountsResponse, DevelopmentRequest, DevelopmentResponse,
+        };
+        let settings = crate::setup::UiSettings::load();
+        let definition = definition_by_id(&agent_id, &settings.custom_agents, false);
+        let Some(definition) = definition else {
+            return;
+        };
+        if definition.builtin == Some(PromptAgent::Dragent) {
+            if self.begin_fresh_surface(ctx).is_none() {
+                return;
+            }
+            let new_tab = self.create_agent_tab_at(ctx, project_root);
+            new_tab.pane.set_agent_id(ctx, Some(definition.id));
+            self.active_tab_id = new_tab.id;
+            self.tabs.push(new_tab);
+            self.after_agent_surface_created(ctx);
+            return;
+        }
+        let Some(base_line) = agent_launch_line(&definition, &settings, false) else {
+            self.agent_rail_expanded = true;
+            self.refresh_prompt_agents(ctx);
+            ctx.notify();
+            return;
+        };
+        let remote_line = machine.launch_line(&base_line);
+        let label = definition.name.clone();
+        let definition_id = definition.id.clone();
+        if matches!(account, dragent_host::agent_accounts::Selection::System) {
+            self.submit_remote_agent_command(label, remote_line, project_root, definition_id, ctx);
+            return;
+        }
+        let client = match crate::remote_fs::client(&machine.machine_id) {
+            Ok(client) => client,
+            Err(error) => {
+                self.show_error_notice("Agent account", error, ctx);
+                return;
+            }
+        };
+        let provider = agent_id.clone();
+        let picker_agent = agent_id.clone();
+        ctx.spawn(
+            async move {
+                // Saved accounts need POSIX shells; Windows reports its OS
+                // here, before any launch line is built.
+                match client.development(DevelopmentRequest::Environment) {
+                    Ok(DevelopmentResponse::Environment { os, .. }) => {
+                        let lower = os.to_lowercase();
+                        if lower.contains("windows") || lower == "win32" {
+                            return Err((
+                                true,
+                                "Saved accounts aren't supported on Windows machines yet".to_string(),
+                            ));
+                        }
+                    }
+                    Err(error) => return Err((false, error)),
+                    _ => {}
+                }
+                match client.development(DevelopmentRequest::Accounts(
+                    AccountsRequest::LaunchEnv { provider, selection: account },
+                )) {
+                    Ok(DevelopmentResponse::Accounts(AccountsResponse::LaunchEnv(env))) => Ok(env),
+                    Ok(other) => Err((false, format!("unexpected development response: {other:?}"))),
+                    Err(error) => Err((false, error)),
+                }
+            },
+            move |view, result, ctx| {
+                match result {
+                    Ok(env) => {
+                        let command = prefix_remote_launch_line(&remote_line, &env);
+                        view.submit_remote_agent_command(
+                            label,
+                            command,
+                            project_root,
+                            definition_id,
+                            ctx,
+                        );
+                    }
+                    Err((windows, message)) => {
+                        if windows {
+                            // Fall back to asking for System login.
+                            view.agent_account_picker = Some(picker_agent);
+                        }
+                        view.show_error_notice("Agent account", message, ctx);
+                    }
+                }
+                ctx.notify();
+            },
+        );
+    }
+
+    /// Create the tab for a remote agent launch and submit its (already
+    /// account-prefixed) command. Remote accounts are carried by the env
+    /// prefix, never by local staging.
+    fn submit_remote_agent_command(
+        &mut self,
+        label: String,
+        command: String,
+        project_root: Option<std::path::PathBuf>,
+        definition_id: String,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(cwd) = self.begin_fresh_surface(ctx) else {
+            return;
+        };
+        let new_tab = self.create_tab_with_cwd(ctx, Some(label), None, cwd, project_root);
+        let new_tab_id = new_tab.id;
+        new_tab.pane.set_agent_id(ctx, Some(definition_id));
+        let terminal = match &new_tab.pane {
+            super::pane::WorkspacePane::Terminal(terminal) => Some(terminal.clone()),
+            super::pane::WorkspacePane::Settings(_) | super::pane::WorkspacePane::Browser(_) => None,
+        };
+        self.tabs.push(new_tab);
+        self.active_tab_id = new_tab_id;
+        if let Some(terminal) = terminal {
+            ctx.update_view(&terminal, |terminal, terminal_ctx| {
+                terminal.submit_shell_command(&command, terminal_ctx);
+            });
+        }
+        self.after_agent_surface_created(ctx);
+    }
+
+    /// Refresh the cached account list for one remote machine, for the rail
+    /// picker. The last good list stays visible while a refresh is in
+    /// flight; the picker shows "Loading accounts…" only when empty and
+    /// "Couldn't read accounts on {machine}" on error.
+    pub(crate) fn refresh_machine_accounts(
+        &mut self,
+        machine_id: String,
+        machine_name: String,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        use dragent_host::development::{
+            AccountsRequest, AccountsResponse, DevelopmentRequest, DevelopmentResponse,
+        };
+        let entry = self
+            .machine_account_caches
+            .entry(machine_id.clone())
+            .or_insert_with(MachineAccountCache::default);
+        if entry.loading {
+            return;
+        }
+        entry.loading = true;
+        entry.error = None;
+        entry.machine_name = machine_name.clone();
+        let Ok(client) = crate::remote_fs::client(&machine_id) else {
+            let entry = self
+                .machine_account_caches
+                .entry(machine_id)
+                .or_insert_with(MachineAccountCache::default);
+            entry.loading = false;
+            entry.error = Some("not connected".to_string());
+            entry.machine_name = machine_name;
+            ctx.notify();
+            return;
+        };
+        ctx.spawn(
+            async move {
+                match client.development(DevelopmentRequest::Accounts(AccountsRequest::List)) {
+                    Ok(DevelopmentResponse::Accounts(AccountsResponse::List {
+                        profiles,
+                        defaults,
+                        ..
+                    })) => Ok((profiles, defaults)),
+                    Ok(other) => Err(format!("unexpected development response: {other:?}")),
+                    Err(error) => Err(error),
+                }
+            },
+            move |view, result, ctx| {
+                let entry = view
+                    .machine_account_caches
+                    .entry(machine_id)
+                    .or_insert_with(MachineAccountCache::default);
+                entry.loading = false;
+                match result {
+                    Ok((profiles, defaults)) => {
+                        entry.profiles = profiles;
+                        entry.defaults = defaults;
+                        entry.error = None;
+                    }
+                    Err(error) => {
+                        entry.error = Some(error);
+                    }
+                }
+                entry.machine_name = machine_name;
+                ctx.notify();
+            },
+        );
     }
 
     /// Shared post-launch sync for agent surfaces. Mirrors the new-tab flow.
@@ -875,6 +1093,17 @@ pub(crate) fn agent_launch_line(
     }
 }
 
+/// Prefix a machine-resolved remote launch line with an account's
+/// environment. `System` resolves to an empty env, so the line is unchanged;
+/// `Inherit` and `Profile` carry the machine's `LaunchEnv` for that
+/// selection (the machine resolves `Inherit` to its own default).
+pub(crate) fn prefix_remote_launch_line(
+    remote_line: &str,
+    env: &dragent_host::agent_accounts::LaunchEnv,
+) -> String {
+    format!("{}{}", dragent_host::agent_accounts::posix_prefix(env), remote_line)
+}
+
 impl WorkspaceView {
     /// `+` → Team: the prompt screen of the project in front, Team switched
     /// on; without a project, choose one first.
@@ -999,5 +1228,56 @@ impl WorkspaceView {
         self.sync_left_panel(ctx);
         self.save_session(ctx);
         ctx.notify();
+    }
+}
+
+#[cfg(test)]
+mod remote_account_launch_tests {
+    use super::prefix_remote_launch_line;
+    use dragent_host::agent_accounts::LaunchEnv;
+
+    #[test]
+    fn system_selection_leaves_the_remote_line_unchanged() {
+        // `System` resolves to an empty env: no prefix.
+        assert_eq!(
+            prefix_remote_launch_line("claude --dangerously-skip-permissions", &LaunchEnv::default()),
+            "claude --dangerously-skip-permissions"
+        );
+        assert_eq!(
+            prefix_remote_launch_line("'/opt/claude beta/bin/claude' --flag", &LaunchEnv::default()),
+            "'/opt/claude beta/bin/claude' --flag"
+        );
+    }
+
+    #[test]
+    fn inherit_selection_prefixes_the_machine_default_env() {
+        // `Inherit` asks the machine for `LaunchEnv` with `Inherit`, which
+        // resolves its own default there; the returned env prefixes the
+        // machine-resolved line (chosen copy included).
+        let env = LaunchEnv {
+            set: vec![("CLAUDE_CONFIG_DIR".into(), "/home/dev/.p/a'b".into())],
+            unset: vec!["ANTHROPIC_API_KEY".into()],
+        };
+        assert_eq!(
+            prefix_remote_launch_line("'/opt/claude' --flag", &env),
+            "env -u ANTHROPIC_API_KEY CLAUDE_CONFIG_DIR='/home/dev/.p/a'\\''b' '/opt/claude' --flag"
+        );
+    }
+
+    #[test]
+    fn profile_selection_prefixes_set_and_unset_together() {
+        let env = LaunchEnv {
+            set: vec![("CODEX_HOME".into(), "/home/dev/.p/codex".into())],
+            unset: vec!["OPENAI_API_KEY".into(), "CODEX_API_KEY".into()],
+        };
+        assert_eq!(
+            prefix_remote_launch_line("npx -y @openai/codex", &env),
+            "env -u OPENAI_API_KEY -u CODEX_API_KEY CODEX_HOME='/home/dev/.p/codex' npx -y @openai/codex"
+        );
+        // Empty env (System) never prefixes, even with replacements.
+        assert_eq!(
+            prefix_remote_launch_line("npx -y @openai/codex", &LaunchEnv::default()),
+            "npx -y @openai/codex"
+        );
     }
 }

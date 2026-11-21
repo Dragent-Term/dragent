@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bearerFrom, sameOrigin } from "@/lib/server/session";
 
 // Same-origin gateway for organization APIs. Keeping the Go URL here means the
 // browser only ever talks to the portal and the Bearer token is forwarded by a
@@ -6,11 +7,14 @@ import { NextRequest, NextResponse } from "next/server";
 const GO_BACKEND_URL = process.env.NEXT_BACKEND_URL || "http://localhost:8080";
 
 async function proxy(req: NextRequest, path: string[]) {
+  if (req.method !== "GET" && req.method !== "HEAD" && !sameOrigin(req)) {
+    return NextResponse.json({ error: "Cross-site request refused" }, { status: 403 });
+  }
   const target = `${GO_BACKEND_URL}/api/v1/${path.map(encodeURIComponent).join("/")}${new URL(req.url).search}`;
   const init: RequestInit = {
     method: req.method,
     headers: {
-      Authorization: req.headers.get("authorization") ?? "",
+      Authorization: bearerFrom(req),
       "Content-Type": "application/json",
     },
   };

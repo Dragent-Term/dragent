@@ -19,7 +19,9 @@ pub(super) enum DemoScene {
     MachineSystem,
     MachineAgents,
     Editor,
-    EditorFind { matches: usize },
+    EditorFind {
+        matches: usize,
+    },
     Diff,
     Review,
     /// The sidebar's Search tab with every field filled in.
@@ -60,22 +62,56 @@ fn sample_projects() -> Vec<crate::settings::ProjectSettingsEntry> {
     };
     vec![
         project("acme-app", "/demo/code/acme-app", "This computer", 3, false),
-        project("design-system", "/demo/code/design-system", "This computer", 1, false),
-        project("marketing-site", "/demo/code/marketing-site", "This computer", 0, true),
-        project("payments-api", "/srv/payments-api", "Development server", 2, false),
+        project(
+            "design-system",
+            "/demo/code/design-system",
+            "This computer",
+            1,
+            false,
+        ),
+        project(
+            "marketing-site",
+            "/demo/code/marketing-site",
+            "This computer",
+            0,
+            true,
+        ),
+        project(
+            "payments-api",
+            "/srv/payments-api",
+            "Development server",
+            2,
+            false,
+        ),
     ]
 }
 
 /// The clicks that put a settings page into a named preview state.
 fn settings_state(state: &str) -> Vec<crate::settings::SettingsAction> {
+    use crate::settings::agent_accounts::AccountAction;
     use crate::settings::integrations::{IntegrationAction, IntegrationsTab};
     use crate::settings::SettingsAction as A;
     match state {
+        // The Add account dialog, as the person sees it: subscription…
+        "accounts_add" => vec![A::AgentAccount(AccountAction::StartAdd("claude".into()))],
+        // …and with API-key billing picked.
+        "accounts_add_apikey" => vec![
+            A::AgentAccount(AccountAction::StartAdd("claude".into())),
+            A::AgentAccount(AccountAction::SetKind(
+                dragent_host::agent_accounts::CredentialKind::ApiKey,
+            )),
+        ],
         "rebind" => vec![A::StartRebind("new-tab".into())],
         "custom_prefix" => vec![A::SelectBranchPrefix(crate::settings::BranchPrefix::Custom)],
-        "integrations_services" => vec![A::Integration(IntegrationAction::Tab(IntegrationsTab::Services))],
-        "integrations_tasks" => vec![A::Integration(IntegrationAction::Tab(IntegrationsTab::Tasks))],
-        "integrations_agents" => vec![A::Integration(IntegrationAction::Tab(IntegrationsTab::Agents))],
+        "integrations_services" => vec![A::Integration(IntegrationAction::Tab(
+            IntegrationsTab::Services,
+        ))],
+        "integrations_tasks" => vec![A::Integration(IntegrationAction::Tab(
+            IntegrationsTab::Tasks,
+        ))],
+        "integrations_agents" => vec![A::Integration(IntegrationAction::Tab(
+            IntegrationsTab::Agents,
+        ))],
         "voice_legacy" => Vec::new(),
         "voice_system" => vec![A::SelectVoiceBackend(
             crate::settings::voice_settings::VoiceBackend::System,
@@ -84,17 +120,34 @@ fn settings_state(state: &str) -> Vec<crate::settings::SettingsAction> {
         "behavior_agents" => Vec::new(),
         "behavior_picker" => vec![A::TogglePicker("default_agent".into())],
         "computer_reset" => vec![A::RequestComputerPermissionReset],
-        "skills_menu" => crate::agent::skill_discovery::skills_for_scope(None).first().map(|skill| vec![A::UpdateProviderKey("skill_search_query".into(),skill.name.clone()),A::TogglePicker(format!("skill-menu:{}",skill.source_path.display()))]).unwrap_or_default(),
+        "skills_menu" => crate::agent::skill_discovery::skills_for_scope(None)
+            .first()
+            .map(|skill| {
+                vec![
+                    A::UpdateProviderKey("skill_search_query".into(), skill.name.clone()),
+                    A::TogglePicker(format!("skill-menu:{}", skill.source_path.display())),
+                ]
+            })
+            .unwrap_or_default(),
         "skills_all" => vec![A::ToggleSkillGroup("shared".into())],
-        "skills_search" => vec![A::UpdateProviderKey("skill_search_query".into(), "computer".into())],
-        "skills_details" => vec![A::UpdateProviderKey("skill_search_query".into(), "dragent-computer".into()), A::ToggleSkillDetails(
-            crate::agent::skill_discovery::built_in_skills()
-                .into_iter()
-                .find(|skill| skill.name == "dragent-computer")
-                .map(|skill| skill.source_path)
-                .unwrap_or_default(),
+        "skills_search" => vec![A::UpdateProviderKey(
+            "skill_search_query".into(),
+            "computer".into(),
         )],
-        "skills_empty" => vec![A::UpdateProviderKey("skill_search_query".into(), "no-results-for-this-query".into())],
+        "skills_details" => vec![
+            A::UpdateProviderKey("skill_search_query".into(), "dragent-computer".into()),
+            A::ToggleSkillDetails(
+                crate::agent::skill_discovery::built_in_skills()
+                    .into_iter()
+                    .find(|skill| skill.name == "dragent-computer")
+                    .map(|skill| skill.source_path)
+                    .unwrap_or_default(),
+            ),
+        ],
+        "skills_empty" => vec![A::UpdateProviderKey(
+            "skill_search_query".into(),
+            "no-results-for-this-query".into(),
+        )],
         "skills_create" => vec![A::ShowSkillCreator],
         "skills_create_error" => vec![A::ShowSkillCreator, A::SaveSkill],
         // Anything else names a picker to open.
@@ -105,9 +158,14 @@ fn settings_state(state: &str) -> Vec<crate::settings::SettingsAction> {
 pub(super) fn register(ctx: &mut AppContext) {
     // Sample agents found installed, for pages that list installed agents.
     crate::workspace::remember_installed_agents(
-        &[PromptAgent::Claude, PromptAgent::Codex, PromptAgent::Gemini, PromptAgent::OpenCode]
-            .into_iter()
-            .collect(),
+        &[
+            PromptAgent::Claude,
+            PromptAgent::Codex,
+            PromptAgent::Gemini,
+            PromptAgent::OpenCode,
+        ]
+        .into_iter()
+        .collect(),
     );
     ctx.add_singleton_model(crate::auth::AuthManager::preview);
     ctx.add_singleton_model(crate::settings::OrgStore::new);
@@ -196,23 +254,110 @@ impl DemoViews {
                 view.integrations.agents_present =
                     vec![SyncAgent::ClaudeCode, SyncAgent::Codex, SyncAgent::Gemini];
             }
-            let machine = uuid::Uuid::from_u128(1);
-            for (n, label) in [(2, "Work"), (3, "Personal")] {
-                let id = uuid::Uuid::from_u128(n);
-                view.agent_accounts
-                    .registry
-                    .profiles
-                    .push(dragent_host::agent_accounts::Profile {
-                        id,
+            // One local machine with a subscription + an API-key account, and
+            // one remote machine with its own account.
+            let work = uuid::Uuid::from_u128(2);
+            let keys = uuid::Uuid::from_u128(4);
+            view.agent_accounts.selected = None;
+            view.agent_accounts.snapshots.insert(
+                String::new(),
+                crate::settings::agent_accounts::MachineSnapshot {
+                    profiles: vec![
+                        dragent_host::development::AccountProfileView {
+                            id: work,
+                            provider: "claude".into(),
+                            label: "Work".into(),
+                            kind: dragent_host::agent_accounts::CredentialKind::Subscription,
+                        },
+                        dragent_host::development::AccountProfileView {
+                            id: keys,
+                            provider: "claude".into(),
+                            label: "Keys".into(),
+                            kind: dragent_host::agent_accounts::CredentialKind::ApiKey,
+                        },
+                    ],
+                    defaults: [(
+                        "claude".to_string(),
+                        dragent_host::agent_accounts::Selection::Profile(work),
+                    )]
+                    .into_iter()
+                    .collect(),
+                    identities: vec![
+                        dragent_host::development::AccountIdentityView {
+                            target: Some(work),
+                            provider: "claude".into(),
+                            signed_in: true,
+                            email: Some("me@example.com".into()),
+                            plan: Some("max".into()),
+                            kind: Some(
+                                dragent_host::agent_accounts::CredentialKind::Subscription,
+                            ),
+                            error: None,
+                            credentials_changed_at: Some(1_700_000_000),
+                        },
+                        dragent_host::development::AccountIdentityView {
+                            target: Some(keys),
+                            provider: "claude".into(),
+                            signed_in: true,
+                            email: None,
+                            plan: None,
+                            kind: Some(dragent_host::agent_accounts::CredentialKind::ApiKey),
+                            error: None,
+                            credentials_changed_at: Some(1_700_000_000),
+                        },
+                        dragent_host::development::AccountIdentityView {
+                            target: None,
+                            provider: "claude".into(),
+                            signed_in: false,
+                            email: None,
+                            plan: None,
+                            kind: None,
+                            error: None,
+                            credentials_changed_at: None,
+                        },
+                        dragent_host::development::AccountIdentityView {
+                            target: None,
+                            provider: "codex".into(),
+                            signed_in: true,
+                            email: Some("coder@example.com".into()),
+                            plan: Some("plus".into()),
+                            kind: None,
+                            error: None,
+                            credentials_changed_at: None,
+                        },
+                    ],
+                    loading: false,
+                    error: None,
+                    not_connected: false,
+                },
+            );
+            let remote_work = uuid::Uuid::from_u128(5);
+            view.agent_accounts.snapshots.insert(
+                "demo-server".to_string(),
+                crate::settings::agent_accounts::MachineSnapshot {
+                    profiles: vec![dragent_host::development::AccountProfileView {
+                        id: remote_work,
                         provider: "claude".into(),
-                        label: label.into(),
-                        machine_id: machine,
-                    });
-                view.agent_accounts.status.insert(id, "Signed in".into());
-            }
-            view.agent_accounts.registry.defaults.insert(
-                "claude".into(),
-                dragent_host::agent_accounts::Selection::Profile(uuid::Uuid::from_u128(2)),
+                        label: "Server".into(),
+                        kind: dragent_host::agent_accounts::CredentialKind::Subscription,
+                    }],
+                    defaults: [("claude".to_string(), dragent_host::agent_accounts::Selection::System)]
+                        .into_iter()
+                        .collect(),
+                    identities: vec![dragent_host::development::AccountIdentityView {
+                        target: Some(remote_work),
+                        provider: "claude".into(),
+                        signed_in: false,
+                        email: None,
+                        plan: None,
+                        kind: Some(dragent_host::agent_accounts::CredentialKind::Subscription),
+                        error: None,
+                        credentials_changed_at: None,
+                    }],
+                    loading: false,
+                    error: None,
+                    not_connected: false,
+                },
             );
             c.notify();
         });
@@ -364,10 +509,16 @@ impl DemoViews {
                 c.notify();
             });
         }
-        if matches!(scene, DemoScene::Solo | DemoScene::SoloBusy | DemoScene::Coordinate) {
+        if matches!(
+            scene,
+            DemoScene::Solo | DemoScene::SoloBusy | DemoScene::Coordinate
+        ) {
             ctx.update_view(&self.prompt,|e,c| e.set_text("Add secure team invitations. Cover expiry, retries, and duplicate requests. Review the change and verify it end to end.",c));
         }
-        if matches!(scene, DemoScene::SidebarSearch | DemoScene::SidebarGitFilter) {
+        if matches!(
+            scene,
+            DemoScene::SidebarSearch | DemoScene::SidebarGitFilter
+        ) {
             ctx.update_view(&self.review, |view, c| {
                 if scene == DemoScene::SidebarSearch {
                     view.sidebar_tab = SidebarTab::Search;
@@ -391,7 +542,9 @@ impl DemoViews {
         }
         if let DemoScene::EditorFind { matches } = scene {
             ctx.update_view(&self.review, |view, c| {
-                c.update_view(&view.buffer_search_editor, |editor, ec| editor.set_text("h", ec));
+                c.update_view(&view.buffer_search_editor, |editor, ec| {
+                    editor.set_text("h", ec)
+                });
                 view.buffer_search_matches = (0..matches).map(|n| n..n + 1).collect();
                 view.buffer_search_active = Some(if matches == 312 { 287 } else { matches - 1 });
                 view.buffer_search_error = None;
@@ -457,16 +610,17 @@ impl DemoViews {
                     view, &theme, preview.ui, self.mono,
                 )
             });
-            return Align::new(
-                ConstrainedBox::new(bar).with_width(565.0).finish(),
-            ).finish();
+            return Align::new(ConstrainedBox::new(bar).with_width(565.0).finish()).finish();
         }
         if scene == DemoScene::Automations {
             return ChildView::new(&self.automations).finish();
         }
         let theme = Theme::dark();
         let ui = preview.ui;
-        let content = if matches!(scene, DemoScene::Solo | DemoScene::SoloBusy | DemoScene::Coordinate) {
+        let content = if matches!(
+            scene,
+            DemoScene::Solo | DemoScene::SoloBusy | DemoScene::Coordinate
+        ) {
             crate::workspace::render_demo_project_prompt(crate::workspace::ProjectPromptProps {
                 workspace_view_id: preview.view_id,
                 theme: &theme,
@@ -513,7 +667,10 @@ impl DemoViews {
                         .finish(),
                 )
                 .with_child(Expanded::new(1.0, ChildView::new(&self.editor).finish()).finish());
-            if matches!(scene, DemoScene::Review | DemoScene::SidebarSearch | DemoScene::SidebarGitFilter) {
+            if matches!(
+                scene,
+                DemoScene::Review | DemoScene::SidebarSearch | DemoScene::SidebarGitFilter
+            ) {
                 main = main.with_child(
                     ConstrainedBox::new(ChildView::new(&self.review).finish())
                         .with_width(365.0)

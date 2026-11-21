@@ -2,8 +2,8 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { setToken } from "@/lib/token";
-import { stashHandoff } from "@/lib/desktopHandoff";
+import { markSignedIn } from "@/lib/token";
+import { appPart, stashHandoff } from "@/lib/desktopHandoff";
 import { 
   CheckCircle2, 
   XCircle, 
@@ -23,7 +23,8 @@ function OAuthCallbackContent() {
   const [verifying, setVerifying] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<{
-    refresh_token: string;
+    code?: string;
+    refresh_token?: string;
     state: string;
     user_id?: string;
   } | null>(null);
@@ -45,7 +46,7 @@ function OAuthCallbackContent() {
         }
 
         // This browser is signed in from here on.
-        setToken(data.access_token);
+        markSignedIn();
 
         // Social sign-in runs in a window.open() popup. Hand the result back to
         // the opener (our own /login page, same origin) and close.
@@ -56,8 +57,8 @@ function OAuthCallbackContent() {
               {
                 type: "dragent:oauth-complete",
                 state: data.state,
-                access_token: data.access_token,
-                refresh_token: data.refresh_token,
+                signed_in: true,
+                ...(data.handoff_code ? { handoff_code: data.handoff_code } : { refresh_token: data.refresh_token }),
                 user_id: data.user_id ?? "",
               },
               window.location.origin
@@ -75,10 +76,10 @@ function OAuthCallbackContent() {
         stashHandoff({
           scheme: "dragent",
           state: data.state,
-          refresh_token: data.refresh_token,
+          ...appPart(data),
           user_id: data.user_id ?? "",
         });
-        setSession({ refresh_token: data.refresh_token, state: data.state, user_id: data.user_id });
+        setSession({ ...appPart(data), state: data.state, user_id: data.user_id });
         router.replace("/dashboard");
 
       } catch (err: unknown) {

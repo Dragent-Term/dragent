@@ -228,6 +228,14 @@ const SCENES: &[(&str, Scene)] = &[
     ("settings_agent_skills_create_error", settings_after(SettingsSection::AgentSkills, "skills_create_error")),
     ("settings_agent_commands", settings(SettingsSection::AgentCommands)),
     ("settings_agent_accounts", settings(SettingsSection::AgentAccounts)),
+    (
+        "settings_agent_accounts_add",
+        settings_after(SettingsSection::AgentAccounts, "accounts_add"),
+    ),
+    (
+        "settings_agent_accounts_add_apikey",
+        settings_after(SettingsSection::AgentAccounts, "accounts_add_apikey"),
+    ),
     ("settings_usage", settings(SettingsSection::Usage)),
     ("settings_editor", settings(SettingsSection::Editor)),
     ("settings_code_index", settings(SettingsSection::CodeIndex)),

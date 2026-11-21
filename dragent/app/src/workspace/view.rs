@@ -305,6 +305,19 @@ pub struct PaneTab {
     pub pane: WorkspacePane,
 }
 
+/// Saved agent accounts on one remote machine, for the rail launch
+/// picker. No credential ever lands here: ids, labels and kinds only.
+/// Refreshed when the picker opens; the last good list stays visible
+/// while a refresh is in flight.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MachineAccountCache {
+    pub loading: bool,
+    pub error: Option<String>,
+    pub machine_name: String,
+    pub profiles: Vec<dragent_host::development::AccountProfileView>,
+    pub defaults: std::collections::BTreeMap<String, dragent_host::agent_accounts::Selection>,
+}
+
 pub struct WorkspaceView {
     /// Immutable owner of this view and its background persistence work.
     pub(crate) organisation_id: String,
@@ -894,6 +907,9 @@ pub struct WorkspaceView {
     /// Account picker popover for rail launches: agent id awaiting account choice.
     /// None = closed. System fallback applies when closed/launched without a pick.
     pub(crate) agent_account_picker: Option<String>,
+    /// Per-machine account lists for the picker when the active project is
+    /// remote (machine id → cache). See `MachineAccountCache`.
+    pub(crate) machine_account_caches: HashMap<String, MachineAccountCache>,
     /// (tab_id, foreground command or empty string) awaiting close confirmation.
     pub(crate) pending_close_tab: Option<(usize, String)>,
     pub(crate) closing_worktree_tab: Option<usize>,

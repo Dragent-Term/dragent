@@ -7,9 +7,12 @@ use super::deep_link::CUSTOM_SCHEME;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthCallback {
+    /// The app's refresh token. Empty when the link carried `code` instead.
     pub refresh_token: String,
     pub state: String,
     pub user_id: Option<String>,
+    /// One-time code from a PKCE sign-in, redeemed with the verifier.
+    pub code: Option<String>,
 }
 
 const CALLBACK_HOST: &str = "auth";
@@ -33,7 +36,13 @@ pub fn parse_auth_callback(raw: &str) -> Result<AuthCallback> {
         );
     }
 
-    let refresh_token = required_query_param(&url, "refresh_token")?;
+    // Current builds get a one-time code; builds from before PKCE got the
+    // refresh token itself.
+    let code = optional_query_param(&url, "code");
+    let refresh_token = match code {
+        Some(_) => String::new(),
+        None => required_query_param(&url, "refresh_token")?,
+    };
     let state = required_query_param(&url, "state")?;
     let user_id = optional_query_param(&url, "user_id");
 
@@ -41,6 +50,7 @@ pub fn parse_auth_callback(raw: &str) -> Result<AuthCallback> {
         refresh_token,
         state,
         user_id,
+        code,
     })
 }
 
@@ -84,6 +94,10 @@ mod tests {
     #[test]
     fn rejects_missing_state() {
         assert!(parse_auth_callback("dragent://auth/callback?refresh_token=rt").is_err());
+        let coded =
+            parse_auth_callback("dragent://auth/callback?code=c1&state=s1&user_id=u1").unwrap();
+        assert_eq!(coded.code.as_deref(), Some("c1"));
+        assert!(coded.refresh_token.is_empty());
     }
 
     #[test]

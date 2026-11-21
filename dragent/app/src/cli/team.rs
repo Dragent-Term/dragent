@@ -329,8 +329,10 @@ Dragent writes to you here, as a message from Dragent, whenever a task \
 finishes, fails or is blocked, a review or QA asks for changes, or a worker \
 or the person sends you something. Act on each:
    - The person writes to you from the team's page: it reaches you at once, \
-even while you work, and it comes first. Act on it, and answer with \
-coord_msg_send to user, because they're reading that page.
+even while you work, and it comes first. Act on it. When it asks you \
+something or you need their input, answer with coord_msg_send to user, because \
+they're reading that page. Don't reply to acknowledgements (\"Carry on\", \
+\"ok\", a button they clicked): just carry on.
    - The person changes what they want (another agent, a different split, new \
 requirements): update the plan you have, in place. Workers keep what they've \
 done. Never cancel work, stop the team or start a new team to change the plan. \
