@@ -75,11 +75,26 @@ subscription or API key, signed in on that machine.
 
 ### Your agents, in your pocket
 
-Pair your phone once by scanning a code on your desktop. When an agent needs
-you, the question reaches your phone: answer it, follow the chat, or pick up a
-terminal, and the work keeps going on your machine. Phone and desktop talk end
-to end encrypted; the relay only ever forwards ciphertext.
-[More about the phone app](https://dragent.dev/docs/mobile)
+<table>
+  <tr>
+    <td width="300" valign="top">
+      <a href="https://dragent.dev/docs/mobile"><img src=".github/assets/readme/phone-workspaces.png" alt="Dragent on an iPhone: a desktop's workspaces, sorted so the ones that need you come first" width="280" /></a>
+    </td>
+    <td valign="top">
+      Pair your phone once by scanning a code on your desktop. When an agent
+      needs you, the question reaches your phone: answer it, follow the chat,
+      or pick up a terminal, and the work keeps going on your machine.
+      <br /><br />
+      Every workspace on your desktops is there, the ones that need you first,
+      along with your agent teams, tasks and usage.
+      <br /><br />
+      Phone and desktop talk end to end encrypted: the relay only ever
+      forwards ciphertext.
+      <br /><br />
+      <a href="https://dragent.dev/docs/mobile">More about the phone app</a>
+    </td>
+  </tr>
+</table>
 
 ### A browser your agents can use
 
