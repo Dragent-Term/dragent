@@ -26,27 +26,28 @@
 </p>
 
 <p align="center">
-  <img src=".github/assets/readme/codex.gif" alt="Codex running in a Dragent workspace: projects and worktrees on the left, the agent's terminal in the middle" width="880" />
+  <img src=".github/assets/readme/coordination.png" alt="An Agent Coordination page: the lead's plan with each task's state, a permission waiting for you and the lead's question" width="880" />
 </p>
 
 ## Features
 
 ### Run an agent team
 
+Describe the goal, choose the lead and how many agents, and start the team.
 The lead plans the work, decides who does what and what has to wait, and each
 worker gets its own worktree and files. You follow one page: who started what,
 what finished, and the questions that are yours to answer. Reply there, or from
 your phone.
 
-<a href="https://dragent.dev/docs/coordination"><img src=".github/assets/readme/coordination.gif" alt="An Agent Coordination page: the lead's plan, workers finishing tasks, and a worker's question waiting for you" width="880" /></a>
+<a href="https://dragent.dev/docs/coordination"><img src=".github/assets/readme/team-prompt.png" alt="The new-workspace prompt with Claude Code leading a team of three agents" width="880" /></a>
 
-### Start from one prompt
+### A real workspace for every agent
 
-Pick the machine, the project and the agent, describe the task, and Dragent
-makes the workspace: a branch of its own, a terminal, an editor, and the agent
-already at work.
+Each worker gets a modern terminal, an editor and its own branch. Failed
+commands get fixed where they broke, and finished work goes straight to
+review. Open any of them when you want the inside view.
 
-<a href="https://dragent.dev/docs/workspaces"><img src=".github/assets/readme/workspace.gif" alt="Describing a task on the new-workspace screen and choosing the agent" width="880" /></a>
+<a href="https://dragent.dev/docs/workspaces"><img src=".github/assets/readme/workspace.png" alt="A workspace terminal: git status, the tests passing and the team's agents at work" width="880" /></a>
 
 ### An agent built into the workspace
 
@@ -55,7 +56,7 @@ expand the tool activity, and approve what the agent wants to run. It works
 with Claude, OpenAI, Grok and other models, on our servers or with your own
 keys, which never leave your computer.
 
-<a href="https://dragent.dev/docs/agent"><img src=".github/assets/readme/agent.gif" alt="Dragent's agent explaining a fix and asking to run a command" width="880" /></a>
+<a href="https://dragent.dev/docs/agent"><img src=".github/assets/readme/agent.png" alt="Dragent's agent explaining a fix, its tool activity and test output, then asking before it runs a command" width="880" /></a>
 
 ### The agent wrote it. You should understand it.
 
@@ -63,7 +64,7 @@ GitHub pull requests and GitLab merge requests from every project in one inbox:
 the files, the checks, the discussion. Comment on a line, have an agent review
 it, open its workspace, or merge once the checks pass.
 
-<a href="https://dragent.dev/docs/code-review"><img src=".github/assets/readme/reviews.gif" alt="Reviewing a pull request's diff, drafting a comment and checking CI" width="880" /></a>
+<a href="https://dragent.dev/docs/code-review"><img src=".github/assets/readme/review.png" alt="Reviewing a pull request: the changed file, its checks and a reviewer's comment" width="880" /></a>
 
 ### The right machine. The same workspace.
 
@@ -71,7 +72,12 @@ Keep the code and the compute on your SSH host and bring its files, terminal,
 Git and agents into Dragent. Each machine keeps its own agent accounts, by
 subscription or API key, signed in on that machine.
 
-<a href="https://dragent.dev/docs/remote-ssh"><img src=".github/assets/readme/remote.gif" alt="A remote development server's installed agents in Dragent's settings" width="880" /></a>
+<table>
+  <tr>
+    <td width="50%" valign="top"><a href="https://dragent.dev/docs/remote-ssh"><img src=".github/assets/readme/ssh-agents.png" alt="A development server over SSH and the agents installed on it" /></a></td>
+    <td width="50%" valign="top"><a href="https://dragent.dev/docs/agent-accounts"><img src=".github/assets/readme/accounts.png" alt="Agent Accounts: a machine picker, and Claude Code and Codex accounts by subscription or API key" /></a></td>
+  </tr>
+</table>
 
 ### Your agents, in your pocket
 
@@ -113,12 +119,12 @@ you can step in whenever you like.
     <td width="50%" valign="top">
       <strong><a href="https://dragent.dev/docs/automations">Automations</a></strong><br />
       Agents that start on a schedule, in a project or on their own.<br /><br />
-      <img src=".github/assets/readme/automations.webp" alt="The Automations page with scheduled agents" />
+      <img src=".github/assets/readme/automations.png" alt="The Automations page with scheduled agents" />
     </td>
     <td width="50%" valign="top">
       <strong><a href="https://dragent.dev/docs/integrations">Integrations</a></strong><br />
       Start work from an issue in Linear, GitHub, GitLab, Jira, Sentry and more.<br /><br />
-      <img src=".github/assets/readme/integrations.webp" alt="Connected services on the Integrations page" />
+      <img src=".github/assets/readme/integrations.png" alt="Connected services on the Integrations page" />
     </td>
   </tr>
 </table>
