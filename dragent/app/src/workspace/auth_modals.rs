@@ -68,7 +68,11 @@ pub fn render_login_prompt(
     ui: FamilyId,
     id: EntityId,
     states: &States,
+    pending_code: Option<&str>,
 ) -> Box<dyn Element> {
+    if let Some(code) = pending_code {
+        return render_waiting_for_browser(theme, ui, id, states, code);
+    }
     let panel = Container::new(
         Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -76,9 +80,13 @@ pub fn render_login_prompt(
             .with_spacing(18.0)
             .with_child(brand_icon(56.0))
             .with_child(
-                Text::new("Welcome to Dragent!".to_string(), ui, crate::theme::text_size(22.0))
-                    .with_color(theme.main_text())
-                    .finish(),
+                Text::new(
+                    "Welcome to Dragent!".to_string(),
+                    ui,
+                    crate::theme::text_size(22.0),
+                )
+                .with_color(theme.main_text())
+                .finish(),
             )
             .with_child(signup_button(theme, ui, id, states))
             .with_child(link_line(
@@ -102,6 +110,68 @@ pub fn render_login_prompt(
                 states,
             ))
             .with_child(footer(theme, ui, id, states))
+            .finish(),
+    )
+    .with_background_color(theme.surface_1())
+    .with_border(Border::all(1.0).with_border_color(theme.outline()))
+    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(14.0)))
+    .with_padding_left(26.0)
+    .with_padding_right(26.0)
+    .with_padding_top(24.0)
+    .with_padding_bottom(24.0)
+    .finish();
+
+    modal_scrim(panel, WorkspaceAction::CloseLoginPrompt, id)
+}
+
+/// While the browser sign-in waits: the code to match before approving there.
+/// Closing it (or Cancel) stops waiting for that sign-in.
+fn render_waiting_for_browser(
+    theme: &Theme,
+    ui: FamilyId,
+    id: EntityId,
+    states: &States,
+    code: &str,
+) -> Box<dyn Element> {
+    let panel = Container::new(
+        Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_spacing(18.0)
+            .with_child(brand_icon(56.0))
+            .with_child(
+                Text::new(
+                    "Finish in your browser".to_string(),
+                    ui,
+                    crate::theme::text_size(22.0),
+                )
+                .with_color(theme.main_text())
+                .finish(),
+            )
+            .with_child(
+                Text::new(
+                    "We opened a secure sign-in page. Check the code there matches this one, \
+                     then approve. This closes once you're signed in."
+                        .to_string(),
+                    ui,
+                    crate::theme::text_size(13.0),
+                )
+                .with_color(theme.sub_text())
+                .finish(),
+            )
+            .with_child(crate::setup::browser_auth_view::render_code(
+                theme, ui, code,
+            ))
+            .with_child(link_line(
+                "Didn't mean to sign in? ",
+                "Cancel",
+                "cancel_signin",
+                WorkspaceAction::CloseLoginPrompt,
+                theme,
+                ui,
+                id,
+                states,
+            ))
             .finish(),
     )
     .with_background_color(theme.surface_1())

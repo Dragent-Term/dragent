@@ -465,7 +465,7 @@ fn test_svg_text_rasterizes_with_loaded_system_fonts() {
 }
 
 #[test]
-fn test_svg_text_rasterizes_with_bundled_sans_serif_fallback() {
+fn test_svg_text_rasterizes_with_system_sans_serif() {
     let image_type = ImageType::try_from_bytes(
         br##"<svg width="160" height="40" viewBox="0 0 160 40" xmlns="http://www.w3.org/2000/svg">
   <text x="10" y="24" font-family="sans-serif" font-size="20" fill="#000000">Dragent</text>
@@ -477,11 +477,8 @@ fn test_svg_text_rasterizes_with_bundled_sans_serif_fallback() {
         panic!("Expected SVG image type");
     };
 
-    assert!(svg.fontdb().faces().any(|face| {
-        face.families
-            .iter()
-            .any(|(family, _)| family.as_str() == "Roboto")
-    }));
+    // No font is bundled for SVG text: it uses the system's fonts.
+    assert!(svg.fontdb().faces().next().is_some(), "system fonts loaded");
 
     let image = image_type
         .to_image(

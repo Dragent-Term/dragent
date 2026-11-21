@@ -167,7 +167,12 @@ pub fn process_start_time(pid: u32) -> Option<u64> {
     let mut system = sysinfo::System::new();
     let id = sysinfo::Pid::from(pid as usize);
     system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[id]), true);
-    system.process(id).map(|process| process.start_time())
+    // A zombie has exited and only waits for its parent to reap it: it is
+    // gone, though Linux still lists it with its old start time.
+    system
+        .process(id)
+        .filter(|process| process.status() != sysinfo::ProcessStatus::Zombie)
+        .map(|process| process.start_time())
 }
 
 /// Whether the recorded process is still the same one (start time matches).

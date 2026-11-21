@@ -10,6 +10,7 @@ use super::super::widgets::{
 
 pub fn render_about(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
     let ui_font = view.ui_font;
+    let view_id = view.view_id;
     let version = env!("CARGO_PKG_VERSION");
 
     Flex::column()
@@ -62,6 +63,51 @@ pub fn render_about(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
                         ))
                         .with_padding_top(8.0)
                         .finish(),
+                    )
+                    .finish(),
+            )],
+        ))
+        .with_child(setting_group(
+            theme,
+            ui_font,
+            "Community",
+            vec![settings_card(
+                theme,
+                Flex::column()
+                    .with_cross_axis_alignment(warpui::elements::CrossAxisAlignment::Start)
+                    .with_spacing(10.0)
+                    .with_child(
+                        warpui::elements::Text::new(
+                            "Dragent is open source (AGPL-3.0). A star helps other developers find it."
+                                .to_string(),
+                            ui_font,
+                            crate::theme::text_size(13.0),
+                        )
+                        .with_color(theme.sub_text())
+                        .finish(),
+                    )
+                    .with_child(
+                        Flex::row()
+                            .with_cross_axis_alignment(warpui::elements::CrossAxisAlignment::Center)
+                            .with_spacing(8.0)
+                            .with_child(crate::community::render_star_button(
+                                theme,
+                                ui_font,
+                                crate::community::state(),
+                                false,
+                                view.hover("about_star"),
+                                move |ectx| ectx.dispatch_typed_action_for(view_id, SettingsAction::StarOnGitHub),
+                            ))
+                            .with_child(crate::community::render_x_button(
+                                theme,
+                                ui_font,
+                                Some("Follow @dragentai on X"),
+                                view.hover("about_x"),
+                                move |ectx| {
+                                    ectx.dispatch_typed_action_for(view_id, SettingsAction::FollowOnX)
+                                },
+                            ))
+                            .finish(),
                     )
                     .finish(),
             )],

@@ -297,6 +297,11 @@ fn execute_command_inner(command: &str, cwd: Option<PathBuf>) -> Result<CommandR
         .slave
         .spawn_command(cmd)
         .context("failed to spawn command process")?;
+    // The child has its own copy of the terminal's slave end. Ours must go,
+    // or reading the master never ends: Linux reports end of output only
+    // once every slave descriptor is closed (macOS ends it when the child
+    // exits, which hid this).
+    drop(pair.slave);
 
     let mut reader = pair
         .master

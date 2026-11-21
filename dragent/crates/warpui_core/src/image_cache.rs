@@ -30,8 +30,70 @@ static SVG_FONT_DB: LazyLock<Arc<usvg::fontdb::Database>> = LazyLock::new(|| {
     Arc::new(fontdb)
 });
 
-fn load_svg_fallback_fonts(_fontdb: &mut usvg::fontdb::Database) {
-    // Dragent: no bundled fonts — SVG text rendering uses system fonts loaded above.
+/// No fonts are bundled for SVG text: it uses the system's. The generic
+/// families default to Windows/mac names (Arial, Times New Roman, Courier
+/// New), which Linux usually lacks, and text in a missing family draws
+/// nothing. Point each at the first family this system has.
+fn load_svg_fallback_fonts(fontdb: &mut usvg::fontdb::Database) {
+    const SANS: &[&str] = &[
+        "Arial",
+        "Helvetica",
+        "Segoe UI",
+        "DejaVu Sans",
+        "Liberation Sans",
+        "Noto Sans",
+        "Ubuntu",
+        "Cantarell",
+        "FreeSans",
+    ];
+    const SERIF: &[&str] = &[
+        "Times New Roman",
+        "Times",
+        "DejaVu Serif",
+        "Liberation Serif",
+        "Noto Serif",
+        "FreeSerif",
+    ];
+    const MONO: &[&str] = &[
+        "Courier New",
+        "Menlo",
+        "Consolas",
+        "DejaVu Sans Mono",
+        "Liberation Mono",
+        "Noto Sans Mono",
+        "Ubuntu Mono",
+        "FreeMono",
+    ];
+    let installed = |candidates: &[&str]| -> Option<String> {
+        candidates
+            .iter()
+            .find(|name| {
+                fontdb.faces().any(|face| {
+                    face.families
+                        .iter()
+                        .any(|(family, _)| family.eq_ignore_ascii_case(name))
+                })
+            })
+            .map(|name| name.to_string())
+            // Anything at all beats drawing nothing.
+            .or_else(|| {
+                fontdb
+                    .faces()
+                    .find_map(|face| face.families.first().map(|(family, _)| family.clone()))
+            })
+    };
+    let sans = installed(SANS);
+    let serif = installed(SERIF);
+    let mono = installed(MONO);
+    if let Some(family) = sans {
+        fontdb.set_sans_serif_family(family);
+    }
+    if let Some(family) = serif {
+        fontdb.set_serif_family(family);
+    }
+    if let Some(family) = mono {
+        fontdb.set_monospace_family(family);
+    }
 }
 
 pub fn prewarm_svg_font_db() {

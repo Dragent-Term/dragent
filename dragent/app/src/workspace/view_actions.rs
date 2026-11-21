@@ -153,20 +153,31 @@ impl TypedActionView for WorkspaceView {
             self.close_prompt_agent_install(ctx);
             return;
         }
-        #[cfg(not(target_family="wasm"))]
-        if self.review_setup.is_some() && matches!(action,WorkspaceAction::CloseActive) {
-            self.cancel_review_setup(ctx); return;
+        #[cfg(not(target_family = "wasm"))]
+        if self.review_setup.is_some() && matches!(action, WorkspaceAction::CloseActive) {
+            self.cancel_review_setup(ctx);
+            return;
         }
-        #[cfg(not(target_family="wasm"))]
-        if self.pull_requests_open && matches!(action,WorkspaceAction::CloseActive){self.close_pull_requests(ctx);return}
-        if matches!(action, WorkspaceAction::RefreshDiffCommentAgents | WorkspaceAction::SendDiffComment) {
+        #[cfg(not(target_family = "wasm"))]
+        if self.pull_requests_open && matches!(action, WorkspaceAction::CloseActive) {
+            self.close_pull_requests(ctx);
+            return;
+        }
+        if matches!(
+            action,
+            WorkspaceAction::RefreshDiffCommentAgents | WorkspaceAction::SendDiffComment
+        ) {
             self.handle_diff_comment_action(action, ctx);
             return;
         }
         // Explicit navigation leaves Settings (and the Automations page)
         // before activating its target. Background terminal/host events do
         // not dismiss the current screen.
-        if (self.settings_open || self.automations_open || self.teams_open || self.tasks_open || self.pull_requests_open)
+        if (self.settings_open
+            || self.automations_open
+            || self.teams_open
+            || self.tasks_open
+            || self.pull_requests_open)
             && matches!(
                 action,
                 WorkspaceAction::OpenProjectWorkspacePrompt { .. }
@@ -467,9 +478,9 @@ impl TypedActionView for WorkspaceView {
             | WorkspaceAction::MoveWorkspaceTabRight { .. }
             | WorkspaceAction::SetAgentRailExpanded { .. }
             | WorkspaceAction::OpenAgentWithAccount { .. }
-                    | WorkspaceAction::OpenAgentAccountPicker { .. }
-                    | WorkspaceAction::CloseAgentAccountPicker
-                    | WorkspaceAction::OpenAgentInNewWorkspaceTab { .. } => {
+            | WorkspaceAction::OpenAgentAccountPicker { .. }
+            | WorkspaceAction::CloseAgentAccountPicker
+            | WorkspaceAction::OpenAgentInNewWorkspaceTab { .. } => {
                 self.handle_workspace_tab_action(action, ctx)
             }
             WorkspaceAction::RestartHostSession { pane_uuid, fresh } => {
@@ -592,6 +603,8 @@ impl TypedActionView for WorkspaceView {
             | WorkspaceAction::OpenParticipantAccess { .. }
             | WorkspaceAction::CloseParticipantAccess
             | WorkspaceAction::OpenExternalUrl { .. }
+            | WorkspaceAction::StarOnGitHub
+            | WorkspaceAction::FollowOnX
             | WorkspaceAction::ShareSession { .. }
             | WorkspaceAction::CancelShareScope
             | WorkspaceAction::OpenShareSheet
@@ -637,7 +650,11 @@ impl TypedActionView for WorkspaceView {
             }
             WorkspaceAction::OpenPullRequests | WorkspaceAction::ClosePullRequests => {
                 #[cfg(not(target_family = "wasm"))]
-                if matches!(action, WorkspaceAction::OpenPullRequests) { self.open_pull_requests(ctx); } else { self.close_pull_requests(ctx); }
+                if matches!(action, WorkspaceAction::OpenPullRequests) {
+                    self.open_pull_requests(ctx);
+                } else {
+                    self.close_pull_requests(ctx);
+                }
             }
             WorkspaceAction::OpenPullRequest { url } => {
                 #[cfg(not(target_family = "wasm"))]

@@ -2,15 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import { signInCode } from "@/lib/signInCode";
-import { 
-  CheckCircle2, 
-  Copy, 
-  ExternalLink, 
-  Check, 
-  Terminal, 
-  LogOut 
-} from "lucide-react";
-import { APP_SCHEME, appDeepLink } from "@/lib/desktopHandoff";
+import { CheckCircle2, ExternalLink } from "lucide-react";
+import { appDeepLink } from "@/lib/desktopHandoff";
 
 interface SessionControlProps {
   session: {
@@ -26,10 +19,6 @@ interface SessionControlProps {
 }
 
 export default function SessionControl({ session, scheme, state }: SessionControlProps) {
-  const [copiedToken, setCopiedToken] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
-  
   const [code, setCode] = useState("");
   const [approval, setApproval] = useState<"idle" | "busy" | "done" | "error">("idle");
   const [approvalError, setApprovalError] = useState("");
@@ -66,51 +55,13 @@ export default function SessionControl({ session, scheme, state }: SessionContro
   // redeems with its own secret, or (older builds) the refresh token.
   const deepLinkUrl = appDeepLink({ state, code: session.code, refresh_token: refreshToken, user_id: userId });
 
-  // Print system logs and trigger deep link automatically on mount
+  // Open the app on its own shortly after sign-in; the button below does it again.
   useEffect(() => {
-    const addLog = (msg: string, delay: number) => {
-      setTimeout(() => {
-        setLogs((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-      }, delay);
-    };
-
-    addLog("Session established. Resolving credentials...", 100);
-    addLog(`User identity verified: ${userId.substring(0, 8)}...`, 500);
-    addLog(`Constructing handoff packet for ${APP_SCHEME}://...`, 900);
-    addLog("Attempting auto-launch redirect...", 1300);
-
-    // Auto-launch deep link
-    const triggerRedirect = setTimeout(() => {
-      try {
-        window.location.href = deepLinkUrl;
-        setLogs((prev) => [
-          ...prev,
-          `[${new Date().toLocaleTimeString()}] 🚀 Launch callback URL sent to browser successfully.`
-        ]);
-      } catch (err) {
-        setLogs((prev) => [
-          ...prev,
-          `[${new Date().toLocaleTimeString()}] ⚠️ Auto-launch redirect encountered browser restriction.`
-        ]);
-      }
+    const launch = setTimeout(() => {
+      window.location.href = deepLinkUrl;
     }, 1500);
-
-    return () => clearTimeout(triggerRedirect);
-  }, [deepLinkUrl, userId]);
-
-  // Copy token to clipboard
-  const handleCopyToken = () => {
-    navigator.clipboard.writeText(refreshToken);
-    setCopiedToken(true);
-    setTimeout(() => setCopiedToken(false), 2000);
-  };
-
-  // Copy link to clipboard
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(deepLinkUrl);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
-  };
+    return () => clearTimeout(launch);
+  }, [deepLinkUrl]);
 
   const triggerDeepLink = () => {
     window.location.href = deepLinkUrl;
@@ -158,73 +109,6 @@ export default function SessionControl({ session, scheme, state }: SessionContro
         >
           <span>Launch Desktop App</span>
           <ExternalLink className="w-4 h-4" />
-        </button>
-
-        <div className={`grid ${refreshToken ? "grid-cols-2" : "grid-cols-1"} gap-3`}>
-          <button
-            onClick={handleCopyLink}
-            className="py-2.5 bg-[#141414] hover:bg-[#1c1c1f] text-gray-300 hover:text-white border border-white/5 rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs"
-          >
-            {copiedLink ? <Check className="w-4 h-4 text-brand-emerald" /> : <Copy className="w-4 h-4" />}
-            <span>{copiedLink ? "Copied Link!" : "Copy Link"}</span>
-          </button>
-          
-          {refreshToken && (
-          <button
-            onClick={handleCopyToken}
-            className="py-2.5 bg-[#141414] hover:bg-[#1c1c1f] text-gray-300 hover:text-white border border-white/5 rounded-lg transition-all flex items-center justify-center gap-1.5 text-xs"
-          >
-            {copiedToken ? <Check className="w-4 h-4 text-brand-emerald" /> : <Copy className="w-4 h-4" />}
-            <span>{copiedToken ? "Copied Token!" : "Copy Token"}</span>
-          </button>
-          )}
-        </div>
-      </div>
-
-      {/* Session details */}
-      <div className="bg-[#101010] border border-white/5 rounded-xl p-4 space-y-3">
-        <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-          Session Metadata
-        </div>
-        <div className="space-y-2 text-xs">
-          <div className="flex justify-between">
-            <span className="text-gray-500">Identity:</span>
-            <span className="text-gray-300 font-mono select-all">{userId}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-500">Handoff State:</span>
-            <span className="text-gray-300 font-mono">{state.substring(0, 16)}...</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-500">Token Type:</span>
-            <span className="text-gray-300">Dragent Session JWT</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Simulator terminal logs */}
-      <div className="bg-[#080808] border border-white/5 rounded-xl p-4 font-mono text-xs">
-        <div className="flex items-center gap-2 mb-2 pb-2 border-b border-white/5 text-gray-500 text-[10px] uppercase font-bold tracking-wider">
-          <Terminal className="w-3.5 h-3.5 text-brand-cyan" />
-          <span>Handshake Logs</span>
-        </div>
-        <div className="space-y-1.5 max-h-36 overflow-y-auto text-[11px] text-gray-400">
-          {logs.map((log, index) => (
-            <div key={index} className="whitespace-pre-wrap leading-relaxed">
-              {log}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Back option */}
-      <div className="text-center">
-        <button
-          onClick={() => window.location.reload()}
-          className="text-xs text-gray-500 hover:text-gray-400 flex items-center justify-center gap-1 mx-auto transition-colors"
-        >
-          <LogOut className="w-3 h-3" />
-          <span>Return to login</span>
         </button>
       </div>
     </div>

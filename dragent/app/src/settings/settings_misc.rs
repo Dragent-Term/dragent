@@ -60,10 +60,24 @@ impl SettingsView {
                     Some("Defaults restored. Select Save changes to apply.".into());
             }
             SettingsAction::OpenPrivacyPolicy => {
-                ctx.dispatch_typed_action_deferred(crate::workspace::WorkspaceAction::OpenExternalUrl { url: "https://dragent.dev/privacy".into() });
+                ctx.dispatch_typed_action_deferred(
+                    crate::workspace::WorkspaceAction::OpenExternalUrl {
+                        url: "https://dragent.dev/privacy".into(),
+                    },
+                );
+            }
+            SettingsAction::StarOnGitHub => {
+                ctx.dispatch_typed_action_deferred(crate::workspace::WorkspaceAction::StarOnGitHub);
+            }
+            SettingsAction::FollowOnX => {
+                ctx.dispatch_typed_action_deferred(crate::workspace::WorkspaceAction::FollowOnX);
             }
             SettingsAction::OpenDocumentation => {
-                ctx.dispatch_typed_action_deferred(crate::workspace::WorkspaceAction::OpenExternalUrl { url: "https://dragent.dev/docs".into() });
+                ctx.dispatch_typed_action_deferred(
+                    crate::workspace::WorkspaceAction::OpenExternalUrl {
+                        url: "https://dragent.dev/docs".into(),
+                    },
+                );
             }
             SettingsAction::ResetOnboarding => {
                 reset_for_onboarding();

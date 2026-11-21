@@ -392,7 +392,8 @@ impl WorkspaceView {
                 .map(|d| d.name.clone())
                 .unwrap_or_else(|| agent_id.clone());
             let project_root = self.active_project_root();
-            let project_name = project_root.as_ref()
+            let project_name = project_root
+                .as_ref()
                 .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string));
             // A remote project lists the accounts stored on its machine
             // (cached per machine, refreshed when the picker opens).
@@ -416,14 +417,22 @@ impl WorkspaceView {
                         })
                         .unwrap_or_else(|| "System login".to_string())
                 }
-                None => registry.as_ref().and_then(|r| {
-                    let project = project_root.as_deref().and_then(|p| {
-                        dragent_host::agent_accounts::project_for(p, r).or_else(|| Some(p.to_path_buf()))
-                    });
-                    r.resolve(&agent_id, project.as_deref(), &dragent_host::agent_accounts::Selection::Inherit)
+                None => registry
+                    .as_ref()
+                    .and_then(|r| {
+                        let project = project_root.as_deref().and_then(|p| {
+                            dragent_host::agent_accounts::project_for(p, r)
+                                .or_else(|| Some(p.to_path_buf()))
+                        });
+                        r.resolve(
+                            &agent_id,
+                            project.as_deref(),
+                            &dragent_host::agent_accounts::Selection::Inherit,
+                        )
                         .ok()
                         .map(|b| b.label)
-                }).unwrap_or_else(|| "System login".to_string()),
+                    })
+                    .unwrap_or_else(|| "System login".to_string()),
             };
             let workspace_view_id = self.workspace_view_id;
 
@@ -433,19 +442,30 @@ impl WorkspaceView {
                 .with_child(
                     Expanded::new(
                         1.0,
-                        Text::new(format!("Start {agent_name}"), ui, crate::theme::text_size(19.0))
-                            .with_color(theme.main_text())
-                            .finish(),
+                        Text::new(
+                            format!("Start {agent_name}"),
+                            ui,
+                            crate::theme::text_size(19.0),
+                        )
+                        .with_color(theme.main_text())
+                        .finish(),
                     )
                     .finish(),
                 )
                 .with_child(
                     Hoverable::new(
-                        picker_mouse(&self.new_tab_picker_mouse_states, "account-pick-close".to_string()),
+                        picker_mouse(
+                            &self.new_tab_picker_mouse_states,
+                            "account-pick-close".to_string(),
+                        ),
                         move |state| {
                             Container::new(render_icon(
                                 AppIcon::XClose,
-                                if state.is_hovered() { theme.main_text() } else { theme.sub_text() },
+                                if state.is_hovered() {
+                                    theme.main_text()
+                                } else {
+                                    theme.sub_text()
+                                },
                                 14.0,
                             ))
                             .with_padding_left(8.0)
@@ -457,7 +477,10 @@ impl WorkspaceView {
                     )
                     .with_cursor(Cursor::PointingHand)
                     .on_click(move |event_ctx, _app, _pos| {
-                        event_ctx.dispatch_typed_action_for(workspace_view_id, WorkspaceAction::CloseAgentAccountPicker);
+                        event_ctx.dispatch_typed_action_for(
+                            workspace_view_id,
+                            WorkspaceAction::CloseAgentAccountPicker,
+                        );
                     })
                     .finish(),
                 )
@@ -469,28 +492,62 @@ impl WorkspaceView {
 
             // Options: project default (shows what it resolves to), System,
             // then each saved profile. Click launches immediately.
-            let mut options: Vec<(String, String, bool, dragent_host::agent_accounts::Selection)> = vec![
-                ("Project default".to_string(), format!("Currently {effective}"), true, dragent_host::agent_accounts::Selection::Inherit),
-                ("System login".to_string(), "Your current CLI sign-in — nothing to set up".to_string(), false, dragent_host::agent_accounts::Selection::System),
+            let mut options: Vec<(
+                String,
+                String,
+                bool,
+                dragent_host::agent_accounts::Selection,
+            )> = vec![
+                (
+                    "Project default".to_string(),
+                    format!("Currently {effective}"),
+                    true,
+                    dragent_host::agent_accounts::Selection::Inherit,
+                ),
+                (
+                    "System login".to_string(),
+                    "Your current CLI sign-in — nothing to set up".to_string(),
+                    false,
+                    dragent_host::agent_accounts::Selection::System,
+                ),
             ];
             if let Some(resolved) = remote.as_ref() {
                 if let Some(cache) = self.machine_account_caches.get(&resolved.machine_id) {
-                    let mut profiles: Vec<_> = cache.profiles.iter().filter(|p| p.provider == agent_id).collect();
+                    let mut profiles: Vec<_> = cache
+                        .profiles
+                        .iter()
+                        .filter(|p| p.provider == agent_id)
+                        .collect();
                     profiles.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
                     for p in profiles {
-                        let desc = if p.kind == dragent_host::agent_accounts::CredentialKind::ApiKey {
+                        let desc = if p.kind == dragent_host::agent_accounts::CredentialKind::ApiKey
+                        {
                             "API key · Saved login for this agent".to_string()
                         } else {
                             "Saved login for this agent".to_string()
                         };
-                        options.push((p.label.clone(), desc, false, dragent_host::agent_accounts::Selection::Profile(p.id)));
+                        options.push((
+                            p.label.clone(),
+                            desc,
+                            false,
+                            dragent_host::agent_accounts::Selection::Profile(p.id),
+                        ));
                     }
                 }
             } else if let Some(r) = registry.as_ref() {
-                let mut profiles: Vec<_> = r.profiles.iter().filter(|p| p.provider == agent_id).collect();
+                let mut profiles: Vec<_> = r
+                    .profiles
+                    .iter()
+                    .filter(|p| p.provider == agent_id)
+                    .collect();
                 profiles.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
                 for p in profiles {
-                    options.push((p.label.clone(), "Saved login for this agent".to_string(), false, dragent_host::agent_accounts::Selection::Profile(p.id)));
+                    options.push((
+                        p.label.clone(),
+                        "Saved login for this agent".to_string(),
+                        false,
+                        dragent_host::agent_accounts::Selection::Profile(p.id),
+                    ));
                 }
             }
             let mut list = Flex::column()
@@ -498,14 +555,26 @@ impl WorkspaceView {
                 .with_main_axis_size(MainAxisSize::Min);
             for (i, (label, desc, is_default, selection)) in options.into_iter().enumerate() {
                 if i > 0 {
-                    list = list.with_child(Container::new(Empty::new().finish())
-                        .with_border(Border::top(1.0).with_border_color(theme.outline()))
-                        .finish());
+                    list = list.with_child(
+                        Container::new(Empty::new().finish())
+                            .with_border(Border::top(1.0).with_border_color(theme.outline()))
+                            .finish(),
+                    );
                 }
-                let ms = picker_mouse(&self.new_tab_picker_mouse_states, format!("account-pick-{agent_id}-{i}"));
+                let ms = picker_mouse(
+                    &self.new_tab_picker_mouse_states,
+                    format!("account-pick-{agent_id}-{i}"),
+                );
                 list = list.with_child(account_option_row(
-                    theme, ui, self.workspace_view_id, ms,
-                    &agent_id, &label, &desc, is_default, selection,
+                    theme,
+                    ui,
+                    self.workspace_view_id,
+                    ms,
+                    &agent_id,
+                    &label,
+                    &desc,
+                    is_default,
+                    selection,
                 ));
             }
             let options_card = Container::new(list.finish())
@@ -542,9 +611,13 @@ impl WorkspaceView {
                 .with_child(
                     Shrinkable::new(
                         1.0,
-                        Text::new("Typing the command by hand always uses System login.".to_string(), ui, crate::theme::text_size(11.0))
-                            .with_color(theme.disabled_text())
-                            .finish(),
+                        Text::new(
+                            "Typing the command by hand always uses System login.".to_string(),
+                            ui,
+                            crate::theme::text_size(11.0),
+                        )
+                        .with_color(theme.disabled_text())
+                        .finish(),
                     )
                     .finish(),
                 )
@@ -554,12 +627,23 @@ impl WorkspaceView {
                         .with_spacing(10.0)
                         .with_child(
                             Hoverable::new(
-                                picker_mouse(&self.new_tab_picker_mouse_states, "account-pick-cancel".to_string()),
+                                picker_mouse(
+                                    &self.new_tab_picker_mouse_states,
+                                    "account-pick-cancel".to_string(),
+                                ),
                                 move |state| {
                                     Container::new(
-                                        Text::new("Cancel".to_string(), ui, crate::theme::text_size(13.0))
-                                            .with_color(if state.is_hovered() { theme.main_text() } else { theme.sub_text() })
-                                            .finish(),
+                                        Text::new(
+                                            "Cancel".to_string(),
+                                            ui,
+                                            crate::theme::text_size(13.0),
+                                        )
+                                        .with_color(if state.is_hovered() {
+                                            theme.main_text()
+                                        } else {
+                                            theme.sub_text()
+                                        })
+                                        .finish(),
                                     )
                                     .with_padding_left(12.0)
                                     .with_padding_right(12.0)
@@ -570,29 +654,49 @@ impl WorkspaceView {
                             )
                             .with_cursor(Cursor::PointingHand)
                             .on_click(move |event_ctx, _app, _pos| {
-                                event_ctx.dispatch_typed_action_for(footer_view, WorkspaceAction::CloseAgentAccountPicker);
+                                event_ctx.dispatch_typed_action_for(
+                                    footer_view,
+                                    WorkspaceAction::CloseAgentAccountPicker,
+                                );
                             })
                             .finish(),
                         )
                         .with_child({
                             let footer_view = self.workspace_view_id;
                             Hoverable::new(
-                                picker_mouse(&self.new_tab_picker_mouse_states, "account-pick-manage".to_string()),
+                                picker_mouse(
+                                    &self.new_tab_picker_mouse_states,
+                                    "account-pick-manage".to_string(),
+                                ),
                                 move |state| {
                                     Container::new(
                                         Flex::row()
                                             .with_cross_axis_alignment(CrossAxisAlignment::Center)
                                             .with_spacing(8.0)
-                                            .with_child(render_icon(AppIcon::Settings, theme.main_text(), 14.0))
+                                            .with_child(render_icon(
+                                                AppIcon::Settings,
+                                                theme.main_text(),
+                                                14.0,
+                                            ))
                                             .with_child(
-                                                Text::new("Manage accounts".to_string(), ui, crate::theme::text_size(13.0))
-                                                    .with_color(theme.main_text())
-                                                    .finish(),
+                                                Text::new(
+                                                    "Manage accounts".to_string(),
+                                                    ui,
+                                                    crate::theme::text_size(13.0),
+                                                )
+                                                .with_color(theme.main_text())
+                                                .finish(),
                                             )
                                             .finish(),
                                     )
-                                    .with_background_color(if state.is_hovered() { theme.surface_3() } else { theme.surface_2() })
-                                    .with_border(Border::all(1.0).with_border_color(theme.outline()))
+                                    .with_background_color(if state.is_hovered() {
+                                        theme.surface_3()
+                                    } else {
+                                        theme.surface_2()
+                                    })
+                                    .with_border(
+                                        Border::all(1.0).with_border_color(theme.outline()),
+                                    )
                                     .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.0)))
                                     .with_padding_left(12.0)
                                     .with_padding_right(12.0)
@@ -609,7 +713,12 @@ impl WorkspaceView {
                                 // on top with Agent Accounts selected. The old
                                 // Close+Open double dispatch could drop the
                                 // second action and leave Settings closed.
-                                event_ctx.dispatch_typed_action_for(footer_view, WorkspaceAction::OpenSettingsSection(crate::settings::SettingsSection::AgentAccounts));
+                                event_ctx.dispatch_typed_action_for(
+                                    footer_view,
+                                    WorkspaceAction::OpenSettingsSection(
+                                        crate::settings::SettingsSection::AgentAccounts,
+                                    ),
+                                );
                             })
                             .finish()
                         })
@@ -621,26 +730,30 @@ impl WorkspaceView {
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .with_spacing(12.0)
                 .with_child(header)
-                .with_child(Text::new(subtitle, ui, crate::theme::text_size(13.0)).with_color(theme.sub_text()).finish())
+                .with_child(
+                    Text::new(subtitle, ui, crate::theme::text_size(13.0))
+                        .with_color(theme.sub_text())
+                        .finish(),
+                )
                 .with_child(options_card);
             if let Some(status) = remote_status {
                 picker_column = picker_column.with_child(
-                    Text::new(status, ui, crate::theme::text_size(12.0)).with_color(theme.sub_text()).finish(),
+                    Text::new(status, ui, crate::theme::text_size(12.0))
+                        .with_color(theme.sub_text())
+                        .finish(),
                 );
             }
             picker_column = picker_column.with_child(footer);
             let modal = ConstrainedBox::new(
-                Container::new(
-                    picker_column.finish(),
-                )
-                .with_padding_left(24.0)
-                .with_padding_right(24.0)
-                .with_padding_top(20.0)
-                .with_padding_bottom(20.0)
-                .with_background_color(theme.surface_1())
-                .with_border(Border::all(1.0).with_border_color(theme.outline()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.0)))
-                .finish(),
+                Container::new(picker_column.finish())
+                    .with_padding_left(24.0)
+                    .with_padding_right(24.0)
+                    .with_padding_top(20.0)
+                    .with_padding_bottom(20.0)
+                    .with_background_color(theme.surface_1())
+                    .with_border(Border::all(1.0).with_border_color(theme.outline()))
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.0)))
+                    .finish(),
             )
             .with_width(480.0)
             .finish();
@@ -652,7 +765,10 @@ impl WorkspaceView {
                 .finish();
             let scrim = EventHandler::new(scrim)
                 .on_left_mouse_down(move |event_ctx, _app, _pos| {
-                    event_ctx.dispatch_typed_action_for(workspace_view_id, WorkspaceAction::CloseAgentAccountPicker);
+                    event_ctx.dispatch_typed_action_for(
+                        workspace_view_id,
+                        WorkspaceAction::CloseAgentAccountPicker,
+                    );
                     DispatchEventResult::StopPropagation
                 })
                 .finish();
@@ -698,20 +814,51 @@ impl WorkspaceView {
             root
         };
 
-        #[cfg(not(target_family="wasm"))]
-        let root: Box<dyn Element> = if let Some(review)=&self.review_setup {
-            let modal=super::project_prompt::render_review_setup(self.workspace_view_id,&theme,ui,
-                &self.new_tab_picker_mouse_states,review,&self.review_instructions_editor,self.prompt_agent,
-                &crate::teams::models::display_label(self.prompt_agent,self.prompt_lead_model.as_deref(),app),
-                self.project_start_busy,self.project_start_error.as_deref());
-            let id=self.workspace_view_id;
-            let scrim=EventHandler::new(Container::new(Align::new(Empty::new().finish()).finish())
-                .with_background_color(ColorU::new(0,0,0,150)).finish())
-                .on_left_mouse_down(move |ctx,_,_| {ctx.dispatch_typed_action_for(id,WorkspaceAction::CancelReviewSetup);DispatchEventResult::StopPropagation}).finish();
-            let mut stack=Stack::new().with_child(root);stack.add_overlay_child(scrim);
-            stack.with_positioned_overlay_child(modal,OffsetPositioning::offset_from_parent(
-                warpui::geometry::vector::vec2f(0.0,0.0),ParentOffsetBounds::WindowByPosition,ParentAnchor::Center,ChildAnchor::Center)).finish()
-        } else {root};
+        #[cfg(not(target_family = "wasm"))]
+        let root: Box<dyn Element> = if let Some(review) = &self.review_setup {
+            let modal = super::project_prompt::render_review_setup(
+                self.workspace_view_id,
+                &theme,
+                ui,
+                &self.new_tab_picker_mouse_states,
+                review,
+                &self.review_instructions_editor,
+                self.prompt_agent,
+                &crate::teams::models::display_label(
+                    self.prompt_agent,
+                    self.prompt_lead_model.as_deref(),
+                    app,
+                ),
+                self.project_start_busy,
+                self.project_start_error.as_deref(),
+            );
+            let id = self.workspace_view_id;
+            let scrim = EventHandler::new(
+                Container::new(Align::new(Empty::new().finish()).finish())
+                    .with_background_color(ColorU::new(0, 0, 0, 150))
+                    .finish(),
+            )
+            .on_left_mouse_down(move |ctx, _, _| {
+                ctx.dispatch_typed_action_for(id, WorkspaceAction::CancelReviewSetup);
+                DispatchEventResult::StopPropagation
+            })
+            .finish();
+            let mut stack = Stack::new().with_child(root);
+            stack.add_overlay_child(scrim);
+            stack
+                .with_positioned_overlay_child(
+                    modal,
+                    OffsetPositioning::offset_from_parent(
+                        warpui::geometry::vector::vec2f(0.0, 0.0),
+                        ParentOffsetBounds::WindowByPosition,
+                        ParentAnchor::Center,
+                        ChildAnchor::Center,
+                    ),
+                )
+                .finish()
+        } else {
+            root
+        };
 
         // Prompt-screen dropdown menus (agent / device / worktree / branch).
         let root: Box<dyn Element> = if let Some(menu) = self.prompt_menu {
@@ -719,7 +866,10 @@ impl WorkspaceView {
             let machine = self.machine_agents(self.prompt_context_root().as_deref(), app);
             let (installed_agents, agent_checking) = match &machine {
                 Some(machine) => (machine.agents(), !machine.checked),
-                None => (self.prompt_installed_agents.clone(), self.prompt_agent_checking),
+                None => (
+                    self.prompt_installed_agents.clone(),
+                    self.prompt_agent_checking,
+                ),
             };
             let card = super::project_prompt::render_prompt_menu(
                 self.workspace_view_id,
@@ -729,10 +879,19 @@ impl WorkspaceView {
                 &self.prompt_menu_scroll,
                 menu,
                 self.prompt_agent,
-                (self.prompt_team, &self.prompt_team_agents, self.prompt_team_cost),
+                (
+                    self.prompt_team,
+                    &self.prompt_team_agents,
+                    self.prompt_team_cost,
+                ),
                 &crate::teams::models::choices(self.prompt_agent, app),
                 self.prompt_lead_model.as_deref(),
-                Some(crate::teams::models::prompt_panel(self.prompt_agent, &installed_agents, app, self.prompt_model_tab)),
+                Some(crate::teams::models::prompt_panel(
+                    self.prompt_agent,
+                    &installed_agents,
+                    app,
+                    self.prompt_model_tab,
+                )),
                 &installed_agents,
                 agent_checking,
                 &self
@@ -796,10 +955,25 @@ impl WorkspaceView {
             };
             let offset = OffsetPositioning::offset_from_save_position_element(
                 anchor,
-                warpui::geometry::vector::vec2f(0.0, if menu == super::action::PromptMenu::LeadModel { -6.0 } else { 6.0 }),
+                warpui::geometry::vector::vec2f(
+                    0.0,
+                    if menu == super::action::PromptMenu::LeadModel {
+                        -6.0
+                    } else {
+                        6.0
+                    },
+                ),
                 PositionedElementOffsetBounds::WindowByPosition,
-                if menu == super::action::PromptMenu::LeadModel { PositionedElementAnchor::TopRight } else { PositionedElementAnchor::BottomLeft },
-                if menu == super::action::PromptMenu::LeadModel { ChildAnchor::BottomRight } else { ChildAnchor::TopLeft },
+                if menu == super::action::PromptMenu::LeadModel {
+                    PositionedElementAnchor::TopRight
+                } else {
+                    PositionedElementAnchor::BottomLeft
+                },
+                if menu == super::action::PromptMenu::LeadModel {
+                    ChildAnchor::BottomRight
+                } else {
+                    ChildAnchor::TopLeft
+                },
             );
             Box::new(
                 Stack::new()
@@ -818,8 +992,18 @@ impl WorkspaceView {
         const AGENT_INSTALL: &str =
             "Dragent runs the agent's official installer in this embedded terminal. You can watch its output here.";
         // (heading, subject, description, checking, retry with sudo)
-        let install: Option<(String, String, String, bool, bool)> = if let Some((title, description)) = &self.page_command {
-            Some((title.clone(), String::new(), description.clone(), false, false))
+        let install: Option<(String, String, String, bool, bool)> = if let Some((
+            title,
+            description,
+        )) = &self.page_command
+        {
+            Some((
+                title.clone(),
+                String::new(),
+                description.clone(),
+                false,
+                false,
+            ))
         } else if let Some(remote) = &self.remote_tool_install {
             let subject = remote
                 .job
@@ -840,53 +1024,68 @@ impl WorkspaceView {
             ))
         } else if let Some(agent) = self.prompt_install_agent {
             let label = agent.label().to_string();
-            Some((format!("Install {label}"), label, AGENT_INSTALL.to_string(), self.prompt_agent_checking, false))
+            Some((
+                format!("Install {label}"),
+                label,
+                AGENT_INSTALL.to_string(),
+                self.prompt_agent_checking,
+                false,
+            ))
         } else {
             self.custom_install_agent.as_ref().map(|custom| {
                 let label = custom.name.clone();
-                (format!("Install {label}"), label, AGENT_INSTALL.to_string(), self.prompt_agent_checking, false)
+                (
+                    format!("Install {label}"),
+                    label,
+                    AGENT_INSTALL.to_string(),
+                    self.prompt_agent_checking,
+                    false,
+                )
             })
         };
-        let root: Box<dyn Element> = if let Some((heading, subject, description, checking, retry)) = install {
-            let modal = super::project_prompt::render_embedded_terminal_modal(
-                self.workspace_view_id,
-                &theme,
-                ui,
-                &self.new_tab_picker_mouse_states,
-                &heading,
-                &subject,
-                &description,
-                self.prompt_install_terminal.as_ref().map(|terminal| ChildView::new(terminal).finish()),
-                checking,
-                self.prompt_install_error.as_deref(),
-                retry,
-                self.page_command.is_none(),
-            );
-            let workspace_view_id = self.workspace_view_id;
-            let scrim = Container::new(Align::new(Empty::new().finish()).finish())
-                .with_background_color(ColorU::new(0, 0, 0, 150))
-                .finish();
-            let scrim = EventHandler::new(scrim)
-                .on_left_mouse_down(move |event_ctx, _app, _pos| {
-                    event_ctx.dispatch_typed_action_for(
-                        workspace_view_id,
-                        WorkspaceAction::ClosePromptAgentInstall,
-                    );
-                    DispatchEventResult::StopPropagation
-                })
-                .finish();
-            let offset = OffsetPositioning::offset_from_parent(
-                warpui::geometry::vector::vec2f(0.0, 0.0),
-                ParentOffsetBounds::WindowByPosition,
-                ParentAnchor::Center,
-                ChildAnchor::Center,
-            );
-            let mut stack = Stack::new().with_child(root);
-            stack.add_overlay_child(scrim);
-            Box::new(stack.with_positioned_overlay_child(modal, offset))
-        } else {
-            root
-        };
+        let root: Box<dyn Element> =
+            if let Some((heading, subject, description, checking, retry)) = install {
+                let modal = super::project_prompt::render_embedded_terminal_modal(
+                    self.workspace_view_id,
+                    &theme,
+                    ui,
+                    &self.new_tab_picker_mouse_states,
+                    &heading,
+                    &subject,
+                    &description,
+                    self.prompt_install_terminal
+                        .as_ref()
+                        .map(|terminal| ChildView::new(terminal).finish()),
+                    checking,
+                    self.prompt_install_error.as_deref(),
+                    retry,
+                    self.page_command.is_none(),
+                );
+                let workspace_view_id = self.workspace_view_id;
+                let scrim = Container::new(Align::new(Empty::new().finish()).finish())
+                    .with_background_color(ColorU::new(0, 0, 0, 150))
+                    .finish();
+                let scrim = EventHandler::new(scrim)
+                    .on_left_mouse_down(move |event_ctx, _app, _pos| {
+                        event_ctx.dispatch_typed_action_for(
+                            workspace_view_id,
+                            WorkspaceAction::ClosePromptAgentInstall,
+                        );
+                        DispatchEventResult::StopPropagation
+                    })
+                    .finish();
+                let offset = OffsetPositioning::offset_from_parent(
+                    warpui::geometry::vector::vec2f(0.0, 0.0),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::Center,
+                    ChildAnchor::Center,
+                );
+                let mut stack = Stack::new().with_child(root);
+                stack.add_overlay_child(scrim);
+                Box::new(stack.with_positioned_overlay_child(modal, offset))
+            } else {
+                root
+            };
 
         // Git-init confirm: the picked folder is not a checkout yet.
         let root: Box<dyn Element> = if let Some(pending) = self.pending_git_init_root.clone() {
@@ -1072,21 +1271,23 @@ impl WorkspaceView {
         #[cfg(not(target_family = "wasm"))]
         let root = if self.past_sessions_open {
             let mut stack = Stack::new().with_child(root);
-            stack.add_overlay_child(super::past_sessions::past_sessions_overlay(super::past_sessions::PastSessionsProps {
-                sessions: &self.past_sessions,
-                loading: self.past_sessions_loading,
-                theme: &theme,
-                ui,
-                view_id: self.workspace_view_id,
-                states: &self.header_mouse_states,
-                scroll: &self.past_sessions_scroll,
-                search_editor: &self.past_sessions_search_editor,
-                search: &self.past_sessions_search,
-                confirm: self.past_sessions_confirm,
-                busy: self.past_sessions_busy.as_deref(),
-                note: self.past_sessions_note.as_deref(),
-                reclaimable: &self.past_sessions_reclaimable,
-            }));
+            stack.add_overlay_child(super::past_sessions::past_sessions_overlay(
+                super::past_sessions::PastSessionsProps {
+                    sessions: &self.past_sessions,
+                    loading: self.past_sessions_loading,
+                    theme: &theme,
+                    ui,
+                    view_id: self.workspace_view_id,
+                    states: &self.header_mouse_states,
+                    scroll: &self.past_sessions_scroll,
+                    search_editor: &self.past_sessions_search_editor,
+                    search: &self.past_sessions_search,
+                    confirm: self.past_sessions_confirm,
+                    busy: self.past_sessions_busy.as_deref(),
+                    note: self.past_sessions_note.as_deref(),
+                    reclaimable: &self.past_sessions_reclaimable,
+                },
+            ));
             stack.finish()
         } else {
             root
@@ -1126,7 +1327,10 @@ impl WorkspaceView {
         // Header usage popover, anchored under the Usage button.
         #[cfg(not(target_family = "wasm"))]
         let root = if self.usage_menu_open {
-            let agents = super::header_usage::popover_agents(&self.prompt_installed_agents, &self.agent_usage);
+            let agents = super::header_usage::popover_agents(
+                &self.prompt_installed_agents,
+                &self.agent_usage,
+            );
             let (menu, catcher, offset) = super::header_usage::usage_menu_overlay(
                 &agents,
                 self.usage_menu_agent,
@@ -1575,11 +1779,14 @@ impl WorkspaceView {
         };
 
         let root = if self.login_prompt_open {
+            let auth = crate::auth::AuthManager::handle(app);
+            let pending_code = app.read_model(&auth, |a, _| a.pending_sign_in_code());
             let prompt = super::auth_modals::render_login_prompt(
                 &theme,
                 self.ui_font,
                 self.workspace_view_id,
                 &self.new_tab_picker_mouse_states,
+                pending_code.as_deref(),
             );
             {
                 let mut stack = Stack::new().with_child(root);
@@ -1693,15 +1900,23 @@ fn account_option_row(
                             .with_cross_axis_alignment(CrossAxisAlignment::Start)
                             .with_main_axis_size(MainAxisSize::Min)
                             .with_child(
-                                Text::new(label_owned.clone(), ui_font, crate::theme::text_size(13.5))
-                                    .with_color(theme.main_text())
-                                    .finish(),
+                                Text::new(
+                                    label_owned.clone(),
+                                    ui_font,
+                                    crate::theme::text_size(13.5),
+                                )
+                                .with_color(theme.main_text())
+                                .finish(),
                             )
                             .with_child(
                                 Container::new(
-                                    Text::new(desc_owned.clone(), ui_font, crate::theme::text_size(12.0))
-                                        .with_color(theme.sub_text())
-                                        .finish(),
+                                    Text::new(
+                                        desc_owned.clone(),
+                                        ui_font,
+                                        crate::theme::text_size(12.0),
+                                    )
+                                    .with_color(theme.sub_text())
+                                    .finish(),
                                 )
                                 .with_padding_top(2.0)
                                 .finish(),
@@ -1713,9 +1928,13 @@ fn account_option_row(
             if is_default {
                 row = row.with_child(
                     Container::new(
-                        Text::new("Default".to_string(), ui_font, crate::theme::text_size(11.0))
-                            .with_color(theme.accent)
-                            .finish(),
+                        Text::new(
+                            "Default".to_string(),
+                            ui_font,
+                            crate::theme::text_size(11.0),
+                        )
+                        .with_color(theme.accent)
+                        .finish(),
                     )
                     .with_background_color(theme.accent_bg())
                     .with_corner_radius(CornerRadius::with_all(Radius::Pixels(5.0)))
@@ -1739,7 +1958,10 @@ fn account_option_row(
         .on_click(move |ctx, _, _| {
             ctx.dispatch_typed_action_for(
                 view_id,
-                WorkspaceAction::OpenAgentWithAccount { agent_id: agent_owned.clone(), account: selection.clone() },
+                WorkspaceAction::OpenAgentWithAccount {
+                    agent_id: agent_owned.clone(),
+                    account: selection.clone(),
+                },
             );
         }),
     )

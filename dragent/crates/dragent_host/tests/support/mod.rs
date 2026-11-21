@@ -244,7 +244,8 @@ pub fn helper() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_dragent-host"))
 }
 pub fn wait<T>(mut f: impl FnMut() -> Option<T>) -> T {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // Generous: loaded CI runners take well over 15 s to start agents.
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if let Some(value) = f() {
             return value;

@@ -55,7 +55,9 @@ impl Isolated {
             }
             previous.push((name, std::env::var_os(name)));
             // SAFETY: tests serialize on a global lock.
-            unsafe { std::env::set_var(name, path); }
+            unsafe {
+                std::env::set_var(name, path);
+            }
         }
         Self {
             _guard: guard,
@@ -168,6 +170,15 @@ fn colour_queries_answer_in_order_and_scheme_flips_reach_the_app() {
     client
         .set_terminal_colors("ws-colours", &session.id, light)
         .unwrap();
+    // Start it only once the script runs (the shell reports it), or the
+    // shell takes "go" itself and every read in the script times out.
+    assert!(wait_for(Duration::from_secs(20), || tail(
+        &client,
+        "ws-colours",
+        &session.id
+    )
+    .contains("7979;preexec;bash -c")));
+    std::thread::sleep(Duration::from_millis(500));
     client
         .send_terminal_input("ws-colours", &session.id, b"go\n")
         .unwrap();
@@ -175,18 +186,26 @@ fn colour_queries_answer_in_order_and_scheme_flips_reach_the_app() {
     client
         .set_terminal_colors("ws-colours", &session.id, TerminalColors::default())
         .unwrap();
+    // The script's own report, not the command line echoing its format
+    // string (which also contains "GOT[%q]…END").
+    let reported = |output: &str| {
+        output
+            .match_indices("GOT[")
+            .any(|(at, _)| !output[at..].starts_with("GOT[%q]") && output[at..].contains("END"))
+    };
     assert!(
-        wait_for(Duration::from_secs(20), || tail(
+        wait_for(Duration::from_secs(20), || reported(&tail(
             &client,
             "ws-colours",
             &session.id
-        )
-        .contains("END")),
+        ))),
         "output: {:?}",
         tail(&client, "ws-colours", &session.id)
     );
     let output = tail(&client, "ws-colours", &session.id);
-    let colour = output.find("rgb:fafa/fafa/fafa").expect("colour answer");
+    let colour = output
+        .find("rgb:fafa/fafa/fafa")
+        .unwrap_or_else(|| panic!("colour answer missing: {output:?}"));
     let marker = output[colour..].find("[?6").expect("marker after colour");
     assert!(marker > 0, "{output:?}");
     assert!(output.contains("?997;1"), "{output:?}");
@@ -294,12 +313,10 @@ fn lifecycle_round_trip() {
     let listed = client.list_terminals("ws-life").expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, sess.id);
-    assert!(
-        client
-            .list_terminals("ws-foreign")
-            .expect("list")
-            .is_empty()
-    );
+    assert!(client
+        .list_terminals("ws-foreign")
+        .expect("list")
+        .is_empty());
     assert!(client.terminal("ws-foreign", &sess.id).is_err());
     assert!(client.read_terminal("ws-foreign", &sess.id, None).is_err());
 
@@ -324,17 +341,13 @@ fn cwd_containment_unknown_home_initial_command() {
         .expect_err("outside cwd must be rejected");
     assert!(err.contains("inside"), "unexpected: {err}");
     // Unknown and foreign homes are gated as unknown worktrees.
-    assert!(
-        client
-            .create_terminal("ws-cwd", "wt-does-not-exist", None, None, 80, 24)
-            .is_err()
-    );
-    assert!(
-        client
-            .create_terminal("ws-foreign", &home.id, None, None, 80, 24)
-            .expect_err("foreign home must be gated")
-            .contains("unknown worktree")
-    );
+    assert!(client
+        .create_terminal("ws-cwd", "wt-does-not-exist", None, None, 80, 24)
+        .is_err());
+    assert!(client
+        .create_terminal("ws-foreign", &home.id, None, None, 80, 24)
+        .expect_err("foreign home must be gated")
+        .contains("unknown worktree"));
 
     // Initial command runs without a separate send.
     let sess = client
@@ -372,11 +385,9 @@ fn exit_leaves_history_and_rejects_input() {
     );
     assert!(client.list_terminals("ws-exit").expect("list").is_empty());
     // ... dead shells reject input ...
-    assert!(
-        client
-            .send_terminal_input("ws-exit", &sess.id, b"echo nope\n")
-            .is_err()
-    );
+    assert!(client
+        .send_terminal_input("ws-exit", &sess.id, b"echo nope\n")
+        .is_err());
     // ... and the history keeps the exit code and the final output.
     let (record, tail) = client
         .read_session_history(&sess.id, 64 * 1024)
@@ -426,6 +437,21 @@ fn delta_read_since_zero_then_since_total() {
     );
     assert_eq!(base, 0);
     assert!(total > 0);
+    // The shell may still be drawing its next prompt: wait until the output
+    // stops growing, so `total` is the end of the stream.
+    let mut settled = 0;
+    while settled < 3 {
+        std::thread::sleep(Duration::from_millis(150));
+        let (_, _, now) = client
+            .read_terminal_since("ws-delta", &sess.id, 0, 1024 * 1024)
+            .expect("read");
+        if now == total {
+            settled += 1;
+        } else {
+            total = now;
+            settled = 0;
+        }
+    }
     // Since-total returns an empty delta anchored at total.
     let (data, b, t) = client
         .read_terminal_since("ws-delta", &sess.id, total, 1024 * 1024)
@@ -446,16 +472,12 @@ fn delta_read_since_zero_then_since_total() {
         "delta-2 missing"
     );
     // Unknown sessions and foreign workspaces error.
-    assert!(
-        client
-            .read_terminal_since("ws-delta", "term-nope", 0, 100)
-            .is_err()
-    );
-    assert!(
-        client
-            .read_terminal_since("ws-foreign", &sess.id, 0, 100)
-            .is_err()
-    );
+    assert!(client
+        .read_terminal_since("ws-delta", "term-nope", 0, 100)
+        .is_err());
+    assert!(client
+        .read_terminal_since("ws-foreign", &sess.id, 0, 100)
+        .is_err());
     client.close_terminal("ws-delta", &sess.id).expect("close");
 }
 
@@ -511,20 +533,23 @@ fn daemon_screen_without_ui_tracks_alternate_screen_and_resize() {
             24,
         )
         .unwrap();
-    assert!(wait_for(Duration::from_secs(20), || {
-        client
-            .read_terminal_screen("ws-screen", &session.id)
-            .is_ok_and(|screen| {
-                screen.alternate_screen
-                    && screen
-                        .lines
-                        .iter()
-                        .flat_map(|r| &r.spans)
-                        .any(|span| span.text.contains("DAEMON-SCREEN"))
-            })
-    }), "screen: {:?}; output: {:?}",
+    assert!(
+        wait_for(Duration::from_secs(20), || {
+            client
+                .read_terminal_screen("ws-screen", &session.id)
+                .is_ok_and(|screen| {
+                    screen.alternate_screen
+                        && screen
+                            .lines
+                            .iter()
+                            .flat_map(|r| &r.spans)
+                            .any(|span| span.text.contains("DAEMON-SCREEN"))
+                })
+        }),
+        "screen: {:?}; output: {:?}",
         client.read_terminal_screen("ws-screen", &session.id),
-        tail(&client, "ws-screen", &session.id));
+        tail(&client, "ws-screen", &session.id)
+    );
     let screen = client
         .read_terminal_screen("ws-screen", &session.id)
         .unwrap();
@@ -538,11 +563,9 @@ fn daemon_screen_without_ui_tracks_alternate_screen_and_resize() {
         raw.total >= screen.output_offset,
         "snapshot must not lead published output"
     );
-    assert!(
-        client
-            .read_terminal_screen("foreign-workspace", &session.id)
-            .is_err()
-    );
+    assert!(client
+        .read_terminal_screen("foreign-workspace", &session.id)
+        .is_err());
     assert!(client.read_terminal_screen("ws-screen", "missing").is_err());
     client
         .resize_terminal("ws-screen", &session.id, 100, 30)

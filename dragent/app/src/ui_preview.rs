@@ -17,50 +17,82 @@ use warpui::fonts::{Cache as FontCache, FamilyId};
 use warpui::geometry::vector::vec2f;
 use warpui::platform::{CapturedFrame, WindowBounds};
 use warpui::{
-    AppContext, Entity, EntityId, ReadView, SingletonEntity, TypedActionView, UpdateView, View, ViewContext,
-    ViewHandle, WindowId,
+    AppContext, Entity, EntityId, ReadView, SingletonEntity, TypedActionView, UpdateView, View,
+    ViewContext, ViewHandle, WindowId,
 };
 use warpui_core::elements::MouseStateHandle;
 
 use crate::integrations::{Provider, Source, Status};
 use crate::settings::integrations::IntegrationsState;
-use crate::settings::SettingsSection;
 use crate::settings::pages::integrations::{dialog, page, Model};
+use crate::settings::SettingsSection;
 use crate::theme::Theme;
 use crate::workspace::{InputEditor, InputMode, LinkKind, PromptAgent, PromptLink, PromptMenu};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Scene {
     /// The navbar's notification badge and popover.
-    NotificationBell { all_read: bool },
-    WorkspaceActivity { dark: bool },
-    CoordinationSidebar { dark: bool },
+    NotificationBell {
+        all_read: bool,
+    },
+    WorkspaceActivity {
+        dark: bool,
+    },
+    CoordinationSidebar {
+        dark: bool,
+    },
     /// The chat's effort slider at several levels.
-    EffortSlider { dark: bool },
+    EffortSlider {
+        dark: bool,
+    },
     /// The current sidebar, for the marketing site's Codex clip.
     MarketingSidebar,
-    HoverCard { dark: bool },
+    HoverCard {
+        dark: bool,
+    },
     /// The header usage popover on one agent's tab (0 Claude, 1 Codex, 2 OpenCode).
     UsagePopover(usize),
-    AgentTranscript { narrow: bool },
+    AgentTranscript {
+        narrow: bool,
+    },
     PullRequests(usize),
-    CommandTerminal { remote: bool },
+    CommandTerminal {
+        remote: bool,
+    },
     /// A terminal pane a phone has sized, under its cover.
-    PhoneCover { dark: bool, held: bool },
+    PhoneCover {
+        dark: bool,
+        held: bool,
+    },
     ReviewSetup,
-    ComputerAsk { dark: bool },
+    ComputerAsk {
+        dark: bool,
+    },
     OpenReviewWorkspace,
-    Page { dark: bool },
+    Page {
+        dark: bool,
+    },
     Dialog(Provider),
     AddMenu,
     Results,
-    NewTabMenu { dark: bool },
-    Teams { dark: bool },
+    NewTabMenu {
+        dark: bool,
+    },
+    Teams {
+        dark: bool,
+    },
     /// The Tasks page with sample tasks.
-    Tasks { dark: bool, board: bool, tracker: bool },
+    Tasks {
+        dark: bool,
+        board: bool,
+        tracker: bool,
+    },
     TeamsActivity,
     /// The coordination's Board; `adding` opens the new-task form.
-    TeamsBoard { dark: bool, adding: bool },
+    TeamsBoard {
+        dark: bool,
+        adding: bool,
+    },
     /// The Board while the lead writes the plan (no tasks yet).
     TeamsPlanning,
     TeamsMessage,
@@ -76,71 +108,143 @@ enum Scene {
     LeadModelMenu,
     TaskModelMenu,
     Demo(demo::DemoScene),
-    CoordinationComposer { narrow: bool, solo: bool },
-    GitSetup { gitlab: bool, connected: bool },
+    CoordinationComposer {
+        narrow: bool,
+        solo: bool,
+    },
+    GitSetup {
+        gitlab: bool,
+        connected: bool,
+        signing_in: bool,
+    },
 }
 
 const SCENES: &[(&str, Scene)] = &[
-    ("workspace_activity_dark", Scene::WorkspaceActivity { dark: true }),
-    ("workspace_activity_light", Scene::WorkspaceActivity { dark: false }),
+    (
+        "workspace_activity_dark",
+        Scene::WorkspaceActivity { dark: true },
+    ),
+    (
+        "workspace_activity_light",
+        Scene::WorkspaceActivity { dark: false },
+    ),
     ("marketing_sidebar", Scene::MarketingSidebar),
     ("effort_slider_dark", Scene::EffortSlider { dark: true }),
     ("effort_slider_light", Scene::EffortSlider { dark: false }),
-    ("coordination_sidebar_dark", Scene::CoordinationSidebar { dark: true }),
-    ("coordination_sidebar_light", Scene::CoordinationSidebar { dark: false }),
+    (
+        "coordination_sidebar_dark",
+        Scene::CoordinationSidebar { dark: true },
+    ),
+    (
+        "coordination_sidebar_light",
+        Scene::CoordinationSidebar { dark: false },
+    ),
     ("usage_popover_claude", Scene::UsagePopover(0)),
     ("usage_popover_codex", Scene::UsagePopover(1)),
     ("usage_popover_opencode", Scene::UsagePopover(2)),
     ("hover_card_dark", Scene::HoverCard { dark: true }),
     ("hover_card_light", Scene::HoverCard { dark: false }),
-    ("pr_overview",Scene::PullRequests(0)),
-    ("pr_files",Scene::PullRequests(1)),
-    ("pr_checks",Scene::PullRequests(2)),
-    ("pr_activity",Scene::PullRequests(3)),
-    ("pr_create",Scene::PullRequests(4)),
-    ("pr_light",Scene::PullRequests(5)),
-    ("pr_empty",Scene::PullRequests(6)),
-    ("pr_narrow",Scene::PullRequests(7)),
-    ("pr_merge_confirm",Scene::PullRequests(8)),
-    ("pr_split",Scene::PullRequests(9)),
-    ("pr_draft_review",Scene::PullRequests(10)),
-    ("pr_admin_merge",Scene::PullRequests(11)),
-    ("pr_narrow_files",Scene::PullRequests(12)),
-    ("pr_ready",Scene::PullRequests(13)),
-    ("gitlab_overview",Scene::PullRequests(14)),
-    ("gitlab_files",Scene::PullRequests(15)),
-    ("gitlab_create",Scene::PullRequests(16)),
-    ("gitlab_checks",Scene::PullRequests(17)),
-    ("review_connections",Scene::PullRequests(18)),
-    ("reviews_loading",Scene::PullRequests(19)),
-    ("reviews_connection_error",Scene::PullRequests(20)),
-    ("reviews_background_refresh",Scene::PullRequests(21)),
-    ("setup_github",Scene::GitSetup{gitlab:false,connected:false}),
-    ("setup_gitlab",Scene::GitSetup{gitlab:true,connected:false}),
-    ("setup_gitlab_connected",Scene::GitSetup{gitlab:true,connected:true}),
-    ("review_overview_arriving",Scene::PullRequests(25)),
-    ("review_files_arriving",Scene::PullRequests(26)),
-    ("review_discussion_arriving",Scene::PullRequests(27)),
-    ("review_project_picker",Scene::PullRequests(28)),
-    ("review_state_picker",Scene::PullRequests(29)),
-    ("review_filter_picker",Scene::PullRequests(30)),
-    ("review_branch_picker",Scene::PullRequests(31)),
-    ("review_merge_picker",Scene::PullRequests(32)),
-    ("review_narrow_picker",Scene::PullRequests(33)),
-    ("review_merged_activity",Scene::PullRequests(34)),
-    ("review_merged_line_comment",Scene::PullRequests(35)),
-    ("pr_create_choose_source",Scene::PullRequests(36)),
-    ("review_source_picker",Scene::PullRequests(37)),
-    ("review_template_picker",Scene::PullRequests(38)),
-    ("pr_create_preview",Scene::PullRequests(39)),
-    ("pr_check_log",Scene::PullRequests(40)),
-    ("review_login_terminal",Scene::CommandTerminal{remote:false}),
-    ("review_ssh_login_terminal",Scene::CommandTerminal{remote:true}),
-    ("terminal_phone_cover_dark", Scene::PhoneCover { dark: true, held: false }),
-    ("terminal_phone_cover_light", Scene::PhoneCover { dark: false, held: false }),
-    ("terminal_phone_cover_held", Scene::PhoneCover { dark: true, held: true }),
-    ("review_agent_setup",Scene::ReviewSetup),
-    ("review_open_workspace",Scene::OpenReviewWorkspace),
+    ("pr_overview", Scene::PullRequests(0)),
+    ("pr_files", Scene::PullRequests(1)),
+    ("pr_checks", Scene::PullRequests(2)),
+    ("pr_activity", Scene::PullRequests(3)),
+    ("pr_create", Scene::PullRequests(4)),
+    ("pr_light", Scene::PullRequests(5)),
+    ("pr_empty", Scene::PullRequests(6)),
+    ("pr_narrow", Scene::PullRequests(7)),
+    ("pr_merge_confirm", Scene::PullRequests(8)),
+    ("pr_split", Scene::PullRequests(9)),
+    ("pr_draft_review", Scene::PullRequests(10)),
+    ("pr_admin_merge", Scene::PullRequests(11)),
+    ("pr_narrow_files", Scene::PullRequests(12)),
+    ("pr_ready", Scene::PullRequests(13)),
+    ("gitlab_overview", Scene::PullRequests(14)),
+    ("gitlab_files", Scene::PullRequests(15)),
+    ("gitlab_create", Scene::PullRequests(16)),
+    ("gitlab_checks", Scene::PullRequests(17)),
+    ("review_connections", Scene::PullRequests(18)),
+    ("reviews_loading", Scene::PullRequests(19)),
+    ("reviews_connection_error", Scene::PullRequests(20)),
+    ("reviews_background_refresh", Scene::PullRequests(21)),
+    (
+        "setup_github",
+        Scene::GitSetup {
+            gitlab: false,
+            connected: false,
+            signing_in: false,
+        },
+    ),
+    (
+        "setup_signin_code",
+        Scene::GitSetup {
+            gitlab: false,
+            connected: false,
+            signing_in: true,
+        },
+    ),
+    (
+        "setup_gitlab",
+        Scene::GitSetup {
+            gitlab: true,
+            connected: false,
+            signing_in: false,
+        },
+    ),
+    (
+        "setup_gitlab_connected",
+        Scene::GitSetup {
+            gitlab: true,
+            connected: true,
+            signing_in: false,
+        },
+    ),
+    ("review_overview_arriving", Scene::PullRequests(25)),
+    ("review_files_arriving", Scene::PullRequests(26)),
+    ("review_discussion_arriving", Scene::PullRequests(27)),
+    ("review_project_picker", Scene::PullRequests(28)),
+    ("review_state_picker", Scene::PullRequests(29)),
+    ("review_filter_picker", Scene::PullRequests(30)),
+    ("review_branch_picker", Scene::PullRequests(31)),
+    ("review_merge_picker", Scene::PullRequests(32)),
+    ("review_narrow_picker", Scene::PullRequests(33)),
+    ("review_merged_activity", Scene::PullRequests(34)),
+    ("review_merged_line_comment", Scene::PullRequests(35)),
+    ("pr_create_choose_source", Scene::PullRequests(36)),
+    ("review_source_picker", Scene::PullRequests(37)),
+    ("review_template_picker", Scene::PullRequests(38)),
+    ("pr_create_preview", Scene::PullRequests(39)),
+    ("pr_check_log", Scene::PullRequests(40)),
+    (
+        "review_login_terminal",
+        Scene::CommandTerminal { remote: false },
+    ),
+    (
+        "review_ssh_login_terminal",
+        Scene::CommandTerminal { remote: true },
+    ),
+    (
+        "terminal_phone_cover_dark",
+        Scene::PhoneCover {
+            dark: true,
+            held: false,
+        },
+    ),
+    (
+        "terminal_phone_cover_light",
+        Scene::PhoneCover {
+            dark: false,
+            held: false,
+        },
+    ),
+    (
+        "terminal_phone_cover_held",
+        Scene::PhoneCover {
+            dark: true,
+            held: true,
+        },
+    ),
+    ("review_agent_setup", Scene::ReviewSetup),
+    ("review_open_workspace", Scene::OpenReviewWorkspace),
     ("integrations_dark", Scene::Page { dark: true }),
     ("integrations_light", Scene::Page { dark: false }),
     ("dialog_jira_connect", Scene::Dialog(Provider::Jira)),
@@ -152,18 +256,70 @@ const SCENES: &[(&str, Scene)] = &[
     ("prompt_linear_results", Scene::Results),
     ("header_new_tab_dark", Scene::NewTabMenu { dark: true }),
     ("header_new_tab_light", Scene::NewTabMenu { dark: false }),
-    ("tasks_list_dark", Scene::Tasks { dark: true, board: false, tracker: false }),
-    ("tasks_board_dark", Scene::Tasks { dark: true, board: true, tracker: false }),
-    ("tasks_list_light", Scene::Tasks { dark: false, board: false, tracker: false }),
-    ("tasks_tracker_dark", Scene::Tasks { dark: true, board: false, tracker: true }),
-    ("notification_bell", Scene::NotificationBell { all_read: false }),
-    ("notification_bell_empty", Scene::NotificationBell { all_read: true }),
+    (
+        "tasks_list_dark",
+        Scene::Tasks {
+            dark: true,
+            board: false,
+            tracker: false,
+        },
+    ),
+    (
+        "tasks_board_dark",
+        Scene::Tasks {
+            dark: true,
+            board: true,
+            tracker: false,
+        },
+    ),
+    (
+        "tasks_list_light",
+        Scene::Tasks {
+            dark: false,
+            board: false,
+            tracker: false,
+        },
+    ),
+    (
+        "tasks_tracker_dark",
+        Scene::Tasks {
+            dark: true,
+            board: false,
+            tracker: true,
+        },
+    ),
+    (
+        "notification_bell",
+        Scene::NotificationBell { all_read: false },
+    ),
+    (
+        "notification_bell_empty",
+        Scene::NotificationBell { all_read: true },
+    ),
     ("teams_dark", Scene::Teams { dark: true }),
     ("teams_light", Scene::Teams { dark: false }),
     ("teams_activity", Scene::TeamsActivity),
-    ("teams_board_dark", Scene::TeamsBoard { dark: true, adding: false }),
-    ("teams_board_light", Scene::TeamsBoard { dark: false, adding: false }),
-    ("teams_board_adding", Scene::TeamsBoard { dark: true, adding: true }),
+    (
+        "teams_board_dark",
+        Scene::TeamsBoard {
+            dark: true,
+            adding: false,
+        },
+    ),
+    (
+        "teams_board_light",
+        Scene::TeamsBoard {
+            dark: false,
+            adding: false,
+        },
+    ),
+    (
+        "teams_board_adding",
+        Scene::TeamsBoard {
+            dark: true,
+            adding: true,
+        },
+    ),
     ("teams_planning", Scene::TeamsPlanning),
     ("teams_message_multiline", Scene::TeamsMessage),
     ("teams_plan_scrolled", Scene::TeamsScrolled),
@@ -177,57 +333,168 @@ const SCENES: &[(&str, Scene)] = &[
     ("prompt_team_menu", Scene::TeamMenu),
     ("coordination_lead_model", Scene::LeadModelMenu),
     ("coordination_task_model", Scene::TaskModelMenu),
-    ("coordination_composer_wide", Scene::CoordinationComposer { narrow: false, solo: false }),
-    ("coordination_composer_narrow", Scene::CoordinationComposer { narrow: true, solo: false }),
-    ("solo_composer_model", Scene::CoordinationComposer { narrow: false, solo: true }),
+    (
+        "coordination_composer_wide",
+        Scene::CoordinationComposer {
+            narrow: false,
+            solo: false,
+        },
+    ),
+    (
+        "coordination_composer_narrow",
+        Scene::CoordinationComposer {
+            narrow: true,
+            solo: false,
+        },
+    ),
+    (
+        "solo_composer_model",
+        Scene::CoordinationComposer {
+            narrow: false,
+            solo: true,
+        },
+    ),
     ("demo_overview", Scene::Demo(demo::DemoScene::Terminal)),
     ("demo_project_solo", Scene::Demo(demo::DemoScene::Solo)),
-    ("demo_project_creating", Scene::Demo(demo::DemoScene::SoloBusy)),
-    ("demo_project_coordinate", Scene::Demo(demo::DemoScene::Coordinate)),
+    (
+        "demo_project_creating",
+        Scene::Demo(demo::DemoScene::SoloBusy),
+    ),
+    (
+        "demo_project_coordinate",
+        Scene::Demo(demo::DemoScene::Coordinate),
+    ),
     ("demo_ssh_machines", Scene::Demo(demo::DemoScene::Machines)),
-    ("demo_ssh_system", Scene::Demo(demo::DemoScene::MachineSystem)),
-    ("demo_ssh_agents", Scene::Demo(demo::DemoScene::MachineAgents)),
+    (
+        "demo_ssh_system",
+        Scene::Demo(demo::DemoScene::MachineSystem),
+    ),
+    (
+        "demo_ssh_agents",
+        Scene::Demo(demo::DemoScene::MachineAgents),
+    ),
     ("demo_editor", Scene::Demo(demo::DemoScene::Editor)),
-    ("editor_find_counter_312", Scene::Demo(demo::DemoScene::EditorFind { matches: 312 })),
-    ("editor_find_counter_12345", Scene::Demo(demo::DemoScene::EditorFind { matches: 12345 })),
+    (
+        "editor_find_counter_312",
+        Scene::Demo(demo::DemoScene::EditorFind { matches: 312 }),
+    ),
+    (
+        "editor_find_counter_12345",
+        Scene::Demo(demo::DemoScene::EditorFind { matches: 12345 }),
+    ),
     ("demo_diff", Scene::Demo(demo::DemoScene::Diff)),
     ("demo_pr_review", Scene::Demo(demo::DemoScene::Review)),
-    ("demo_sidebar_search", Scene::Demo(demo::DemoScene::SidebarSearch)),
-    ("demo_sidebar_git_filter", Scene::Demo(demo::DemoScene::SidebarGitFilter)),
-    ("demo_automations", Scene::Demo(demo::DemoScene::Automations)),
+    (
+        "demo_sidebar_search",
+        Scene::Demo(demo::DemoScene::SidebarSearch),
+    ),
+    (
+        "demo_sidebar_git_filter",
+        Scene::Demo(demo::DemoScene::SidebarGitFilter),
+    ),
+    (
+        "demo_automations",
+        Scene::Demo(demo::DemoScene::Automations),
+    ),
     ("demo_accounts", Scene::Demo(demo::DemoScene::Accounts)),
     ("demo_models_settings", Scene::Demo(demo::DemoScene::Models)),
     ("demo_mcp", Scene::Demo(demo::DemoScene::Mcp)),
     ("demo_skills", Scene::Demo(demo::DemoScene::Skills)),
-    ("demo_notifications", Scene::Demo(demo::DemoScene::Notifications)),
+    (
+        "demo_notifications",
+        Scene::Demo(demo::DemoScene::Notifications),
+    ),
     ("demo_appearance", Scene::Demo(demo::DemoScene::Appearance)),
     ("demo_privacy", Scene::Demo(demo::DemoScene::Privacy)),
     ("agent_transcript", Scene::AgentTranscript { narrow: false }),
-    ("agent_transcript_narrow", Scene::AgentTranscript { narrow: true }),
+    (
+        "agent_transcript_narrow",
+        Scene::AgentTranscript { narrow: true },
+    ),
     ("settings_account", settings(SettingsSection::Account)),
     ("settings_general", settings(SettingsSection::General)),
     ("settings_appearance", settings(SettingsSection::Appearance)),
-    ("settings_terminal_input", settings(SettingsSection::TerminalInput)),
-    ("settings_version_control", settings(SettingsSection::VersionControl)),
-    ("settings_version_control_custom", settings_after(SettingsSection::VersionControl, "custom_prefix")),
-    ("settings_keyboard", settings(SettingsSection::KeyboardShortcuts)),
-    ("settings_keyboard_rebind", settings_after(SettingsSection::KeyboardShortcuts, "rebind")),
-    ("settings_agent_general", settings(SettingsSection::AgentGeneral)),
-    ("settings_agent_general_agents", settings_after(SettingsSection::AgentGeneral, "behavior_agents")),
-    ("settings_agent_general_picker", settings_after(SettingsSection::AgentGeneral, "behavior_picker")),
-    ("settings_agent_models", settings(SettingsSection::AgentModels)),
+    (
+        "settings_terminal_input",
+        settings(SettingsSection::TerminalInput),
+    ),
+    (
+        "settings_version_control",
+        settings(SettingsSection::VersionControl),
+    ),
+    (
+        "settings_version_control_custom",
+        settings_after(SettingsSection::VersionControl, "custom_prefix"),
+    ),
+    (
+        "settings_keyboard",
+        settings(SettingsSection::KeyboardShortcuts),
+    ),
+    (
+        "settings_keyboard_rebind",
+        settings_after(SettingsSection::KeyboardShortcuts, "rebind"),
+    ),
+    (
+        "settings_agent_general",
+        settings(SettingsSection::AgentGeneral),
+    ),
+    (
+        "settings_agent_general_agents",
+        settings_after(SettingsSection::AgentGeneral, "behavior_agents"),
+    ),
+    (
+        "settings_agent_general_picker",
+        settings_after(SettingsSection::AgentGeneral, "behavior_picker"),
+    ),
+    (
+        "settings_agent_models",
+        settings(SettingsSection::AgentModels),
+    ),
     ("settings_agent_mcp", settings(SettingsSection::AgentMcp)),
-    ("settings_agent_mcp_form", settings_after(SettingsSection::AgentMcp, "mcp_form")),
-    ("settings_agent_skills", settings(SettingsSection::AgentSkills)),
-    ("settings_agent_skills_search", settings_after(SettingsSection::AgentSkills, "skills_search")),
-    ("settings_agent_skills_menu", settings_after(SettingsSection::AgentSkills, "skills_menu")),
-    ("settings_agent_skills_all", settings_after(SettingsSection::AgentSkills, "skills_all")),
-    ("settings_agent_skills_details", settings_after(SettingsSection::AgentSkills, "skills_details")),
-    ("settings_agent_skills_empty", settings_after(SettingsSection::AgentSkills, "skills_empty")),
-    ("settings_agent_skills_create", settings_after(SettingsSection::AgentSkills, "skills_create")),
-    ("settings_agent_skills_create_error", settings_after(SettingsSection::AgentSkills, "skills_create_error")),
-    ("settings_agent_commands", settings(SettingsSection::AgentCommands)),
-    ("settings_agent_accounts", settings(SettingsSection::AgentAccounts)),
+    (
+        "settings_agent_mcp_form",
+        settings_after(SettingsSection::AgentMcp, "mcp_form"),
+    ),
+    (
+        "settings_agent_skills",
+        settings(SettingsSection::AgentSkills),
+    ),
+    (
+        "settings_agent_skills_search",
+        settings_after(SettingsSection::AgentSkills, "skills_search"),
+    ),
+    (
+        "settings_agent_skills_menu",
+        settings_after(SettingsSection::AgentSkills, "skills_menu"),
+    ),
+    (
+        "settings_agent_skills_all",
+        settings_after(SettingsSection::AgentSkills, "skills_all"),
+    ),
+    (
+        "settings_agent_skills_details",
+        settings_after(SettingsSection::AgentSkills, "skills_details"),
+    ),
+    (
+        "settings_agent_skills_empty",
+        settings_after(SettingsSection::AgentSkills, "skills_empty"),
+    ),
+    (
+        "settings_agent_skills_create",
+        settings_after(SettingsSection::AgentSkills, "skills_create"),
+    ),
+    (
+        "settings_agent_skills_create_error",
+        settings_after(SettingsSection::AgentSkills, "skills_create_error"),
+    ),
+    (
+        "settings_agent_commands",
+        settings(SettingsSection::AgentCommands),
+    ),
+    (
+        "settings_agent_accounts",
+        settings(SettingsSection::AgentAccounts),
+    ),
     (
         "settings_agent_accounts_add",
         settings_after(SettingsSection::AgentAccounts, "accounts_add"),
@@ -243,11 +510,23 @@ const SCENES: &[(&str, Scene)] = &[
     ("settings_projects", settings(SettingsSection::Projects)),
     ("settings_members", settings(SettingsSection::Members)),
     ("settings_billing", settings(SettingsSection::Billing)),
-    ("settings_integrations", settings_after(SettingsSection::Integrations, "integrations_services")),
-    ("settings_integrations_tasks", settings_after(SettingsSection::Integrations, "integrations_tasks")),
-    ("settings_integrations_agents", settings_after(SettingsSection::Integrations, "integrations_agents")),
+    (
+        "settings_integrations",
+        settings_after(SettingsSection::Integrations, "integrations_services"),
+    ),
+    (
+        "settings_integrations_tasks",
+        settings_after(SettingsSection::Integrations, "integrations_tasks"),
+    ),
+    (
+        "settings_integrations_agents",
+        settings_after(SettingsSection::Integrations, "integrations_agents"),
+    ),
     ("settings_privacy", settings(SettingsSection::Privacy)),
-    ("settings_notifications", settings(SettingsSection::Notifications)),
+    (
+        "settings_notifications",
+        settings(SettingsSection::Notifications),
+    ),
     ("settings_voice", settings(SettingsSection::Voice)),
     (
         "settings_voice_engine_picker",
@@ -284,20 +563,55 @@ const SCENES: &[(&str, Scene)] = &[
         settings(SettingsSection::RemoteAccess),
     ),
     ("settings_machines", settings(SettingsSection::Machines)),
-    ("settings_mobile_signed_out", settings(SettingsSection::Mobile)),
-    ("settings_mobile_idle", settings_after(SettingsSection::Mobile, "idle")),
-    ("settings_mobile_live", settings_after(SettingsSection::Mobile, "live")),
-    ("settings_mobile_live_light", settings_after(SettingsSection::Mobile, "live_light")),
-    ("settings_mobile_enlarged", settings_after(SettingsSection::Mobile, "enlarged")),
-    ("settings_mobile_expired", settings_after(SettingsSection::Mobile, "expired")),
-    ("settings_mobile_paired", settings_after(SettingsSection::Mobile, "paired")),
-    ("settings_mobile_revoke", settings_after(SettingsSection::Mobile, "revoke")),
-    ("settings_mobile_narrow", settings_after(SettingsSection::Mobile, "narrow")),
-    ("settings_mobile_reset", settings_after(SettingsSection::Mobile, "reset")),
-    ("settings_mobile_no_store", settings_after(SettingsSection::Mobile, "no_store")),
-    ("settings_mobile_records_reset", settings_after(SettingsSection::Mobile, "records_reset")),
+    (
+        "settings_mobile_signed_out",
+        settings(SettingsSection::Mobile),
+    ),
+    (
+        "settings_mobile_idle",
+        settings_after(SettingsSection::Mobile, "idle"),
+    ),
+    (
+        "settings_mobile_live",
+        settings_after(SettingsSection::Mobile, "live"),
+    ),
+    (
+        "settings_mobile_live_light",
+        settings_after(SettingsSection::Mobile, "live_light"),
+    ),
+    (
+        "settings_mobile_enlarged",
+        settings_after(SettingsSection::Mobile, "enlarged"),
+    ),
+    (
+        "settings_mobile_expired",
+        settings_after(SettingsSection::Mobile, "expired"),
+    ),
+    (
+        "settings_mobile_paired",
+        settings_after(SettingsSection::Mobile, "paired"),
+    ),
+    (
+        "settings_mobile_revoke",
+        settings_after(SettingsSection::Mobile, "revoke"),
+    ),
+    (
+        "settings_mobile_narrow",
+        settings_after(SettingsSection::Mobile, "narrow"),
+    ),
+    (
+        "settings_mobile_reset",
+        settings_after(SettingsSection::Mobile, "reset"),
+    ),
+    (
+        "settings_mobile_no_store",
+        settings_after(SettingsSection::Mobile, "no_store"),
+    ),
+    (
+        "settings_mobile_records_reset",
+        settings_after(SettingsSection::Mobile, "records_reset"),
+    ),
     ("settings_about", settings(SettingsSection::About)),
-
 ];
 
 const fn settings(section: SettingsSection) -> Scene {
@@ -312,7 +626,9 @@ const fn settings_after(section: SettingsSection, state: &'static str) -> Scene 
 /// names start with one of the comma-separated prefixes.
 fn wanted(scene: usize) -> bool {
     std::env::var("DRAGENT_PREVIEW_ONLY").map_or(true, |prefixes| {
-        prefixes.split(',').any(|prefix| SCENES[scene].0.starts_with(prefix.trim()))
+        prefixes
+            .split(',')
+            .any(|prefix| SCENES[scene].0.starts_with(prefix.trim()))
     })
 }
 
@@ -334,7 +650,14 @@ pub fn run(out: PathBuf, save: Save) {
         ctx.add_singleton_model(crate::settings::AccountStore::new);
         demo::register(ctx);
         let options = warpui::AddWindowOptions {
-            window_bounds: WindowBounds::ExactSize(vec2f(if std::env::var_os("DRAGENT_DEMO_CAPTURE").is_some() { 1600.0 } else { 1180.0 }, 900.0)),
+            window_bounds: WindowBounds::ExactSize(vec2f(
+                if std::env::var_os("DRAGENT_DEMO_CAPTURE").is_some() {
+                    1600.0
+                } else {
+                    1180.0
+                },
+                900.0,
+            )),
             window_style: warpui::platform::WindowStyle::NotStealFocus,
             ..Default::default()
         };
@@ -410,13 +733,17 @@ impl Preview {
             sample_teams(page);
             page_ctx.notify();
         });
-        let tasks = ctx.add_typed_action_view(|inner| crate::tasks_page::TasksView::new(inner, ui, mono, theme));
+        let tasks = ctx.add_typed_action_view(|inner| {
+            crate::tasks_page::TasksView::new(inner, ui, mono, theme)
+        });
         ctx.update_view(&tasks, |page, page_ctx| {
             crate::tasks_page::preview::seed(page, crate::tasks_page::Layout::Table, false);
             page_ctx.notify();
         });
         let demo = demo::DemoViews::new(ctx, ui, mono, theme);
-        let prs=ctx.add_typed_action_view(|c|crate::pull_requests::PullRequestsView::new(c,ui,mono,theme));
+        let prs = ctx.add_typed_action_view(|c| {
+            crate::pull_requests::PullRequestsView::new(c, ui, mono, theme)
+        });
         ctx.subscribe_to_view(&prs,|preview,_,event,c| {
             if let crate::pull_requests::Event::ReviewSetup(review)=event {
                 assert!(review.head.len()>=40);
@@ -435,22 +762,55 @@ impl Preview {
                 println!("Review setup handoff contains pinned identity and prefilled instructions (no fetch)");
             }
         });
-        ctx.update_view(&prs,|p,c|{crate::pull_requests::preview::seed(p,0,c);if std::env::var_os("DRAGENT_PREVIEW_PR_ONLY").is_some(){crate::pull_requests::preview::smoke(p,c);}});
-        let review_editor=ctx.add_typed_action_view(|c| InputEditor::new("Review instructions…",mono,crate::theme::text_size(13.0),
-            theme.main_text(),theme.disabled_text(),theme.accent,theme,InputMode::MultiLine{key:"preview_review".into(),max_height:220},c.focus_handle()));
+        ctx.update_view(&prs, |p, c| {
+            crate::pull_requests::preview::seed(p, 0, c);
+            if std::env::var_os("DRAGENT_PREVIEW_PR_ONLY").is_some() {
+                crate::pull_requests::preview::smoke(p, c);
+            }
+        });
+        let review_editor = ctx.add_typed_action_view(|c| {
+            InputEditor::new(
+                "Review instructions…",
+                mono,
+                crate::theme::text_size(13.0),
+                theme.main_text(),
+                theme.disabled_text(),
+                theme.accent,
+                theme,
+                InputMode::MultiLine {
+                    key: "preview_review".into(),
+                    max_height: 220,
+                },
+                c.focus_handle(),
+            )
+        });
         ctx.update_view(&review_editor,|e,c|e.set_text("Review pull request #128: Add secure team invitations\nhttps://github.com/acme/app/pull/128\n\nCompare feat/team-invites against main at the pinned commit. Inspect the changed files, checks, and unresolved threads.\n\nRun relevant tests and report actionable findings with file and line references. Present findings first. Do not edit tracked files, commit, push, merge, or publish comments unless the user asks.",c));
-        ctx.update_view(&review_editor,|e,c|e.schedule_width_reflow(650.0,c));
+        ctx.update_view(&review_editor, |e, c| e.schedule_width_reflow(650.0, c));
         let _ = std::fs::create_dir_all(&out);
-        let initial_scene=if std::env::var_os("DRAGENT_PREVIEW_AGENT_ONLY").is_some() { SCENES.iter().position(|(name,_)|*name=="agent_transcript").unwrap() } else if std::env::var_os("DRAGENT_PREVIEW_TEAMS_ONLY").is_some() {
-            ctx.update_view(&teams,|page,c|page.set_theme(Theme::default(),c));
-            SCENES.iter().position(|(name,_)|*name=="teams_dark").unwrap()
+        let initial_scene = if std::env::var_os("DRAGENT_PREVIEW_AGENT_ONLY").is_some() {
+            SCENES
+                .iter()
+                .position(|(name, _)| *name == "agent_transcript")
+                .unwrap()
+        } else if std::env::var_os("DRAGENT_PREVIEW_TEAMS_ONLY").is_some() {
+            ctx.update_view(&teams, |page, c| page.set_theme(Theme::default(), c));
+            SCENES
+                .iter()
+                .position(|(name, _)| *name == "teams_dark")
+                .unwrap()
         } else {
-            (0..SCENES.len()).find(|&scene| wanted(scene)).expect("DRAGENT_PREVIEW_ONLY matches no scene")
+            (0..SCENES.len())
+                .find(|&scene| wanted(scene))
+                .expect("DRAGENT_PREVIEW_ONLY matches no scene")
         };
         let initial_scene = std::env::var("DRAGENT_PREVIEW_INTERACTIVE")
             .ok()
-            .map(|name| SCENES.iter().position(|(scene, _)| *scene == name)
-                .unwrap_or_else(|| panic!("Unknown interactive preview scene: {name}")))
+            .map(|name| {
+                SCENES
+                    .iter()
+                    .position(|(scene, _)| *scene == name)
+                    .unwrap_or_else(|| panic!("Unknown interactive preview scene: {name}"))
+            })
             .unwrap_or(initial_scene);
         let mut preview = Self {
             window_id: ctx.window_id(),
@@ -484,7 +844,14 @@ impl Preview {
                     crate::pull_requests::preview::seed(page, scene, c);
                 }),
                 Scene::Teams { dark } => ctx.update_view(&preview.teams, |page, c| {
-                    page.set_theme(if dark { Theme::default() } else { Theme::light() }, c);
+                    page.set_theme(
+                        if dark {
+                            Theme::default()
+                        } else {
+                            Theme::light()
+                        },
+                        c,
+                    );
                 }),
                 _ => {}
             }
@@ -512,7 +879,9 @@ impl Preview {
     fn record_frame(&mut self, ctx: &mut ViewContext<Self>) {
         let elapsed = self.recording_started.elapsed().as_millis();
         let seconds = std::env::var("DRAGENT_PREVIEW_RECORD_SECONDS")
-            .ok().and_then(|s| s.parse::<u128>().ok()).unwrap_or(90);
+            .ok()
+            .and_then(|s| s.parse::<u128>().ok())
+            .unwrap_or(90);
         if elapsed >= seconds * 1000 {
             std::process::exit(0);
         }
@@ -524,14 +893,20 @@ impl Preview {
             for line in lines.iter().skip(self.recorded_input_lines) {
                 if let Ok(command) = serde_json::from_str::<serde_json::Value>(line) {
                     if command["select_all"].as_bool() == Some(true) {
-                        self.recorded_keys.push_back(warpui_core::keymap::Keystroke::parse("cmd-a").unwrap());
+                        self.recorded_keys
+                            .push_back(warpui_core::keymap::Keystroke::parse("cmd-a").unwrap());
                     }
                     if let Some(text) = command["text"].as_str() {
                         for ch in text.chars() {
-                            self.recorded_keys.push_back(warpui_core::keymap::Keystroke {
-                                key: if ch == ' ' { "space".into() } else { ch.to_string() },
-                                ..Default::default()
-                            });
+                            self.recorded_keys
+                                .push_back(warpui_core::keymap::Keystroke {
+                                    key: if ch == ' ' {
+                                        "space".into()
+                                    } else {
+                                        ch.to_string()
+                                    },
+                                    ..Default::default()
+                                });
                         }
                     }
                 }
@@ -540,8 +915,12 @@ impl Preview {
         }
         if let Some(key) = self.recorded_keys.pop_front() {
             let editor = match SCENES[self.scene].1 {
-                Scene::PullRequests(_) => Some(ctx.read_view(&self.prs, |view, _| view.composer.clone())),
-                Scene::Teams { .. } => Some(ctx.read_view(&self.teams, |view, _| view.message_editor.clone())),
+                Scene::PullRequests(_) => {
+                    Some(ctx.read_view(&self.prs, |view, _| view.composer.clone()))
+                }
+                Scene::Teams { .. } => {
+                    Some(ctx.read_view(&self.teams, |view, _| view.message_editor.clone()))
+                }
                 Scene::Demo(_) => Some(self.demo.recording_prompt()),
                 _ => None,
             };
@@ -552,15 +931,20 @@ impl Preview {
                 });
             }
         }
-        let path = self.out.join(format!("frame-{:06}-{elapsed:08}.png", self.recorded_frames));
+        let path = self.out.join(format!(
+            "frame-{:06}-{elapsed:08}.png",
+            self.recorded_frames
+        ));
         self.recorded_frames += 1;
         let save = self.save;
         if let Some(window) = ctx.windows().platform_window(self.window_id) {
-            window.as_ctx().request_frame_capture(Box::new(move |frame| {
-                if let Err(error) = save(frame, &path) {
-                    eprintln!("Recording frame failed: {error}");
-                }
-            }));
+            window
+                .as_ctx()
+                .request_frame_capture(Box::new(move |frame| {
+                    if let Err(error) = save(frame, &path) {
+                        eprintln!("Recording frame failed: {error}");
+                    }
+                }));
         }
         ctx.notify();
         self.schedule_recording(ctx);
@@ -576,8 +960,16 @@ impl Preview {
     fn capture(&mut self, ctx: &mut ViewContext<Self>) {
         let (name, _) = SCENES[self.scene];
         let path = self.out.join(format!("{name}.png"));
-        let last = (std::env::var_os("DRAGENT_PREVIEW_AGENT_ONLY").is_some() && matches!(SCENES[self.scene].1, Scene::AgentTranscript { narrow: true })) || next_wanted(self.scene).is_none() || (std::env::var_os("DRAGENT_PREVIEW_PR_ONLY").is_some() && SCENES[self.scene].0=="review_open_workspace")
-            || (std::env::var_os("DRAGENT_PREVIEW_TEAMS_ONLY").is_some() && matches!(SCENES[self.scene].1,Scene::TeamsEmpty));
+        let last = (std::env::var_os("DRAGENT_PREVIEW_AGENT_ONLY").is_some()
+            && matches!(
+                SCENES[self.scene].1,
+                Scene::AgentTranscript { narrow: true }
+            ))
+            || next_wanted(self.scene).is_none()
+            || (std::env::var_os("DRAGENT_PREVIEW_PR_ONLY").is_some()
+                && SCENES[self.scene].0 == "review_open_workspace")
+            || (std::env::var_os("DRAGENT_PREVIEW_TEAMS_ONLY").is_some()
+                && matches!(SCENES[self.scene].1, Scene::TeamsEmpty));
         let save = self.save;
         if let Some(window) = ctx.windows().platform_window(self.window_id) {
             window
@@ -1113,7 +1505,11 @@ impl View for Preview {
             Scene::MarketingSidebar => crate::workspace::panel_coordination::marketing_sidebar(
                 self.ui,
                 // The clip was recorded in Onyx.
-                &Theme::all_infos().into_iter().find(|info| info.id == "onyx").map(|info| info.theme).unwrap_or_else(Theme::dark),
+                &Theme::all_infos()
+                    .into_iter()
+                    .find(|info| info.id == "onyx")
+                    .map(|info| info.theme)
+                    .unwrap_or_else(Theme::dark),
                 self.view_id,
                 &self.search,
                 (252.0, 900.0),
@@ -1124,8 +1520,17 @@ impl View for Preview {
             }
             Scene::UsagePopover(tab) => {
                 use crate::workspace::PromptAgent;
-                let agent = [PromptAgent::Claude, PromptAgent::Codex, PromptAgent::OpenCode][tab.min(2)];
-                crate::workspace::usage_popover_preview(self.ui, &Theme::from_id("github_dark"), self.view_id, agent)
+                let agent = [
+                    PromptAgent::Claude,
+                    PromptAgent::Codex,
+                    PromptAgent::OpenCode,
+                ][tab.min(2)];
+                crate::workspace::usage_popover_preview(
+                    self.ui,
+                    &Theme::from_id("github_dark"),
+                    self.view_id,
+                    agent,
+                )
             }
             Scene::HoverCard { dark } => {
                 let theme = if dark { Theme::dark() } else { Theme::light() };
@@ -1139,7 +1544,11 @@ impl View for Preview {
                 &hover,
                 &self.scroll,
             ),
-            Scene::GitSetup { gitlab, connected } => {
+            Scene::GitSetup {
+                gitlab,
+                connected,
+                signing_in,
+            } => {
                 use crate::setup::{
                     checklist_slide::{render_checklist, ChecklistViewState},
                     git_provider::GitProvider,
@@ -1155,10 +1564,10 @@ impl View for Preview {
                     self.ui,
                     self.view_id,
                     ChecklistViewState {
-                        account_connected: true,
-                        browser_auth_active: false,
+                        account_connected: !signing_in,
+                        browser_auth_active: signing_in,
                         auth_error: None,
-                        sign_in_code: None,
+                        sign_in_code: signing_in.then(|| "K7Q-M2X".to_string()),
                         provider: if gitlab {
                             GitProvider::Gitlab
                         } else {
@@ -1195,56 +1604,133 @@ impl View for Preview {
             | Scene::TeamsNarrow
             | Scene::TeamsLeadStopped
             | Scene::TeamsNoPlan
-            | Scene::TeamsFinished | Scene::TeamsDelete | Scene::TeamsStoppedEarly
+            | Scene::TeamsFinished
+            | Scene::TeamsDelete
+            | Scene::TeamsStoppedEarly
             | Scene::TeamsEmpty
             | Scene::TaskModelMenu => {
-                let page=warpui::elements::ChildView::new(&self.teams).finish();
-                if matches!(SCENES[self.scene].1,Scene::TeamsNarrow) {ConstrainedBox::new(page).with_width(1000.0).finish()}else{page}
-            },
+                let page = warpui::elements::ChildView::new(&self.teams).finish();
+                if matches!(SCENES[self.scene].1, Scene::TeamsNarrow) {
+                    ConstrainedBox::new(page).with_width(1000.0).finish()
+                } else {
+                    page
+                }
+            }
             Scene::Tasks { .. } => warpui::elements::ChildView::new(&self.tasks).finish(),
             Scene::CoordinationComposer { narrow, solo } => {
                 let composer = crate::workspace::prompt_box(
-                    &theme, self.ui, self.view_id, &self.search, PromptAgent::Dragent,
-                    (!solo, &[PromptAgent::Claude, PromptAgent::Codex, PromptAgent::Gemini, PromptAgent::OpenCode, PromptAgent::Copilot]),
-                    Some("Sonnet 4.6"), false, narrow,
-                    crate::voice::VoiceUiState::Idle, 0, &self.hovers,
+                    &theme,
+                    self.ui,
+                    self.view_id,
+                    &self.search,
+                    PromptAgent::Dragent,
+                    (
+                        !solo,
+                        &[
+                            PromptAgent::Claude,
+                            PromptAgent::Codex,
+                            PromptAgent::Gemini,
+                            PromptAgent::OpenCode,
+                            PromptAgent::Copilot,
+                        ],
+                    ),
+                    Some("Sonnet 4.6"),
+                    false,
+                    narrow,
+                    crate::voice::VoiceUiState::Idle,
+                    0,
+                    &self.hovers,
                 );
-                Container::new(Align::new(ConstrainedBox::new(composer)
-                    .with_width(if narrow { 360.0 } else { 680.0 }).finish()).top_left().finish())
-                    .with_padding_left(40.0).with_padding_top(60.0).finish()
+                Container::new(
+                    Align::new(
+                        ConstrainedBox::new(composer)
+                            .with_width(if narrow { 360.0 } else { 680.0 })
+                            .finish(),
+                    )
+                    .top_left()
+                    .finish(),
+                )
+                .with_padding_left(40.0)
+                .with_padding_top(60.0)
+                .finish()
             }
             Scene::ReviewSetup | Scene::OpenReviewWorkspace => {
-                let review=crate::pull_requests::ReviewSetup{
-                    target:crate::pull_requests::data::Target{root:"/demo/acme".into(),label:"Acme".into()},number:128,
-                    head:"a1b2c3d4e5f6789012345678901234567890abcd".into(),source:"feat/team-invites".into(),base:"main".into(),
-                    title:"Add secure team invitations".into(),url:"https://github.com/acme/app/pull/128".into(),gitlab:false,instructions:String::new(),launch_agent:true,
+                let review = crate::pull_requests::ReviewSetup {
+                    target: crate::pull_requests::data::Target {
+                        root: "/demo/acme".into(),
+                        label: "Acme".into(),
+                    },
+                    number: 128,
+                    head: "a1b2c3d4e5f6789012345678901234567890abcd".into(),
+                    source: "feat/team-invites".into(),
+                    base: "main".into(),
+                    title: "Add secure team invitations".into(),
+                    url: "https://github.com/acme/app/pull/128".into(),
+                    gitlab: false,
+                    instructions: String::new(),
+                    launch_agent: true,
                 };
-                let mut review=self.review_setup.as_ref().unwrap_or(&review).clone();
-                review.launch_agent=matches!(SCENES[self.scene].1,Scene::ReviewSetup);
-                let modal=crate::workspace::render_review_setup(self.view_id,&theme,self.ui,&self.hovers,&review,&self.review_editor,
-                    PromptAgent::Claude,"Sonnet 4.6",false,None);
-                let mut stack=Stack::new().with_child(warpui::elements::ChildView::new(&self.prs).finish());
-                stack.add_overlay_child(Container::new(Align::new(modal).finish()).with_background_color(warpui::color::ColorU::new(0,0,0,150)).finish());
+                let mut review = self.review_setup.as_ref().unwrap_or(&review).clone();
+                review.launch_agent = matches!(SCENES[self.scene].1, Scene::ReviewSetup);
+                let modal = crate::workspace::render_review_setup(
+                    self.view_id,
+                    &theme,
+                    self.ui,
+                    &self.hovers,
+                    &review,
+                    &self.review_editor,
+                    PromptAgent::Claude,
+                    "Sonnet 4.6",
+                    false,
+                    None,
+                );
+                let mut stack =
+                    Stack::new().with_child(warpui::elements::ChildView::new(&self.prs).finish());
+                stack.add_overlay_child(
+                    Container::new(Align::new(modal).finish())
+                        .with_background_color(warpui::color::ColorU::new(0, 0, 0, 150))
+                        .finish(),
+                );
                 stack.finish()
-            },
+            }
             Scene::PhoneCover { held, .. } => {
                 use crate::realtime::phone_control::Control;
                 let control = if held {
                     Control::Held { cols: 46, rows: 28 }
                 } else {
-                    Control::Phone { phone_name: "Ada's iPhone".into(), cols: 46, rows: 28 }
+                    Control::Phone {
+                        phone_name: "Ada's iPhone".into(),
+                        cols: 46,
+                        rows: 28,
+                    }
                 };
                 let lines = "~/dev/shop  main\n$ npm run dev\n\n> shop@0.1.0 dev\n> next dev\n\n  ▲ Next.js 15.1\n  - Local:   http://localhost:3000\n\n ✓ Ready in 1.4s\n ○ Compiling / ...\n ✓ Compiled / in 812ms\n GET / 200 in 941ms\n GET /favicon.ico 200 in 12ms";
-                let terminal = Container::new(Align::new(
-                    warpui::elements::Text::new(lines.to_string(), self.ui, crate::theme::text_size(13.0))
+                let terminal = Container::new(
+                    Align::new(
+                        warpui::elements::Text::new(
+                            lines.to_string(),
+                            self.ui,
+                            crate::theme::text_size(13.0),
+                        )
                         .with_color(theme.main_text())
                         .finish(),
-                ).top_left().finish())
+                    )
+                    .top_left()
+                    .finish(),
+                )
                 .with_uniform_padding(18.0)
                 .with_background_color(theme.background)
                 .finish();
-                let cover = crate::terminal::view::terminal_overlays::phone_cover_copy(&control).expect("covered");
-                let veil = crate::terminal::view::terminal_overlays::render_phone_cover(theme, self.ui, self.ui, cover, self.hover("phone_cover"), |_| {});
+                let cover = crate::terminal::view::terminal_overlays::phone_cover_copy(&control)
+                    .expect("covered");
+                let veil = crate::terminal::view::terminal_overlays::render_phone_cover(
+                    theme,
+                    self.ui,
+                    self.ui,
+                    cover,
+                    self.hover("phone_cover"),
+                    |_| {},
+                );
                 Box::new(Stack::new().with_child(terminal).with_child(veil)) as Box<dyn Element>
             }
             Scene::CommandTerminal { remote } => {
@@ -1253,34 +1739,102 @@ impl View for Preview {
                 } else {
                     "$ gh auth login --hostname github.com --git-protocol https --web\n\n! Copy your one-time code: ABCD-EFGH\nPress Enter to open github.com in your browser…\n\nSample terminal output · no command is executed in this preview"
                 };
-                let content=Container::new(warpui::elements::Text::new(samples.to_string(),self.ui,crate::theme::text_size(12.5)).with_color(theme.main_text()).finish()).with_uniform_padding(16.0).finish();
-                let modal=crate::workspace::render_embedded_terminal_modal(
-                    self.view_id,&theme,self.ui,&self.hovers,
-                    if remote { "Sign in to GitLab" } else { "Sign in to GitHub" },"",
-                    if remote { "Running on SSH machine production. Answer prompts here, then close this window to return to the page." } else { "Running on this computer. Answer prompts here, then close this window to return to the page." },
-                    Some(content),false,None,false,false,
+                let content = Container::new(
+                    warpui::elements::Text::new(
+                        samples.to_string(),
+                        self.ui,
+                        crate::theme::text_size(12.5),
+                    )
+                    .with_color(theme.main_text())
+                    .finish(),
+                )
+                .with_uniform_padding(16.0)
+                .finish();
+                let modal = crate::workspace::render_embedded_terminal_modal(
+                    self.view_id,
+                    &theme,
+                    self.ui,
+                    &self.hovers,
+                    if remote {
+                        "Sign in to GitLab"
+                    } else {
+                        "Sign in to GitHub"
+                    },
+                    "",
+                    if remote {
+                        "Running on SSH machine production. Answer prompts here, then close this window to return to the page."
+                    } else {
+                        "Running on this computer. Answer prompts here, then close this window to return to the page."
+                    },
+                    Some(content),
+                    false,
+                    None,
+                    false,
+                    false,
                 );
-                let mut stack=Stack::new().with_child(warpui::elements::ChildView::new(&self.prs).finish());
-                stack.add_overlay_child(Container::new(Align::new(modal).finish()).with_background_color(warpui::color::ColorU::new(0,0,0,150)).finish());
+                let mut stack =
+                    Stack::new().with_child(warpui::elements::ChildView::new(&self.prs).finish());
+                stack.add_overlay_child(
+                    Container::new(Align::new(modal).finish())
+                        .with_background_color(warpui::color::ColorU::new(0, 0, 0, 150))
+                        .finish(),
+                );
                 stack.finish()
-            },
+            }
             Scene::PullRequests(scene) => {
-                let child=warpui::elements::ChildView::new(&self.prs).finish();
-                if scene==7 || scene==12 || scene==33 {ConstrainedBox::new(child).with_width(if scene==12 || scene==33{760.0}else{1000.0}).finish()}else{child}
-            },
+                let child = warpui::elements::ChildView::new(&self.prs).finish();
+                if scene == 7 || scene == 12 || scene == 33 {
+                    ConstrainedBox::new(child)
+                        .with_width(if scene == 12 || scene == 33 {
+                            760.0
+                        } else {
+                            1000.0
+                        })
+                        .finish()
+                } else {
+                    child
+                }
+            }
             Scene::Demo(scene) => self.demo.render(scene, self, app),
             Scene::LeadModelMenu => {
-                let choices = vec![("sonnet".into(), "Sonnet".into()), ("opus".into(), "Opus".into())];
-                Container::new(Align::new(crate::teams::models::picker(
-                    &theme, self.ui, self.view_id, &self.hovers, &self.scroll, &self.search,
-                    "", PromptAgent::Claude, Some("sonnet"), &choices,
-                    |model| crate::workspace::WorkspaceAction::SetPromptLeadModel { model },
-                    crate::workspace::WorkspaceAction::ClosePromptMenus,
-                    crate::workspace::WorkspaceAction::ClearPromptAgentSearch,
-                    Some(crate::teams::models::prompt_panel(PromptAgent::Claude,
-                        &[PromptAgent::Claude, PromptAgent::Codex, PromptAgent::Gemini, PromptAgent::OpenCode].into(),
-                        app, crate::teams::models::ModelTab::Agent(PromptAgent::Claude))),
-                )).top_left().finish()).with_padding_left(60.0).with_padding_top(60.0).finish()
+                let choices = vec![
+                    ("sonnet".into(), "Sonnet".into()),
+                    ("opus".into(), "Opus".into()),
+                ];
+                Container::new(
+                    Align::new(crate::teams::models::picker(
+                        &theme,
+                        self.ui,
+                        self.view_id,
+                        &self.hovers,
+                        &self.scroll,
+                        &self.search,
+                        "",
+                        PromptAgent::Claude,
+                        Some("sonnet"),
+                        &choices,
+                        |model| crate::workspace::WorkspaceAction::SetPromptLeadModel { model },
+                        crate::workspace::WorkspaceAction::ClosePromptMenus,
+                        crate::workspace::WorkspaceAction::ClearPromptAgentSearch,
+                        Some(crate::teams::models::prompt_panel(
+                            PromptAgent::Claude,
+                            &[
+                                PromptAgent::Claude,
+                                PromptAgent::Codex,
+                                PromptAgent::Gemini,
+                                PromptAgent::OpenCode,
+                            ]
+                            .into(),
+                            app,
+                            crate::teams::models::ModelTab::Agent(PromptAgent::Claude),
+                        )),
+                    ))
+                    .top_left()
+                    .finish(),
+                )
+                .with_padding_left(60.0)
+                .with_padding_top(60.0)
+                .finish()
             }
             Scene::TeamMenu => {
                 let installed: HashSet<PromptAgent> = [
@@ -1344,12 +1898,13 @@ impl View for Preview {
             }
             Scene::NotificationBell { all_read } => {
                 use warpui::elements::{CrossAxisAlignment, Flex};
-                let notice = |id: &str, name: &str, detail: &str| crate::workspace::AutomationNotice {
-                    run_id: id.into(),
-                    automation_id: id.into(),
-                    name: name.into(),
-                    detail: detail.into(),
-                };
+                let notice =
+                    |id: &str, name: &str, detail: &str| crate::workspace::AutomationNotice {
+                        run_id: id.into(),
+                        automation_id: id.into(),
+                        name: name.into(),
+                        detail: detail.into(),
+                    };
                 let notices = if all_read {
                     Vec::new()
                 } else {
@@ -1363,7 +1918,11 @@ impl View for Preview {
                     self.ui,
                     &theme,
                     self.view_id,
-                    self.hovers.borrow_mut().entry("preview_bell".to_string()).or_default().clone(),
+                    self.hovers
+                        .borrow_mut()
+                        .entry("preview_bell".to_string())
+                        .or_default()
+                        .clone(),
                     0,
                     notices.len(),
                     false,
@@ -1482,14 +2041,25 @@ impl TypedActionView for Preview {
 impl Preview {
     fn agent_transcript_preview(&self, narrow: bool) -> Box<dyn Element> {
         use crate::agent::controller::block::{AgentBlock, AgentBlockKind as Kind, ToolStepStatus};
-        use warpui::elements::{Flex, CrossAxisAlignment, ClippedScrollable, ScrollbarWidth};
+        use warpui::elements::{ClippedScrollable, CrossAxisAlignment, Flex, ScrollbarWidth};
         let theme = Theme::default();
         let make = |id, kind| AgentBlock::new(id, uuid::Uuid::nil(), kind);
-        let tool = |id, name: &str, args: &str, output: &str, expanded| make(id, Kind::ToolStep {
-            tool_id: format!("preview-{id}"), name: name.into(), icon: String::new(),
-            args_summary: args.into(), status: ToolStepStatus::Done,
-            result_summary: Some(output.into()), duration_ms: Some(340), expanded, diff: None,
-        });
+        let tool = |id, name: &str, args: &str, output: &str, expanded| {
+            make(
+                id,
+                Kind::ToolStep {
+                    tool_id: format!("preview-{id}"),
+                    name: name.into(),
+                    icon: String::new(),
+                    args_summary: args.into(),
+                    status: ToolStepStatus::Done,
+                    result_summary: Some(output.into()),
+                    duration_ms: Some(340),
+                    expanded,
+                    diff: None,
+                },
+            )
+        };
         let blocks = vec![
             make(1, Kind::UserQuery { text: "Fix the checkout redirect and verify the payment flow.".into(), author: None, attached_blocks: Vec::new(), attachments: Vec::new(), checkpoint: None }),
             make(2, Kind::TurnGroup { expanded: true, started_at_ms: 0, duration_ms: Some(12400), status_note: None, children: vec![
@@ -1510,19 +2080,57 @@ impl Preview {
         let shimmers = RefCell::new(HashMap::new());
         let diagrams = RefCell::new(HashMap::new());
         let context = crate::terminal::render::BlockRenderContext {
-            entry_hint: None, link_hint: None, hovered_link: None, dir_hover: Default::default(),
-            mouse_states: &self.hovers, shimmer_states: &shimmers, diagram_states: &diagrams,
-            content_width_px: if narrow { 430.0 } else { 850.0 }, theme, mono: self.code,
-            dir_sort: Default::default(), dir_view: Default::default(),
-            feedback_editor: None, question_editor: None, block_filter_editor: None, block_filter_match_index: 0, copied_key: None,
+            entry_hint: None,
+            link_hint: None,
+            hovered_link: None,
+            dir_hover: Default::default(),
+            mouse_states: &self.hovers,
+            shimmer_states: &shimmers,
+            diagram_states: &diagrams,
+            content_width_px: if narrow { 430.0 } else { 850.0 },
+            theme,
+            mono: self.code,
+            dir_sort: Default::default(),
+            dir_view: Default::default(),
+            feedback_editor: None,
+            question_editor: None,
+            block_filter_editor: None,
+            block_filter_match_index: 0,
+            copied_key: None,
         };
         // Laid out as `render_agent_transcript` lays out the real conversation.
         use crate::terminal::render::agent_transcript::{renders_nothing, MESSAGE_GAP};
-        let mut column = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch).with_spacing(MESSAGE_GAP);
-        for block in blocks.iter().filter(|block| !renders_nothing(block)) { column = column.with_child(crate::terminal::render::build_agent_block_element(block, &context, theme, self.code, &HashSet::new())); }
+        let mut column = Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_spacing(MESSAGE_GAP);
+        for block in blocks.iter().filter(|block| !renders_nothing(block)) {
+            column = column.with_child(crate::terminal::render::build_agent_block_element(
+                block,
+                &context,
+                theme,
+                self.code,
+                &HashSet::new(),
+            ));
+        }
         let edge = crate::theme::TERMINAL_PADDING_LEFT;
-        let body = Container::new(column.finish()).with_padding_left(edge).with_padding_right(edge).with_padding_top(16.0).with_padding_bottom(24.0).with_background_color(theme.background).finish();
-        let body = ConstrainedBox::new(body).with_width(if narrow { 490.0 } else { 950.0 }).finish();
-        ClippedScrollable::vertical(self.scroll.clone(), Align::new(body).top_center().finish(), ScrollbarWidth::Auto, theme.sub_text().into(), theme.main_text().into(), theme.background.into()).finish()
+        let body = Container::new(column.finish())
+            .with_padding_left(edge)
+            .with_padding_right(edge)
+            .with_padding_top(16.0)
+            .with_padding_bottom(24.0)
+            .with_background_color(theme.background)
+            .finish();
+        let body = ConstrainedBox::new(body)
+            .with_width(if narrow { 490.0 } else { 950.0 })
+            .finish();
+        ClippedScrollable::vertical(
+            self.scroll.clone(),
+            Align::new(body).top_center().finish(),
+            ScrollbarWidth::Auto,
+            theme.sub_text().into(),
+            theme.main_text().into(),
+            theme.background.into(),
+        )
+        .finish()
     }
 }

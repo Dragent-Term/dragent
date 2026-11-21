@@ -159,25 +159,58 @@ fn agent_launch_uses_external_worktree_home() {
     let output = std::process::Command::new("git")
         .args(["-C", &repo, "worktree", "add", "-b", "agent"])
         .arg(&worktree)
-        .output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let ws = client.create_local_workspace(&repo).unwrap();
     let root_home = client.ensure_terminal_home(&ws, &repo, &repo).unwrap();
     let cwd = worktree.to_string_lossy();
     // Reproduce the old launcher mismatch: the host must still reject it.
-    assert!(client.create_terminal_with_shell(&ws, &root_home.id, None,
-        Some(&cwd), 80, 24, Some("/bin/bash")).unwrap_err()
+    assert!(client
+        .create_terminal_with_shell(
+            &ws,
+            &root_home.id,
+            None,
+            Some(&cwd),
+            80,
+            24,
+            Some("/bin/bash")
+        )
+        .unwrap_err()
         .contains("cwd must stay inside home checkout"));
     let home = client.ensure_terminal_home(&ws, &repo, &cwd).unwrap();
     assert_ne!(root_home.id, home.id);
-    assert_eq!(std::path::Path::new(&home.path), worktree.canonicalize().unwrap());
-    let terminal = client.create_terminal_with_shell(&ws, &home.id,
-        Some("pwd -P > launch-cwd.txt"), Some(&cwd), 80, 24, Some("/bin/bash")).unwrap();
-    assert!(wait_for(Duration::from_secs(10), || {
-        std::fs::read_to_string(worktree.join("launch-cwd.txt"))
-            .is_ok_and(|value| value.trim() == worktree.canonicalize().unwrap().to_string_lossy())
-    }), "launch command must execute inside the selected worktree");
-    assert_eq!(client.ensure_terminal_home(&ws, &repo, &cwd).unwrap().id, home.id);
+    assert_eq!(
+        std::path::Path::new(&home.path),
+        worktree.canonicalize().unwrap()
+    );
+    let terminal = client
+        .create_terminal_with_shell(
+            &ws,
+            &home.id,
+            Some("pwd -P > launch-cwd.txt"),
+            Some(&cwd),
+            80,
+            24,
+            Some("/bin/bash"),
+        )
+        .unwrap();
+    assert!(
+        wait_for(Duration::from_secs(10), || {
+            std::fs::read_to_string(worktree.join("launch-cwd.txt")).is_ok_and(|value| {
+                value.trim() == worktree.canonicalize().unwrap().to_string_lossy()
+            })
+        }),
+        "launch command must execute inside the selected worktree"
+    );
+    assert_eq!(
+        client.ensure_terminal_home(&ws, &repo, &cwd).unwrap().id,
+        home.id
+    );
     client.close_terminal(&ws, &terminal.id).unwrap();
 }
 
@@ -257,29 +290,49 @@ fn host_kill_leaves_sessions_alive() {
         again.host_info().unwrap().pid,
     );
     // Changing active discovery must not redirect an existing pane's authority.
-    unsafe { std::env::set_var(dragent_host::ENDPOINT_FILE_ENV, iso.base.join("other-host.json")); }
+    unsafe {
+        std::env::set_var(
+            dragent_host::ENDPOINT_FILE_ENV,
+            iso.base.join("other-host.json"),
+        );
+    }
     let stayed_with_original_authority = client.ping();
-    unsafe { std::env::set_var(dragent_host::ENDPOINT_FILE_ENV, &iso.endpoint); }
+    unsafe {
+        std::env::set_var(dragent_host::ENDPOINT_FILE_ENV, &iso.endpoint);
+    }
     assert!(stayed_with_original_authority);
     assert!(tail(&client, "ws-adopt", &sess.id).contains("ADOPT-MARKER-1"));
     client
         .send_terminal_input("ws-adopt", &sess.id, b"echo ADOPT-MARKER-2\n")
         .expect("send through original client after adopt");
-    assert!(wait_for(Duration::from_secs(20), ||
-        tail(&client, "ws-adopt", &sess.id).contains("ADOPT-MARKER-2")));
+    assert!(wait_for(Duration::from_secs(20), || tail(
+        &client, "ws-adopt", &sess.id
+    )
+    .contains("ADOPT-MARKER-2")));
     let mut checkpoint_received = false;
-    client.stream_terminal_operations("ws-adopt", &sess.id, 0, |chunk| {
-        checkpoint_received = chunk.resume.is_some();
-        false
-    }).expect("original pane output reconnects");
+    client
+        .stream_terminal_operations("ws-adopt", &sess.id, 0, |chunk| {
+            checkpoint_received = chunk.resume.is_some();
+            false
+        })
+        .expect("original pane output reconnects");
     assert!(checkpoint_received);
 
     // New terminals opened through the retained authority must work too.
-    let fresh = client.create_terminal("ws-adopt", &home.id,
-        Some("echo NEW-AFTER-RESTART"), None, 80, 24).expect("new terminal");
-    assert!(wait_for(Duration::from_secs(20), ||
-        tail(&client, "ws-adopt", &fresh.id).contains("NEW-AFTER-RESTART")));
-
+    let fresh = client
+        .create_terminal(
+            "ws-adopt",
+            &home.id,
+            Some("echo NEW-AFTER-RESTART"),
+            None,
+            80,
+            24,
+        )
+        .expect("new terminal");
+    assert!(wait_for(Duration::from_secs(20), || tail(
+        &client, "ws-adopt", &fresh.id
+    )
+    .contains("NEW-AFTER-RESTART")));
 }
 
 /// Real PTYs and foreground children, without relying on paid CLI accounts.
@@ -379,7 +432,11 @@ done
             connected
                 .stream_terminal_operations(ws, id, 0, |chunk| {
                     let resume = chunk.resume.as_ref().expect("initial atomic checkpoint");
-                    assert!(resume.command.as_ref().unwrap().contains("agent.sh"));
+                    let command = resume.command.as_deref().unwrap_or_default();
+                    assert!(
+                        command.contains("agent.sh"),
+                        "reattached command: {command:?} (round {round}, pane {index})"
+                    );
                     let mut emulator = dragent_terminal::Emulator::new(1, 1);
                     emulator
                         .restore_display_checkpoint(&resume.display)
@@ -1125,9 +1182,15 @@ fn pid_alive(pid: u32) -> bool {
 fn unauthenticated_update_preserves_existing_services() {
     let iso = Isolated::new("update-auth-failure");
     let client = iso.ensure();
-    let ws = client.create_workspace(&iso.base.to_string_lossy()).unwrap();
-    let home = client.create_standalone_session(&ws, "update-home").unwrap();
-    let sess = client.create_terminal(&ws, &home.id, None, None, 80, 24).unwrap();
+    let ws = client
+        .create_workspace(&iso.base.to_string_lossy())
+        .unwrap();
+    let home = client
+        .create_standalone_session(&ws, "update-home")
+        .unwrap();
+    let sess = client
+        .create_terminal(&ws, &home.id, None, None, 80, 24)
+        .unwrap();
     let old_host = client.host_info().unwrap().pid;
     let original_daemon = daemon_manifest(&iso);
     let original_endpoint = std::fs::read(&iso.endpoint).unwrap();
@@ -1144,11 +1207,21 @@ fn unauthenticated_update_preserves_existing_services() {
     let mut manifest = original_daemon.clone();
     manifest.version = dragent_host::DAEMON_PROTOCOL_VERSION - 1;
     manifest.token = "outdated".into();
-    std::fs::write(iso.base.join("pty-daemon.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
-    let error = client.send_terminal_input(&ws, &sess.id, b"echo preserved\n").unwrap_err();
+    std::fs::write(
+        iso.base.join("pty-daemon.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let error = client
+        .send_terminal_input(&ws, &sess.id, b"echo preserved\n")
+        .unwrap_err();
     assert!(error.contains("preserved"), "{error}");
     assert!(pid_alive(original_daemon.pid));
-    std::fs::write(iso.base.join("pty-daemon.json"), serde_json::to_vec(&original_daemon).unwrap()).unwrap();
+    std::fs::write(
+        iso.base.join("pty-daemon.json"),
+        serde_json::to_vec(&original_daemon).unwrap(),
+    )
+    .unwrap();
     client.close_terminal(&ws, &sess.id).unwrap();
 }
 
@@ -1159,22 +1232,45 @@ fn unauthenticated_update_preserves_existing_services() {
 fn application_build_update_preserves_foreground_sessions() {
     let iso = Isolated::new("application-build-update");
     let client = iso.ensure();
-    let ws = client.create_workspace(&iso.base.to_string_lossy()).unwrap();
-    let home = client.create_standalone_session(&ws, "build-update-home").unwrap();
+    let ws = client
+        .create_workspace(&iso.base.to_string_lossy())
+        .unwrap();
+    let home = client
+        .create_standalone_session(&ws, "build-update-home")
+        .unwrap();
     let script = iso.base.join("agent.sh");
-    std::fs::write(&script, r#"printf 'READY-%s:%s\n' "$1" "$$"
+    std::fs::write(
+        &script,
+        r#"printf 'READY-%s:%s\n' "$1" "$$"
 while IFS= read -r value; do printf 'REPLY-%s:%s:%s\n' "$1" "$$" "$value"; done
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let mut sessions = Vec::new();
     for name in ["A", "B"] {
         let command = format!("/bin/bash '{}' {name}", script.display());
-        let sess = client.create_terminal(&ws, &home.id, Some(&command), None, 80, 24).unwrap();
+        let sess = client
+            .create_terminal(&ws, &home.id, Some(&command), None, 80, 24)
+            .unwrap();
         let prefix = format!("READY-{name}:");
-        let process = |text: &str| text.split(&prefix).skip(1).find_map(|part| {
-            part.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse::<u32>().ok()
-        });
-        assert!(wait_for(Duration::from_secs(15), || process(&tail(&client, &ws, &sess.id)).is_some()));
-        sessions.push((sess.id.clone(), name, process(&tail(&client, &ws, &sess.id)).unwrap()));
+        let process = |text: &str| {
+            text.split(&prefix).skip(1).find_map(|part| {
+                part.chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse::<u32>()
+                    .ok()
+            })
+        };
+        assert!(wait_for(Duration::from_secs(15), || process(&tail(
+            &client, &ws, &sess.id
+        ))
+        .is_some()));
+        sessions.push((
+            sess.id.clone(),
+            name,
+            process(&tail(&client, &ws, &sess.id)).unwrap(),
+        ));
     }
     let old_host = client.host_info().unwrap().pid;
     let old_daemon = daemon_manifest(&iso);
@@ -1182,8 +1278,12 @@ while IFS= read -r value; do printf 'REPLY-%s:%s:%s\n' "$1" "$$" "$value"; done
     std::fs::copy(host_bin(), &next_binary).unwrap();
     // macOS copyfile may preserve the source mtime. Stamp the installed
     // successor artifact as a new build without changing its wire protocol.
-    std::fs::File::options().write(true).open(&next_binary).unwrap()
-        .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now())).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&next_binary)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
+        .unwrap();
     let fresh = HostClient::ensure_host_with(&next_binary).expect("automatic host update");
     assert_ne!(fresh.host_info().unwrap().pid, old_host);
     assert_eq!(fresh.list_terminals(&ws).unwrap().len(), 2);
@@ -1193,9 +1293,16 @@ while IFS= read -r value; do printf 'REPLY-%s:%s:%s\n' "$1" "$$" "$value"; done
     assert_eq!(updated_daemon.version, old_daemon.version);
     for (id, name, pid) in sessions {
         assert!(pid_alive(pid));
-        fresh.send_terminal_input(&ws, &id, format!("input-{name}\n").as_bytes()).unwrap();
+        fresh
+            .send_terminal_input(&ws, &id, format!("input-{name}\n").as_bytes())
+            .unwrap();
         let expected = format!("REPLY-{name}:{pid}:input-{name}");
-        assert!(wait_for(Duration::from_secs(15), || tail(&fresh, &ws, &id).contains(&expected)), "same process must receive input: {}", tail(&fresh, &ws, &id));
+        assert!(
+            wait_for(Duration::from_secs(15), || tail(&fresh, &ws, &id)
+                .contains(&expected)),
+            "same process must receive input: {}",
+            tail(&fresh, &ws, &id)
+        );
         assert!(fresh.read_terminal_screen(&ws, &id).unwrap().complete);
         fresh.close_terminal(&ws, &id).unwrap();
     }
@@ -1206,20 +1313,49 @@ while IFS= read -r value; do printf 'REPLY-%s:%s:%s\n' "$1" "$$" "$value"; done
 fn failed_daemon_successor_preserves_input_transport() {
     let iso = Isolated::new("failed-daemon-update");
     let client = iso.ensure();
-    let ws = client.create_workspace(&iso.base.to_string_lossy()).unwrap();
-    let home = client.create_standalone_session(&ws, "failed-update-home").unwrap();
-    let sess = client.create_terminal(&ws, &home.id, Some("printf ready > before-update.txt"), None, 80, 24).unwrap();
-    assert!(wait_for(Duration::from_secs(15), || std::fs::read_to_string(std::path::Path::new(&home.path).join("before-update.txt")).is_ok_and(|value| value == "ready")));
+    let ws = client
+        .create_workspace(&iso.base.to_string_lossy())
+        .unwrap();
+    let home = client
+        .create_standalone_session(&ws, "failed-update-home")
+        .unwrap();
+    let sess = client
+        .create_terminal(
+            &ws,
+            &home.id,
+            Some("printf ready > before-update.txt"),
+            None,
+            80,
+            24,
+        )
+        .unwrap();
+    assert!(wait_for(Duration::from_secs(15), || {
+        std::fs::read_to_string(std::path::Path::new(&home.path).join("before-update.txt"))
+            .is_ok_and(|value| value == "ready")
+    }));
     let original = daemon_manifest(&iso);
     let bad_binary = iso.base.join("not-an-executable");
     std::fs::write(&bad_binary, "invalid successor").unwrap();
     let supervisor = dragent_host::pty_supervisor::PtySupervisor::new(iso.base.clone(), bad_binary);
-    supervisor.ensure().expect("compatible original daemon should remain usable");
+    supervisor
+        .ensure()
+        .expect("compatible original daemon should remain usable");
     assert_eq!(daemon_manifest(&iso).pid, original.pid);
     assert!(pid_alive(original.pid));
-    supervisor.ensure().expect("deferred updates should reuse the healthy daemon");
-    client.send_terminal_input(&ws, &sess.id, b"printf survived > after-update.txt\n").unwrap();
-    assert!(wait_for(Duration::from_secs(15), || std::fs::read_to_string(std::path::Path::new(&home.path).join("after-update.txt")).is_ok_and(|value| value == "survived")), "output after failed successor: {:?}", tail(&client, &ws, &sess.id));
+    supervisor
+        .ensure()
+        .expect("deferred updates should reuse the healthy daemon");
+    client
+        .send_terminal_input(&ws, &sess.id, b"printf survived > after-update.txt\n")
+        .unwrap();
+    assert!(
+        wait_for(Duration::from_secs(15), || std::fs::read_to_string(
+            std::path::Path::new(&home.path).join("after-update.txt")
+        )
+        .is_ok_and(|value| value == "survived")),
+        "output after failed successor: {:?}",
+        tail(&client, &ws, &sess.id)
+    );
     client.close_terminal(&ws, &sess.id).unwrap();
 }
 
@@ -1419,9 +1555,7 @@ fn start_shell(
     let ws = client
         .create_workspace(&iso.base.to_string_lossy())
         .expect("workspace");
-    let home = client
-        .create_standalone_session(&ws, name)
-        .expect("home");
+    let home = client.create_standalone_session(&ws, name).expect("home");
     let session = client
         .create_terminal(
             &ws,
@@ -1513,7 +1647,11 @@ fn a_daemon_that_stops_answering_is_stopped_before_it_is_replaced() {
 
     // Within the grace period nothing new may start.
     let _ = client.send_terminal_input(&ws, &session.id, b"echo hello\n");
-    assert_eq!(daemon_manifest(&iso).pid, frozen.pid, "a second daemon started");
+    assert_eq!(
+        daemon_manifest(&iso).pid,
+        frozen.pid,
+        "a second daemon started"
+    );
     assert!(pid_alive(shell), "the shell must still be there");
 
     // After it, the frozen daemon goes first, and its shell with it.
@@ -1591,7 +1729,11 @@ fn a_replaced_daemon_closes_once_nothing_is_attached() {
     );
 
     let manifest = daemon_manifest(&iso);
-    assert_eq!(manifest.pid, replacement.id(), "the replacement keeps the manifest");
+    assert_eq!(
+        manifest.pid,
+        replacement.id(),
+        "the replacement keeps the manifest"
+    );
     let (_, _, again) = start_shell(&client, &iso, "after-home", "true");
     assert!(pid_alive(again), "the replacement must still accept work");
     let _ = replacement.kill();

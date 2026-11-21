@@ -284,8 +284,10 @@ fn session_outlives_creator_client() {
         let client = iso.ensure();
         let ws = client.create_workspace(&repo).expect("workspace");
         let home = client.ensure_home(&ws, &repo).expect("ensure");
+        // A plain shell: the round trip below is the shell running the
+        // command, not the terminal echoing keystrokes back.
         let sess = client
-            .create_terminal(&ws, &home.id, Some("sleep 30"), None, 80, 24)
+            .create_terminal(&ws, &home.id, None, None, 80, 24)
             .expect("create terminal");
         // The daemon is a separate process, detached from the creator.
         assert_ne!(
@@ -310,7 +312,7 @@ fn session_outlives_creator_client() {
     );
     // Full duplex through the fresh client.
     client
-        .send_terminal_input(&ws, &sess_id, b"echo SURVIVE-DUPLEX-3\n")
+        .send_terminal_input(&ws, &sess_id, b"echo SURVIVE-DUPLEX-$((1 + 2))\n")
         .expect("send after reconnect");
     let ok = wait_for(Duration::from_secs(10), || {
         client

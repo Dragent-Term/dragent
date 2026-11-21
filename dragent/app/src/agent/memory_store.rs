@@ -4,7 +4,7 @@
 //!   `~/.dragent/projects/{hex8(sha256(cwd))}/memory/`
 //!
 //! Each memory is an individual `.md` file with YAML-style frontmatter:
-//! ```
+//! ```text
 //! ---
 //! name: short-slug
 //! description: one-line summary used for relevance matching

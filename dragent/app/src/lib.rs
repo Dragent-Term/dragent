@@ -7,53 +7,54 @@
 pub mod agent;
 pub mod api;
 pub mod auth;
+pub mod automation;
 #[cfg(not(target_family = "wasm"))]
 pub mod automations;
-#[cfg(not(target_family = "wasm"))]
-pub mod cli;
-#[cfg(not(target_family = "wasm"))]
-pub mod teams;
-#[cfg(not(target_family = "wasm"))]
-pub mod tasks;
-#[cfg(not(target_family = "wasm"))]
-pub mod tasks_page;
-#[cfg(not(target_family = "wasm"))]
-pub mod pull_requests;
-pub mod automation;
 pub mod autoupdate;
 pub mod bg;
 pub mod channel_ext;
 pub mod chat;
+#[cfg(not(target_family = "wasm"))]
+pub mod cli;
+pub mod community;
 pub mod confirm;
-mod error_notice;
 pub mod console;
 pub mod diagnostics;
+mod error_notice;
 pub mod fonts;
 pub mod git_cmd;
 pub mod git_features;
 pub mod git_status;
 #[cfg(not(target_family = "wasm"))]
 pub mod integrations;
-#[cfg(not(target_family = "wasm"))]
-pub mod ui_preview;
-pub mod organisation_context;
 pub mod machine_ui;
 pub mod notifications;
+pub mod organisation_context;
+#[cfg(not(target_family = "wasm"))]
+pub mod pull_requests;
+#[cfg(not(target_family = "wasm"))]
+pub mod tasks;
+#[cfg(not(target_family = "wasm"))]
+pub mod tasks_page;
+#[cfg(not(target_family = "wasm"))]
+pub mod teams;
+#[cfg(not(target_family = "wasm"))]
+pub mod ui_preview;
 pub use dragent_viewer::icons;
+pub mod browser;
 pub mod process_ext;
 pub mod realtime;
 pub mod remote_fs;
-#[cfg(not(target_family = "wasm"))]
-pub(crate) mod team_source;
 pub mod root_view;
 pub mod settings;
 pub mod setup;
 pub mod shared_input;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod team_source;
 pub mod terminal;
 pub mod viewer_view;
 pub mod voice;
 pub mod workspace;
-pub mod browser;
 pub mod workspace_features;
 
 // `theme` now lives in the shared, native-free `dragent_viewer` crate (consumed
@@ -66,8 +67,8 @@ pub use dragent_viewer::theme;
 mod desktop;
 #[cfg(not(target_family = "wasm"))]
 mod hang_watchdog;
-pub mod worktree_sweep;
 #[cfg(not(target_family = "wasm"))]
 mod window_frame;
+pub mod worktree_sweep;
 #[cfg(not(target_family = "wasm"))]
 pub use desktop::run;

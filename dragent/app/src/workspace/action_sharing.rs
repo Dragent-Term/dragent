@@ -158,6 +158,12 @@ impl WorkspaceView {
             WorkspaceAction::OpenExternalUrl { url } => {
                 self.open_link(url, ctx);
             }
+            WorkspaceAction::StarOnGitHub => {
+                self.star_on_github(ctx);
+            }
+            WorkspaceAction::FollowOnX => {
+                ctx.open_url(crate::community::X_URL);
+            }
             WorkspaceAction::ShareSession { tab_id } => {
                 // Dismiss the tab menu / content-header popover regardless of outcome.
                 self.content_header_menu_open = false;

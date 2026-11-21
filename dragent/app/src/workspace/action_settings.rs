@@ -220,7 +220,9 @@ impl WorkspaceView {
                 }
             }
             WorkspaceAction::SignInFromHeader => {
-                self.login_prompt_open = false;
+                // The prompt stays open showing the code to match in the
+                // browser; it closes once the sign-in completes.
+                self.login_prompt_open = true;
                 let auth = AuthManager::handle(ctx);
                 let url =
                     ctx.update_model(&auth, |auth, auth_ctx| auth.begin_browser_sign_in(auth_ctx));
@@ -229,6 +231,8 @@ impl WorkspaceView {
             }
             WorkspaceAction::CloseLoginPrompt => {
                 self.login_prompt_open = false;
+                let auth = AuthManager::handle(ctx);
+                ctx.update_model(&auth, |auth, _| auth.cancel_browser_sign_in());
                 ctx.notify();
             }
             WorkspaceAction::RestartLanguageServices => {

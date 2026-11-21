@@ -391,7 +391,8 @@ impl WorkspaceView {
                 if !was_expanded && !was_loaded {
                     // An older whole-tree snapshot must not overwrite newly
                     // expanded children when it finishes after this request.
-                    self.document_tree_refresh_epoch = self.document_tree_refresh_epoch.wrapping_add(1);
+                    self.document_tree_refresh_epoch =
+                        self.document_tree_refresh_epoch.wrapping_add(1);
                     let root = self.document_index_root.clone();
                     let sidebar_model = self.project_sidebar_model.clone();
                     let expected_root = root.clone();
@@ -404,7 +405,9 @@ impl WorkspaceView {
                             )
                         },
                         move |view, (scanned_root, index, directory), ctx| {
-                            if view.document_index_root != expected_root || scanned_root != expected_root {
+                            if view.document_index_root != expected_root
+                                || scanned_root != expected_root
+                            {
                                 return;
                             }
                             view.document_index.merge(index.entries().to_vec());
@@ -434,22 +437,60 @@ impl WorkspaceView {
             return;
         }
         self.agent_usage_loading = true;
-        ctx.spawn(async { dragent_host::agent_usage::accounts() }, |view, accounts, ctx| {
-            view.agent_usage_loading = false;
-            if view.agent_usage != accounts {
-                view.agent_usage = accounts;
-                ctx.notify();
-            }
+        ctx.spawn(
+            async { dragent_host::agent_usage::accounts() },
+            |view, accounts, ctx| {
+                view.agent_usage_loading = false;
+                if view.agent_usage != accounts {
+                    view.agent_usage = accounts;
+                    ctx.notify();
+                }
+            },
+        );
+    }
+
+    /// Read the repository's star count and the person's star off the UI
+    /// thread, then redraw the places that show them.
+    pub(crate) fn refresh_community(&mut self, ctx: &mut ViewContext<Self>) {
+        ctx.spawn(async { crate::community::refresh() }, |view, _, ctx| {
+            view.community_changed(ctx);
         });
+    }
+
+    /// Star right here, like any in-app action: "Starring…", then
+    /// "Starred on GitHub". It stars with the person's own `gh` sign-in;
+    /// only when that can't be done (no `gh`, signed out) does it open the
+    /// repository in the system browser. Already starred: nothing to do.
+    pub(crate) fn star_on_github(&mut self, ctx: &mut ViewContext<Self>) {
+        if crate::community::state().starred == Some(true)
+            || !crate::community::begin_starring()
+        {
+            return;
+        }
+        self.community_changed(ctx);
+        ctx.spawn(async { crate::community::star() }, |view, result, ctx| {
+            if let Err(error) = result {
+                log::warn!("starring on GitHub failed, opening the repository: {error}");
+                ctx.open_url(crate::community::GITHUB_URL);
+            }
+            view.community_changed(ctx);
+        });
+    }
+
+    fn community_changed(&mut self, ctx: &mut ViewContext<Self>) {
+        ctx.update_view(&self.left_panel_view, |_, lp_ctx| lp_ctx.notify());
+        ctx.update_view(&self.settings_view, |_, settings_ctx| settings_ctx.notify());
+        ctx.notify();
     }
 
     /// Keep the chip current: read now, then every minute.
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn poll_agent_usage(&mut self, ctx: &mut ViewContext<Self>) {
         self.refresh_agent_usage(ctx);
-        ctx.spawn(warpui::r#async::Timer::after(AGENT_USAGE_POLL), |view, _, ctx| {
-            view.poll_agent_usage(ctx)
-        });
+        ctx.spawn(
+            warpui::r#async::Timer::after(AGENT_USAGE_POLL),
+            |view, _, ctx| view.poll_agent_usage(ctx),
+        );
     }
 
     #[cfg(target_family = "wasm")]

@@ -152,6 +152,7 @@ impl WorkspaceView {
         view.reconcile_workspace_tool_outcomes(ctx);
         view.reconcile_workspace_integrations(ctx);
         view.poll_agent_usage(ctx);
+        view.refresh_community(ctx);
 
         for dock in restored_document.dock_terminals.clone() {
             let serialized_cwd = match &dock.pane {
@@ -306,9 +307,10 @@ impl WorkspaceView {
         #[cfg(not(target_family = "wasm"))]
         {
             let editor = view.review_instructions_editor.clone();
-            ctx.subscribe_to_view(&editor, |view,_,event,ctx| {
-                if let InputEditorEvent::Changed { text,.. } = event {
-                    view.review_instructions = text.clone(); ctx.notify();
+            ctx.subscribe_to_view(&editor, |view, _, event, ctx| {
+                if let InputEditorEvent::Changed { text, .. } = event {
+                    view.review_instructions = text.clone();
+                    ctx.notify();
                 }
             });
         }
@@ -450,8 +452,13 @@ impl WorkspaceView {
         view.sync_window_title(ctx);
 
         // One machine store feeds Settings, Add Project and remote projects.
-        let machines = <crate::settings::machines_store::MachinesStore as warpui::SingletonEntity>::handle(ctx);
-        ctx.subscribe_to_model(&machines, |ws, _, _event, ctx| ws.remote_machines_changed(ctx));
+        let machines =
+            <crate::settings::machines_store::MachinesStore as warpui::SingletonEntity>::handle(
+                ctx,
+            );
+        ctx.subscribe_to_model(&machines, |ws, _, _event, ctx| {
+            ws.remote_machines_changed(ctx)
+        });
         // Remote projects restored from the last session reconnect their
         // machines, so their files and terminals come back like local ones.
         let restored_machines: std::collections::BTreeSet<String> = view
@@ -478,7 +485,10 @@ impl WorkspaceView {
                     ws.handle_action(&WorkspaceAction::OpenBillingFromHeader, ctx);
                 }
                 crate::automations::AutomationsEvent::InstallAgent(agent) => {
-                    ws.handle_action(&WorkspaceAction::OpenPromptAgentInstall { agent: *agent }, ctx);
+                    ws.handle_action(
+                        &WorkspaceAction::OpenPromptAgentInstall { agent: *agent },
+                        ctx,
+                    );
                 }
                 crate::automations::AutomationsEvent::RefreshAgents => {
                     ws.refresh_prompt_agents(ctx);
@@ -488,20 +498,32 @@ impl WorkspaceView {
             // The Teams page points at agents' tabs; the sidebar counts
             // what its leads left for the person.
             let prs = view.pull_requests_view.clone();
-            ctx.subscribe_to_view(&prs, |ws, _, event, ctx| ws.on_pull_request_event(event, ctx));
+            ctx.subscribe_to_view(&prs, |ws, _, event, ctx| {
+                ws.on_pull_request_event(event, ctx)
+            });
             let teams = view.teams_view.clone();
             ctx.subscribe_to_view(&teams, |ws, _, event, ctx| match event {
                 crate::teams::TeamsEvent::OpenPane { pane, workspace } => {
                     ws.close_teams(ctx);
                     ws.open_team_pane(pane, workspace.clone(), ctx);
                 }
-                crate::teams::TeamsEvent::NewLead { team, agent, model, cwd, prompt } => {
+                crate::teams::TeamsEvent::NewLead {
+                    team,
+                    agent,
+                    model,
+                    cwd,
+                    prompt,
+                } => {
                     ws.start_new_lead(team.clone(), agent, model.clone(), cwd.clone(), prompt, ctx);
                 }
                 crate::teams::TeamsEvent::CleanUp { project, remove } => {
                     ws.clean_up_team(project.clone(), remove.clone(), false, ctx);
                 }
-                crate::teams::TeamsEvent::Delete { project, remove, workers } => {
+                crate::teams::TeamsEvent::Delete {
+                    project,
+                    remove,
+                    workers,
+                } => {
                     ws.delete_team_work(project.clone(), remove.clone(), workers, ctx);
                 }
             });
@@ -543,27 +565,38 @@ impl WorkspaceView {
         let settings_handle = view.settings_view.clone();
         ctx.subscribe_to_view(&settings_handle, |ws, _, event, ctx| {
             match event {
-                SettingsEvent::AgentAccountError(error) => ws.show_error_notice("Agent account", error.clone(), ctx),
+                SettingsEvent::AgentAccountError(error) => {
+                    ws.show_error_notice("Agent account", error.clone(), ctx)
+                }
                 SettingsEvent::AgentAccountLogin(id) => {
                     match dragent_host::agent_sessions::helper_executable() {
                         Ok(helper) => {
                             let shell = dragent_pty::resolve_shell(None);
-                            let command = format!("{} --dragent-agent-account-login {}", dragent_host::agent_sessions::quote(&helper.to_string_lossy(), &shell), id);
-                            ws.open_new_workspace_tab(Some("Agent account sign-in"), Some(&command), ctx);
+                            let command = format!(
+                                "{} --dragent-agent-account-login {}",
+                                dragent_host::agent_sessions::quote(
+                                    &helper.to_string_lossy(),
+                                    &shell
+                                ),
+                                id
+                            );
+                            ws.open_new_workspace_tab(
+                                Some("Agent account sign-in"),
+                                Some(&command),
+                                ctx,
+                            );
                         }
                         Err(error) => ws.show_error_notice("Agent account", error, ctx),
                     }
                 }
-                SettingsEvent::AgentAccountSignIn { machine_id, title, command } => {
-                    match machine_id {
-                        None => ws.open_new_workspace_tab(
-                            Some(title),
-                            Some(command),
-                            ctx,
-                        ),
-                        Some(id) => ws.open_account_sign_in_terminal(id, title, command, ctx),
-                    }
-                }
+                SettingsEvent::AgentAccountSignIn {
+                    machine_id,
+                    title,
+                    command,
+                } => match machine_id {
+                    None => ws.open_new_workspace_tab(Some(title), Some(command), ctx),
+                    Some(id) => ws.open_account_sign_in_terminal(id, title, command, ctx),
+                },
                 SettingsEvent::Project(action) => ws.handle_projects_settings(action, ctx),
                 SettingsEvent::MachinesChanged => ws.remote_machines_changed(ctx),
                 SettingsEvent::AddRemoteProject(machine) => {
@@ -579,7 +612,10 @@ impl WorkspaceView {
                     ws.remove_remote_project(id, ctx);
                     ctx.notify();
                 }
-                SettingsEvent::AttachRemoteSession { machine_id, session } => {
+                SettingsEvent::AttachRemoteSession {
+                    machine_id,
+                    session,
+                } => {
                     ws.handle_remote_action(
                         &super::remote_project::RemoteAction::Attach {
                             machine_id: machine_id.clone(),
@@ -651,7 +687,7 @@ impl WorkspaceView {
                         editor.set_theme(new_theme, editor_ctx);
                     });
                     let prs = ws.pull_requests_view.clone();
-                    ctx.update_view(&prs, |page,c| page.set_theme(new_theme,c));
+                    ctx.update_view(&prs, |page, c| page.set_theme(new_theme, c));
                     let teams = ws.teams_view.clone();
                     ctx.update_view(&teams, |page, page_ctx| {
                         page.set_theme(new_theme, page_ctx);
@@ -737,13 +773,20 @@ impl WorkspaceView {
                     | AuthManagerEvent::LoggedOut
                     | AuthManagerEvent::SessionExpired
             ) {
-                #[cfg(not(target_family="wasm"))]
-                if matches!(event,AuthManagerEvent::LoggedOut|AuthManagerEvent::SessionExpired){
-                    ws.pull_requests_open=false;
-                    ctx.update_view(&ws.pull_requests_view,|page,c|page.reset(c));
+                #[cfg(not(target_family = "wasm"))]
+                if matches!(
+                    event,
+                    AuthManagerEvent::LoggedOut | AuthManagerEvent::SessionExpired
+                ) {
+                    ws.pull_requests_open = false;
+                    ctx.update_view(&ws.pull_requests_view, |page, c| page.reset(c));
                 }
                 let auth = AuthManager::handle(ctx);
                 ws.account_logged_in_cache = ctx.read_model(&auth, |a, _| a.is_logged_in());
+                if ws.account_logged_in_cache {
+                    // A sign-in started from the prompt finished.
+                    ws.login_prompt_open = false;
+                }
                 let sessions = SessionManager::handle(ctx);
                 let authenticated = ws.account_logged_in_cache;
                 ctx.update_model(&sessions, |manager, mctx| {

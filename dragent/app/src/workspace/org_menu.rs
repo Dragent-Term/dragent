@@ -230,9 +230,7 @@ pub(crate) fn render_org_footer(
     let mut row = Flex::row()
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_spacing(2.0)
-        .with_child(
-            Expanded::new(1.0, SavePosition::new(trigger, ORG_MENU_TAG).finish()).finish(),
-        )
+        .with_child(Expanded::new(1.0, SavePosition::new(trigger, ORG_MENU_TAG).finish()).finish())
         .with_child(
             SavePosition::new(
                 icon_button(
@@ -265,13 +263,54 @@ pub(crate) fn render_org_footer(
         )
     });
 
-    Container::new(row.finish())
-        .with_border(Border::top(1.0).with_border_color(theme.border()))
-        .with_padding_left(8.0)
-        .with_padding_right(8.0)
-        .with_padding_top(7.0)
-        .with_padding_bottom(7.0)
+    // Star on GitHub sits above the footer's border, outside it.
+    let star = crate::community::render_star_button(
+        theme,
+        ui,
+        crate::community::state(),
+        true,
+        mouse(states, "org-footer-star"),
+        move |ectx| ectx.dispatch_typed_action_for(workspace_id, WorkspaceAction::StarOnGitHub),
+    );
+
+    Flex::column()
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_child(
+            Container::new(star)
+                .with_padding_left(10.0)
+                .with_padding_right(10.0)
+                .with_padding_bottom(8.0)
+                .finish(),
+        )
+        .with_child(
+            Container::new(row.finish())
+                .with_border(Border::top(1.0).with_border_color(theme.border()))
+                .with_padding_left(8.0)
+                .with_padding_right(8.0)
+                .with_padding_top(7.0)
+                .with_padding_bottom(7.0)
+                .finish(),
+        )
         .finish()
+}
+
+/// The footer with demo data, for the previews and README screenshots.
+pub(crate) fn render_demo_org_footer(
+    theme: &Theme,
+    ui: FamilyId,
+    workspace_id: EntityId,
+    states: &States,
+) -> Box<dyn Element> {
+    let summary = OrgSummary {
+        signed_in: true,
+        name: "Acme".into(),
+        plan: Some("PRO".into()),
+        email: "you@acme.dev".into(),
+        organisations: Vec::new(),
+        active_id: None,
+        switching: false,
+    };
+    render_org_footer(&summary, false, theme, ui, workspace_id, states)
 }
 
 fn icon_button(
@@ -385,7 +424,13 @@ impl Row {
     }
 }
 
-fn menu_row(row: Row, theme: &Theme, ui: FamilyId, view_id: EntityId, states: &States) -> Box<dyn Element> {
+fn menu_row(
+    row: Row,
+    theme: &Theme,
+    ui: FamilyId,
+    view_id: EntityId,
+    states: &States,
+) -> Box<dyn Element> {
     let theme_owned = *theme;
     let Row {
         key,
@@ -619,10 +664,16 @@ pub(crate) fn org_menu_overlays(
     let mut overlays = vec![(menu_card(theme, rows), above(ORG_MENU_TAG))];
     match submenu {
         Some(OrgSubmenu::Switch) if summary.signed_in => {
-            overlays.push((switch_submenu(summary, theme, ui, view_id, states), beside(SWITCH_ROW_TAG)));
+            overlays.push((
+                switch_submenu(summary, theme, ui, view_id, states),
+                beside(SWITCH_ROW_TAG),
+            ));
         }
         Some(OrgSubmenu::Contact) => {
-            overlays.push((contact_submenu(theme, ui, view_id, states), beside(CONTACT_ROW_TAG)));
+            overlays.push((
+                contact_submenu(theme, ui, view_id, states),
+                beside(CONTACT_ROW_TAG),
+            ));
         }
         _ => {}
     }
@@ -648,7 +699,11 @@ fn switch_submenu(
                 icon: None,
                 leading: Some(org_badge(theme, ui, name, 16.0)),
                 label: name.clone(),
-                trailing: if active { Trailing::Check } else { Trailing::None },
+                trailing: if active {
+                    Trailing::Check
+                } else {
+                    Trailing::None
+                },
                 action: Some(if active {
                     WorkspaceAction::CloseOrgMenu
                 } else {
@@ -675,7 +730,12 @@ fn switch_submenu(
     menu_card(theme, rows)
 }
 
-fn contact_submenu(theme: &Theme, ui: FamilyId, view_id: EntityId, states: &States) -> Box<dyn Element> {
+fn contact_submenu(
+    theme: &Theme,
+    ui: FamilyId,
+    view_id: EntityId,
+    states: &States,
+) -> Box<dyn Element> {
     let link = |key: &str, icon: AppIcon, label: &str, url: String| {
         let mut row = Row::new(key, icon, label, WorkspaceAction::OpenExternalUrl { url });
         row.hover = None;
@@ -684,7 +744,12 @@ fn contact_submenu(theme: &Theme, ui: FamilyId, view_id: EntityId, states: &Stat
     menu_card(
         theme,
         vec![
-            link("contact-github", AppIcon::GitHub, "GitHub", GITHUB_URL.into()),
+            link(
+                "contact-github",
+                AppIcon::GitHub,
+                "GitHub",
+                GITHUB_URL.into(),
+            ),
             link(
                 "contact-email",
                 AppIcon::Asset("icons/mail.svg"),

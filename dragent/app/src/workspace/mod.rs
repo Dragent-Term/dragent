@@ -75,6 +75,7 @@ mod language_services_tray;
 mod left_panel;
 pub mod multi_diff_editor;
 mod org_menu;
+pub(crate) use org_menu::render_demo_org_footer;
 mod overlays_sharing;
 mod pane;
 mod pane_layout;

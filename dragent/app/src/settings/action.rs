@@ -146,6 +146,8 @@ pub enum SettingsAction {
     ToggleLogoutDontAsk,
     OpenPrivacyPolicy,
     OpenDocumentation,
+    StarOnGitHub,
+    FollowOnX,
     ResetOnboarding,
     CheckForUpdates,
     CopyVersion,
@@ -170,7 +172,10 @@ pub enum SettingsAction {
     /// Enable/disable one plugin id (MCP server names are plugin ids).
     TogglePluginEnabled(String),
     /// Persist first-run approval of a plugin at a consent version.
-    SetPluginConsent { plugin: String, version: String },
+    SetPluginConsent {
+        plugin: String,
+        version: String,
+    },
     /// Gate for artifact (session) sharing UI + backend.
     ToggleArtifactSharing,
     // ── Generic dropdown state ────────────────────────────────────────────────
@@ -208,7 +213,10 @@ pub enum SettingsAction {
     StartRebind(String),
     CancelRebind,
     /// Commit `chord` for `action_id` (validated; invalid stays in edit mode).
-    SetBinding { action: String, chord: String },
+    SetBinding {
+        action: String,
+        chord: String,
+    },
     ResetBinding(String),
     ResetAllBindings,
     SelectShortcutPolicy(super::shortcut_settings::TerminalShortcutPolicy),
@@ -357,7 +365,10 @@ pub enum SettingsAction {
     RemovePrBotOverride(usize),
     AddOpenInApp,
     RemoveOpenInApp(usize),
-    OpenInApp { app: String, path: String },
+    OpenInApp {
+        app: String,
+        path: String,
+    },
 
     // ── General / workspace / confirmations / setup-guide ─────
     SetWorkspaceDir(Option<String>),
@@ -376,20 +387,66 @@ pub enum SettingsAction {
     // ── Per-project repo overrides (persisted in RepoSettingsStore) ─────────
     SelectRepoProject(std::path::PathBuf),
     ClearRepoOverride(std::path::PathBuf),
-    SetRepoBaseRef { project: std::path::PathBuf, value: Option<String> },
-    SetRepoBasePath { project: std::path::PathBuf, value: Option<String> },
-    SetRepoHookMode { project: std::path::PathBuf, value: Option<String> },
-    AddRepoHookScript { project: std::path::PathBuf },
-    RemoveRepoHookScript { project: std::path::PathBuf, index: usize },
-    SetRepoIssueSource { project: std::path::PathBuf, value: String },
-    SetRepoGhAccount { project: std::path::PathBuf, value: Option<String> },
-    SetRepoForkSync { project: std::path::PathBuf, value: Option<String> },
-    SetRepoIdentity { project: std::path::PathBuf, value: Option<String> },
-    SetRepoVisibility { project: std::path::PathBuf, value: Option<String> },
-    AddRepoSymlink { project: std::path::PathBuf },
-    RemoveRepoSymlink { project: std::path::PathBuf, index: usize },
-    SetRepoGroupId { project: std::path::PathBuf, value: Option<String> },
-    SetRepoOrder { project: std::path::PathBuf, value: i32 },
-    SetRepoHostSetup { project: std::path::PathBuf, value: Option<String> },
-    SetRepoWindowsRuntime { project: std::path::PathBuf, value: Option<String> },
+    SetRepoBaseRef {
+        project: std::path::PathBuf,
+        value: Option<String>,
+    },
+    SetRepoBasePath {
+        project: std::path::PathBuf,
+        value: Option<String>,
+    },
+    SetRepoHookMode {
+        project: std::path::PathBuf,
+        value: Option<String>,
+    },
+    AddRepoHookScript {
+        project: std::path::PathBuf,
+    },
+    RemoveRepoHookScript {
+        project: std::path::PathBuf,
+        index: usize,
+    },
+    SetRepoIssueSource {
+        project: std::path::PathBuf,
+        value: String,
+    },
+    SetRepoGhAccount {
+        project: std::path::PathBuf,
+        value: Option<String>,
+    },
+    SetRepoForkSync {
+        project: std::path::PathBuf,
+        value: Option<String>,
+    },
+    SetRepoIdentity {
+        project: std::path::PathBuf,
+        value: Option<String>,
+    },
+    SetRepoVisibility {
+        project: std::path::PathBuf,
+        value: Option<String>,
+    },
+    AddRepoSymlink {
+        project: std::path::PathBuf,
+    },
+    RemoveRepoSymlink {
+        project: std::path::PathBuf,
+        index: usize,
+    },
+    SetRepoGroupId {
+        project: std::path::PathBuf,
+        value: Option<String>,
+    },
+    SetRepoOrder {
+        project: std::path::PathBuf,
+        value: i32,
+    },
+    SetRepoHostSetup {
+        project: std::path::PathBuf,
+        value: Option<String>,
+    },
+    SetRepoWindowsRuntime {
+        project: std::path::PathBuf,
+        value: Option<String>,
+    },
 }

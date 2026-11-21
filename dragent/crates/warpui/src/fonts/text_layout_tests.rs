@@ -75,11 +75,9 @@ fn load_roboto_bytes() -> Vec<Vec<u8>> {
     typeface_files
         .iter()
         .map(|font_file| {
-            let path = [
-                root, "..", "..", "app", "assets", "bundled", "fonts", "roboto", font_file,
-            ]
-            .iter()
-            .collect::<PathBuf>();
+            let path = [root, "test-fonts", "roboto", font_file]
+                .iter()
+                .collect::<PathBuf>();
             Ok(read(path)?)
         })
         .collect::<Result<Vec<_>>>()

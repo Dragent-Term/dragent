@@ -199,7 +199,8 @@ pub(crate) fn render(props: ProjectPromptProps<'_>) -> Box<dyn Element> {
     let mut composer = Flex::column()
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
         .with_spacing(4.0);
-    if !props.attachment_names.is_empty() || !props.linked_items.is_empty() || props.task.is_some() {
+    if !props.attachment_names.is_empty() || !props.linked_items.is_empty() || props.task.is_some()
+    {
         composer = composer.with_child(attachment_strip(
             theme,
             props.mono_font,
@@ -237,13 +238,35 @@ pub(crate) fn render(props: ProjectPromptProps<'_>) -> Box<dyn Element> {
                 .finish(),
         );
     }
-
+    body = body.with_child(community_line(theme, ui, id, props.mouse_states));
 
     Align::new(
         ConstrainedBox::new(body.finish())
             .with_width(props.available_width.clamp(360.0, 680.0))
             .finish(),
     )
+    .finish()
+}
+
+/// Star on GitHub, centred under the composer.
+fn community_line(
+    theme: &Theme,
+    ui: FamilyId,
+    id: EntityId,
+    states: &RefCell<HashMap<String, MouseStateHandle>>,
+) -> Box<dyn Element> {
+    Container::new(
+        Align::new(crate::community::render_star_button(
+            theme,
+            ui,
+            crate::community::state(),
+            false,
+            mouse_state(states, "prompt-community-star"),
+            move |ectx| ectx.dispatch_typed_action_for(id, super::WorkspaceAction::StarOnGitHub),
+        ))
+        .finish(),
+    )
+    .with_padding_top(10.0)
     .finish()
 }
 
@@ -345,12 +368,21 @@ pub(crate) fn prompt_box(
     // With a team on, the agent chosen here leads it: a crown says so.
     // Drawn on the chip's corner, so it takes no room in the toolbar.
     let agent_chip: Box<dyn Element> = if team_on {
-        use warpui::elements::{ChildAnchor, OffsetPositioning, ParentAnchor, ParentOffsetBounds, Stack};
-        let crown = Container::new(render_icon(AppIcon::Crown, crate::workspace::worktree_status::WORKING_AMBER, 9.0))
-            .with_background_color(theme.surface_1())
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(7.0)))
-            .with_padding_left(2.0).with_padding_right(2.0).with_padding_top(1.0).with_padding_bottom(1.0)
-            .finish();
+        use warpui::elements::{
+            ChildAnchor, OffsetPositioning, ParentAnchor, ParentOffsetBounds, Stack,
+        };
+        let crown = Container::new(render_icon(
+            AppIcon::Crown,
+            crate::workspace::worktree_status::WORKING_AMBER,
+            9.0,
+        ))
+        .with_background_color(theme.surface_1())
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(7.0)))
+        .with_padding_left(2.0)
+        .with_padding_right(2.0)
+        .with_padding_top(1.0)
+        .with_padding_bottom(1.0)
+        .finish();
         let mut stack = Stack::new().with_child(agent_chip);
         stack.add_positioned_overlay_child(
             crown,
@@ -365,7 +397,16 @@ pub(crate) fn prompt_box(
     } else {
         agent_chip
     };
-    let team_chip = coordination_chip(theme, mono, id, team_on, busy, agent, team_agents, mouse_state(states, "prompt_team_chip"));
+    let team_chip = coordination_chip(
+        theme,
+        mono,
+        id,
+        team_on,
+        busy,
+        agent,
+        team_agents,
+        mouse_state(states, "prompt_team_chip"),
+    );
 
     let submit = Hoverable::new(mouse_state(states, "prompt_submit"), move |state| {
         let accent = theme.accent;
@@ -407,10 +448,14 @@ pub(crate) fn prompt_box(
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_spacing(5.0)
                 .with_child(
-                    Text::new("Start team", crate::fonts::ui_role(mono), crate::theme::text_size(12.0))
-                        .with_color(theme.background)
-                        .with_style(Properties::default().weight(Weight::Semibold))
-                        .finish(),
+                    Text::new(
+                        "Start team",
+                        crate::fonts::ui_role(mono),
+                        crate::theme::text_size(12.0),
+                    )
+                    .with_color(theme.background)
+                    .with_style(Properties::default().weight(Weight::Semibold))
+                    .finish(),
                 )
                 .with_child(render_icon(AppIcon::ArrowUp, theme.background, 13.0))
                 .finish()
@@ -523,9 +568,18 @@ pub(crate) fn prompt_box(
         .with_child(team_chip);
     {
         selectors = selectors.with_child(selector_chip(
-            theme, mono, id, false,
-            lead_model.unwrap_or(if agent == PromptAgent::Dragent { "Current model" } else { "Agent default" }),
-            mouse_state(states, "prompt_lead_model"), PromptMenu::LeadModel, agent,
+            theme,
+            mono,
+            id,
+            false,
+            lead_model.unwrap_or(if agent == PromptAgent::Dragent {
+                "Current model"
+            } else {
+                "Agent default"
+            }),
+            mouse_state(states, "prompt_lead_model"),
+            PromptMenu::LeadModel,
+            agent,
         ));
     }
     let mut footer = Flex::row()
@@ -544,10 +598,20 @@ pub(crate) fn prompt_box(
         .with_child(editor_view)
         .with_child(footer);
     if busy {
-        content = content.with_child(Text::new(
-            if team_on { "Starting the lead…" } else { "Creating workspace…" }.to_string(),
-            mono, crate::theme::text_size(10.5),
-        ).with_color(theme.sub_text()).finish());
+        content = content.with_child(
+            Text::new(
+                if team_on {
+                    "Starting the lead…"
+                } else {
+                    "Creating workspace…"
+                }
+                .to_string(),
+                mono,
+                crate::theme::text_size(10.5),
+            )
+            .with_color(theme.sub_text())
+            .finish(),
+        );
     }
     let content = content.finish();
 
@@ -562,7 +626,11 @@ pub(crate) fn prompt_box(
         .finish();
     // While a team starts, a light laps the box's edge.
     let content: Box<dyn Element> = if busy && team_on {
-        Box::new(super::workspace_activity::EdgeLap::new(content, theme.accent, 12.0))
+        Box::new(super::workspace_activity::EdgeLap::new(
+            content,
+            theme.accent,
+            12.0,
+        ))
     } else {
         content
     };
@@ -575,7 +643,11 @@ pub(crate) fn prompt_box(
     // One line under the box on what a team does with the request.
     // Counted as the team chip counts: the lead and each other agent once.
     let mut others: Vec<PromptAgent> = Vec::new();
-    for helper in team_agents.iter().copied().filter(|h| *h != agent && super::team_prompt::can_work(*h)) {
+    for helper in team_agents
+        .iter()
+        .copied()
+        .filter(|h| *h != agent && super::team_prompt::can_work(*h))
+    {
         if !others.contains(&helper) {
             others.push(helper);
         }
@@ -593,9 +665,13 @@ pub(crate) fn prompt_box(
         .with_child(boxed)
         .with_child(
             Align::new(
-                Text::new(line, crate::fonts::ui_role(mono), crate::theme::text_size(11.5))
-                    .with_color(theme.disabled_text())
-                    .finish(),
+                Text::new(
+                    line,
+                    crate::fonts::ui_role(mono),
+                    crate::theme::text_size(11.5),
+                )
+                .with_color(theme.disabled_text())
+                .finish(),
             )
             .finish(),
         )
@@ -604,58 +680,139 @@ pub(crate) fn prompt_box(
 
 /// A compact coordination control: only helper artwork, with a bounded stack.
 fn coordination_chip(
-    theme: &Theme, mono: FamilyId, id: EntityId, on: bool, busy: bool,
-    lead: PromptAgent, helpers: &[PromptAgent], mouse: MouseStateHandle,
+    theme: &Theme,
+    mono: FamilyId,
+    id: EntityId,
+    on: bool,
+    busy: bool,
+    lead: PromptAgent,
+    helpers: &[PromptAgent],
+    mouse: MouseStateHandle,
 ) -> Box<dyn Element> {
     let mut agents = Vec::new();
-    for agent in helpers.iter().copied().filter(|agent| *agent != lead && super::team_prompt::can_work(*agent)) {
-        if !agents.contains(&agent) { agents.push(agent); }
+    for agent in helpers
+        .iter()
+        .copied()
+        .filter(|agent| *agent != lead && super::team_prompt::can_work(*agent))
+    {
+        if !agents.contains(&agent) {
+            agents.push(agent);
+        }
     }
     let chip = Hoverable::new(mouse, move |state| {
-        let color = if on { theme.accent } else if state.is_hovered() { theme.main_text() } else { theme.sub_text() };
-        let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center).with_spacing(6.0)
+        let color = if on {
+            theme.accent
+        } else if state.is_hovered() {
+            theme.main_text()
+        } else {
+            theme.sub_text()
+        };
+        let mut row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(6.0)
             .with_child(render_icon(AppIcon::Layers, color, 14.0))
-            .with_child(Text::new(
-                // On, it counts the team (the lead too); off, it offers one.
-                if on && !agents.is_empty() { format!("{} agents", agents.len() + 1) } else { "Coordinate".to_string() },
-                mono,
-                crate::theme::text_size(11.5),
-            ).with_color(color).finish());
+            .with_child(
+                Text::new(
+                    // On, it counts the team (the lead too); off, it offers one.
+                    if on && !agents.is_empty() {
+                        format!("{} agents", agents.len() + 1)
+                    } else {
+                        "Coordinate".to_string()
+                    },
+                    mono,
+                    crate::theme::text_size(11.5),
+                )
+                .with_color(color)
+                .finish(),
+            );
         if on && !agents.is_empty() {
-            use warpui::elements::{Stack, OffsetPositioning, ParentOffsetBounds, ParentAnchor, ChildAnchor};
+            use warpui::elements::{
+                ChildAnchor, OffsetPositioning, ParentAnchor, ParentOffsetBounds, Stack,
+            };
             let shown = agents.len().min(4);
             let mut stack = Stack::new();
             for (index, agent) in agents.iter().take(shown).enumerate() {
                 let icon = Container::new(agent_image(*agent, theme, 16.0, 1.0))
-                    .with_padding_left(3.0).with_padding_right(3.0).with_padding_top(3.0).with_padding_bottom(3.0)
+                    .with_padding_left(3.0)
+                    .with_padding_right(3.0)
+                    .with_padding_top(3.0)
+                    .with_padding_bottom(3.0)
                     .with_background_color(theme.surface_2())
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(11.0))).finish();
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(11.0)))
+                    .finish();
                 // While the team starts, each face glows in turn.
                 let icon: Box<dyn Element> = if busy {
-                    Box::new(super::workspace_activity::FacePulse::new(icon, index, shown, theme.accent))
+                    Box::new(super::workspace_activity::FacePulse::new(
+                        icon,
+                        index,
+                        shown,
+                        theme.accent,
+                    ))
                 } else {
                     icon
                 };
-                stack = stack.with_positioned_overlay_child(icon, OffsetPositioning::offset_from_parent(
-                    warpui::geometry::vector::vec2f(index as f32 * 14.0, 0.0), ParentOffsetBounds::Unbounded,
-                    ParentAnchor::TopLeft, ChildAnchor::TopLeft));
+                stack = stack.with_positioned_overlay_child(
+                    icon,
+                    OffsetPositioning::offset_from_parent(
+                        warpui::geometry::vector::vec2f(index as f32 * 14.0, 0.0),
+                        ParentOffsetBounds::Unbounded,
+                        ParentAnchor::TopLeft,
+                        ChildAnchor::TopLeft,
+                    ),
+                );
             }
-            row = row.with_child(ConstrainedBox::new(stack.finish()).with_width(22.0 + (shown - 1) as f32 * 14.0).with_height(22.0).finish());
+            row = row.with_child(
+                ConstrainedBox::new(stack.finish())
+                    .with_width(22.0 + (shown - 1) as f32 * 14.0)
+                    .with_height(22.0)
+                    .finish(),
+            );
             if agents.len() > shown {
-                row = row.with_child(Text::new(format!("+{}", agents.len() - shown), mono, crate::theme::text_size(10.5)).with_color(color).finish());
+                row = row.with_child(
+                    Text::new(
+                        format!("+{}", agents.len() - shown),
+                        mono,
+                        crate::theme::text_size(10.5),
+                    )
+                    .with_color(color)
+                    .finish(),
+                );
             }
         }
         // On, the faces say it opens; the arrow would only cost room.
-        let row = if on && !agents.is_empty() { row } else { row.with_child(render_icon(AppIcon::ChevronDown, theme.sub_text(), 12.0)) };
+        let row = if on && !agents.is_empty() {
+            row
+        } else {
+            row.with_child(render_icon(AppIcon::ChevronDown, theme.sub_text(), 12.0))
+        };
         Container::new(row.finish())
             .with_background_color(if on || state.is_hovered() {
-                warpui::color::ColorU::new(theme.accent.r, theme.accent.g, theme.accent.b, if on { 34 } else { 20 })
-            } else { warpui::color::ColorU::transparent_black() })
+                warpui::color::ColorU::new(
+                    theme.accent.r,
+                    theme.accent.g,
+                    theme.accent.b,
+                    if on { 34 } else { 20 },
+                )
+            } else {
+                warpui::color::ColorU::transparent_black()
+            })
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.0)))
-            .with_padding_left(8.0).with_padding_right(7.0).with_padding_top(3.0).with_padding_bottom(3.0).finish()
-    }).with_cursor(Cursor::PointingHand).on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action_for(id, WorkspaceAction::OpenPromptMenu { menu: PromptMenu::Team });
-    }).finish();
+            .with_padding_left(8.0)
+            .with_padding_right(7.0)
+            .with_padding_top(3.0)
+            .with_padding_bottom(3.0)
+            .finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .on_click(move |ctx, _, _| {
+        ctx.dispatch_typed_action_for(
+            id,
+            WorkspaceAction::OpenPromptMenu {
+                menu: PromptMenu::Team,
+            },
+        );
+    })
+    .finish();
     SavePosition::new(chip, "prompt_team_chip").finish()
 }
 
@@ -684,18 +841,27 @@ fn selector_chip(
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_spacing(6.0)
                 .with_child(agent_image(agent, theme, 14.0, 1.0))
-                .with_child(Shrinkable::new(1.0,
-                    Text::new(label.clone(), mono, crate::theme::text_size(11.5))
-                        .with_color(color)
-                        .soft_wrap(false)
-                        .with_clip(ClipConfig::ellipsis())
-                        .finish(),
-                ).finish())
+                .with_child(
+                    Shrinkable::new(
+                        1.0,
+                        Text::new(label.clone(), mono, crate::theme::text_size(11.5))
+                            .with_color(color)
+                            .soft_wrap(false)
+                            .with_clip(ClipConfig::ellipsis())
+                            .finish(),
+                    )
+                    .finish(),
+                )
                 .with_child(render_icon(AppIcon::ChevronDown, theme.sub_text(), 12.0))
                 .finish(),
         )
         .with_background_color(if on || state.is_hovered() {
-            warpui::color::ColorU::new(theme.accent.r, theme.accent.g, theme.accent.b, if on { 34 } else { 20 })
+            warpui::color::ColorU::new(
+                theme.accent.r,
+                theme.accent.g,
+                theme.accent.b,
+                if on { 34 } else { 20 },
+            )
         } else {
             warpui::color::ColorU::transparent_black()
         })
@@ -713,8 +879,13 @@ fn selector_chip(
     .finish();
     SavePosition::new(
         ConstrainedBox::new(chip).with_width(180.0).finish(),
-        if menu == PromptMenu::Team { "prompt_team_chip" } else { "prompt_lead_model" },
-    ).finish()
+        if menu == PromptMenu::Team {
+            "prompt_team_chip"
+        } else {
+            "prompt_lead_model"
+        },
+    )
+    .finish()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1015,9 +1186,22 @@ pub(crate) fn render_prompt_menu(
     connected: &[LinkKind],
 ) -> Box<dyn Element> {
     if menu == PromptMenu::LeadModel {
-        return crate::teams::models::picker(theme, ui, workspace_view_id, states, scroll,
-            agent_search_editor, agent_search, agent, lead_model, model_choices,
-            |model| WorkspaceAction::SetPromptLeadModel { model }, WorkspaceAction::ClosePromptMenus, WorkspaceAction::ClearPromptAgentSearch, model_panel);
+        return crate::teams::models::picker(
+            theme,
+            ui,
+            workspace_view_id,
+            states,
+            scroll,
+            agent_search_editor,
+            agent_search,
+            agent,
+            lead_model,
+            model_choices,
+            |model| WorkspaceAction::SetPromptLeadModel { model },
+            WorkspaceAction::ClosePromptMenus,
+            WorkspaceAction::ClearPromptAgentSearch,
+            model_panel,
+        );
     }
     if menu == PromptMenu::Agent {
         return render_agent_menu(AgentMenuProps {
@@ -1119,9 +1303,15 @@ pub(crate) fn render_prompt_menu(
                 states,
                 "prompt_add_connect",
                 AppIcon::Plug,
-                if connected.len() > 1 { "Connect more…" } else { "Connect Linear, Jira, Slack…" },
+                if connected.len() > 1 {
+                    "Connect more…"
+                } else {
+                    "Connect Linear, Jira, Slack…"
+                },
                 false,
-                WorkspaceAction::OpenSettingsSection(crate::settings::SettingsSection::Integrations),
+                WorkspaceAction::OpenSettingsSection(
+                    crate::settings::SettingsSection::Integrations,
+                ),
             ));
         }
         PromptMenu::Links(kind) => {
@@ -1144,7 +1334,9 @@ pub(crate) fn render_prompt_menu(
                     AppIcon::Plug,
                     "Open Integrations",
                     false,
-                    WorkspaceAction::OpenSettingsSection(crate::settings::SettingsSection::Integrations),
+                    WorkspaceAction::OpenSettingsSection(
+                        crate::settings::SettingsSection::Integrations,
+                    ),
                 ));
             } else if link_loading {
                 col = col.with_child(menu_caption(theme, ui, "Searching…"));
@@ -1313,8 +1505,8 @@ pub(crate) fn render_prompt_menu(
         }
         PromptMenu::Worktree => {
             // Git branches a worktree from a commit; a new repository has none.
-            let worktree_available = active_root
-                .is_some_and(|root| super::project_naming::worktree_available(root));
+            let worktree_available =
+                active_root.is_some_and(|root| super::project_naming::worktree_available(root));
             if active_root.is_some() {
                 let label = format!("Local · {}", current_branch.unwrap_or("current checkout"));
                 col = col.with_child(menu_row(
@@ -1644,8 +1836,11 @@ pub(crate) fn render_agent_menu(props: AgentMenuProps<'_>) -> Box<dyn Element> {
     let installed_rows: Vec<PromptAgent> = PromptAgent::ALL
         .into_iter()
         .filter(|listed| {
-            (if *listed == PromptAgent::Dragent { with_dragent } else { installed.contains(listed) })
-                && enabled(*listed)
+            (if *listed == PromptAgent::Dragent {
+                with_dragent
+            } else {
+                installed.contains(listed)
+            }) && enabled(*listed)
                 && matches_query(*listed)
         })
         .collect();
@@ -1861,7 +2056,10 @@ pub(crate) fn render_team_menu(props: TeamMenuProps<'_>) -> Box<dyn Element> {
         col = col.with_child(picker_agent_row(
             theme,
             ui,
-            mouse_state(states, &format!("prompt_team_agent_{}", candidate.command_key())),
+            mouse_state(
+                states,
+                &format!("prompt_team_agent_{}", candidate.command_key()),
+            ),
             icon,
             candidate.label().to_string(),
             None,
@@ -2001,28 +2199,69 @@ pub(crate) fn labelled_agent_chip(
 /// not currently available on PATH. The terminal is the same embedded terminal
 /// used by the GitHub CLI sign-in flow.
 #[allow(clippy::too_many_arguments)]
-#[cfg(not(target_family="wasm"))]
+#[cfg(not(target_family = "wasm"))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_review_setup(
-    id: EntityId, theme: &Theme, ui: FamilyId,
-    states: &RefCell<HashMap<String,MouseStateHandle>>,
+    id: EntityId,
+    theme: &Theme,
+    ui: FamilyId,
+    states: &RefCell<HashMap<String, MouseStateHandle>>,
     review: &crate::pull_requests::ReviewSetup,
-    editor: &warpui::ViewHandle<super::InputEditor>, agent: PromptAgent,
-    model: &str, busy: bool, error: Option<&str>,
+    editor: &warpui::ViewHandle<super::InputEditor>,
+    agent: PromptAgent,
+    model: &str,
+    busy: bool,
+    error: Option<&str>,
 ) -> Box<dyn Element> {
-    use crate::automations::widgets::{button,field,label,ButtonKind};
+    use crate::automations::widgets::{button, field, label, ButtonKind};
     use warpui::elements::Empty;
-    let reference=format!("{}{}",if review.gitlab{"!"}else{"#"},review.number);
-    let machine=crate::remote_fs::resolve(&review.target.root)
-        .map(|m|format!("SSH · {}",m.machine_id)).unwrap_or_else(|| "This computer".into());
-    let choose_agent=SavePosition::new(agent_chip(theme,ui,Some(agent),mouse_state(states,"review_agent"),move |c| {
-        c.dispatch_typed_action_for(id,WorkspaceAction::OpenPromptMenu{menu:PromptMenu::Agent});
-    }),"prompt_agent_chip").finish();
-    let choose_model=selector_chip(theme,ui,id,false,model,mouse_state(states,"review_model"),PromptMenu::LeadModel,agent);
+    let reference = format!("{}{}", if review.gitlab { "!" } else { "#" }, review.number);
+    let machine = crate::remote_fs::resolve(&review.target.root)
+        .map(|m| format!("SSH · {}", m.machine_id))
+        .unwrap_or_else(|| "This computer".into());
+    let choose_agent = SavePosition::new(
+        agent_chip(
+            theme,
+            ui,
+            Some(agent),
+            mouse_state(states, "review_agent"),
+            move |c| {
+                c.dispatch_typed_action_for(
+                    id,
+                    WorkspaceAction::OpenPromptMenu {
+                        menu: PromptMenu::Agent,
+                    },
+                );
+            },
+        ),
+        "prompt_agent_chip",
+    )
+    .finish();
+    let choose_model = selector_chip(
+        theme,
+        ui,
+        id,
+        false,
+        model,
+        mouse_state(states, "review_model"),
+        PromptMenu::LeadModel,
+        agent,
+    );
     let choices: Box<dyn Element> = if busy {
-        label(ui,&format!("{} · {model}",agent.label()),13.0,theme.sub_text())
-    } else { Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center).with_spacing(8.0)
-        .with_child(choose_agent).with_child(choose_model).finish() };
+        label(
+            ui,
+            &format!("{} · {model}", agent.label()),
+            13.0,
+            theme.sub_text(),
+        )
+    } else {
+        Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(8.0)
+            .with_child(choose_agent)
+            .with_child(choose_model)
+            .finish()
+    };
     let mut body=Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch).with_spacing(12.0)
         .with_child(Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center).with_spacing(8.0)
             .with_child(Expanded::new(1.0,crate::machine_ui::semibold(ui,if review.launch_agent{"Review with agent"}else{"Open review workspace"},20.0,theme.main_text())).finish())
@@ -2039,30 +2278,83 @@ pub(crate) fn render_review_setup(
             "Open an existing review snapshot or create an isolated checkout at this commit. Your current checkout stays untouched. No agent will be started."
         },12.0,theme.sub_text()));
     if review.launch_agent {
-        body=body.with_child(label(ui,"Review instructions",12.0,theme.main_text()))
-            .with_child(field(theme,editor,160.0)).with_child(choices);
+        body = body
+            .with_child(label(ui, "Review instructions", 12.0, theme.main_text()))
+            .with_child(field(theme, editor, 160.0))
+            .with_child(choices);
     }
     body=body.with_child(label(ui,if review.launch_agent {
         "A clean snapshot may be reused. New commits get a separate snapshot; previous work is preserved."
     } else {
         "Existing local edits are preserved. A newer commit gets a separate snapshot. Nothing is fetched or created until you confirm."
     },11.0,theme.sub_text()));
-    if let Some(error)=error { body=body.with_child(label(ui,error,12.0,theme.ui_red())); }
-    body=body.with_child(Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center).with_spacing(8.0)
-        .with_child(Expanded::new(1.0,Empty::new().finish()).finish())
-        .with_child(button(theme,ui,id,mouse_state(states,"cancel_review"),None,"Cancel",ButtonKind::Secondary,
-            (!busy).then_some(WorkspaceAction::CancelReviewSetup)))
-        .with_child(button(theme,ui,id,mouse_state(states,"start_review"),Some(if review.launch_agent{AppIcon::Agent}else{AppIcon::FolderGit}),
-            if busy{"Preparing workspace…"}else if review.launch_agent{"Start review"}else{"Open workspace"},ButtonKind::Primary,(!busy).then_some(WorkspaceAction::SubmitPrompt))).finish());
-    let modal=Container::new(ConstrainedBox::new(body.finish()).with_width(680.0).finish())
-        .with_background_color(theme.surface_1()).with_border(Border::all(1.0).with_border_color(theme.outline()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(14.0))).with_uniform_padding(24.0).finish();
-    EventHandler::new(modal).on_keydown(move |ctx,_,key| {
-        let action=if key.key=="escape"{Some(WorkspaceAction::CancelReviewSetup)}
-            else if key.key=="enter"&&(key.cmd||key.ctrl){Some(WorkspaceAction::SubmitPrompt)}else{None};
-        if let Some(action)=action { ctx.dispatch_typed_action_for(id,action);DispatchEventResult::StopPropagation }
-        else {DispatchEventResult::PropagateToParent}
-    }).finish()
+    if let Some(error) = error {
+        body = body.with_child(label(ui, error, 12.0, theme.ui_red()));
+    }
+    body = body.with_child(
+        Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(8.0)
+            .with_child(Expanded::new(1.0, Empty::new().finish()).finish())
+            .with_child(button(
+                theme,
+                ui,
+                id,
+                mouse_state(states, "cancel_review"),
+                None,
+                "Cancel",
+                ButtonKind::Secondary,
+                (!busy).then_some(WorkspaceAction::CancelReviewSetup),
+            ))
+            .with_child(button(
+                theme,
+                ui,
+                id,
+                mouse_state(states, "start_review"),
+                Some(if review.launch_agent {
+                    AppIcon::Agent
+                } else {
+                    AppIcon::FolderGit
+                }),
+                if busy {
+                    "Preparing workspace…"
+                } else if review.launch_agent {
+                    "Start review"
+                } else {
+                    "Open workspace"
+                },
+                ButtonKind::Primary,
+                (!busy).then_some(WorkspaceAction::SubmitPrompt),
+            ))
+            .finish(),
+    );
+    let modal = Container::new(
+        ConstrainedBox::new(body.finish())
+            .with_width(680.0)
+            .finish(),
+    )
+    .with_background_color(theme.surface_1())
+    .with_border(Border::all(1.0).with_border_color(theme.outline()))
+    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(14.0)))
+    .with_uniform_padding(24.0)
+    .finish();
+    EventHandler::new(modal)
+        .on_keydown(move |ctx, _, key| {
+            let action = if key.key == "escape" {
+                Some(WorkspaceAction::CancelReviewSetup)
+            } else if key.key == "enter" && (key.cmd || key.ctrl) {
+                Some(WorkspaceAction::SubmitPrompt)
+            } else {
+                None
+            };
+            if let Some(action) = action {
+                ctx.dispatch_typed_action_for(id, action);
+                DispatchEventResult::StopPropagation
+            } else {
+                DispatchEventResult::PropagateToParent
+            }
+        })
+        .finish()
 }
 
 pub(crate) fn render_embedded_terminal_modal(
@@ -2082,16 +2374,16 @@ pub(crate) fn render_embedded_terminal_modal(
     let heading = Flex::column()
         .with_cross_axis_alignment(CrossAxisAlignment::Start)
         .with_spacing(5.0)
-        .with_child(Text::new(
-            heading.to_string(),
-            ui,
-            crate::theme::text_size(20.0),
-        ).with_color(theme.main_text()).finish())
-        .with_child(Text::new(
-            description.to_string(),
-            ui,
-            crate::theme::text_size(12.0),
-        ).with_color(theme.sub_text()).finish());
+        .with_child(
+            Text::new(heading.to_string(), ui, crate::theme::text_size(20.0))
+                .with_color(theme.main_text())
+                .finish(),
+        )
+        .with_child(
+            Text::new(description.to_string(), ui, crate::theme::text_size(12.0))
+                .with_color(theme.sub_text())
+                .finish(),
+        );
 
     let mut body = Flex::column()
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -2099,15 +2391,11 @@ pub(crate) fn render_embedded_terminal_modal(
         .with_child(Box::new(heading));
     if let Some(terminal) = terminal {
         body = body.with_child(
-            Container::new(
-                ConstrainedBox::new(terminal)
-                    .with_height(300.0)
-                    .finish(),
-            )
-            .with_background_color(theme.solid_bg())
-            .with_border(Border::all(1.0).with_border_color(theme.outline()))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.0)))
-            .finish(),
+            Container::new(ConstrainedBox::new(terminal).with_height(300.0).finish())
+                .with_background_color(theme.solid_bg())
+                .with_border(Border::all(1.0).with_border_color(theme.outline()))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.0)))
+                .finish(),
         );
     } else if error.is_none() {
         body = body.with_child(
@@ -2121,33 +2409,75 @@ pub(crate) fn render_embedded_terminal_modal(
         );
     }
     if error.is_none() && checking {
-        body = body.with_child(Text::new(format!("Checking {subject}…"), ui, crate::theme::text_size(12.0)).with_color(theme.sub_text()).finish());
+        body = body.with_child(
+            Text::new(
+                format!("Checking {subject}…"),
+                ui,
+                crate::theme::text_size(12.0),
+            )
+            .with_color(theme.sub_text())
+            .finish(),
+        );
     }
 
     #[cfg(not(target_family = "wasm"))]
     let control = |key: &str, icon, title: &str, action, width| {
         ConstrainedBox::new(crate::automations::widgets::button(
-            theme, ui, workspace_view_id, mouse_state(states, key), Some(icon), title,
-            crate::automations::widgets::ButtonKind::Secondary, Some(action),
-        )).with_width(width).finish()
+            theme,
+            ui,
+            workspace_view_id,
+            mouse_state(states, key),
+            Some(icon),
+            title,
+            crate::automations::widgets::ButtonKind::Secondary,
+            Some(action),
+        ))
+        .with_width(width)
+        .finish()
     };
     #[cfg(target_family = "wasm")]
     let control = |key: &str, icon, title: &str, action, width| {
-        ConstrainedBox::new(menu_row(workspace_view_id,theme,ui,states,key,icon,title,false,action))
-            .with_width(width).finish()
+        ConstrainedBox::new(menu_row(
+            workspace_view_id,
+            theme,
+            ui,
+            states,
+            key,
+            icon,
+            title,
+            false,
+            action,
+        ))
+        .with_width(width)
+        .finish()
     };
     let mut controls = Flex::row()
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_spacing(8.0)
-        .with_child(control("prompt_agent_install_close", AppIcon::XClose, "Close",
-            WorkspaceAction::ClosePromptAgentInstall, 140.0));
+        .with_child(control(
+            "prompt_agent_install_close",
+            AppIcon::XClose,
+            "Close",
+            WorkspaceAction::ClosePromptAgentInstall,
+            140.0,
+        ));
     if show_verification {
-        controls = controls.with_child(control("prompt_agent_install_check", AppIcon::Check,
-            "Check again", WorkspaceAction::CheckPromptAgentInstall, 160.0));
+        controls = controls.with_child(control(
+            "prompt_agent_install_check",
+            AppIcon::Check,
+            "Check again",
+            WorkspaceAction::CheckPromptAgentInstall,
+            160.0,
+        ));
     }
     if retry_elevated {
-        controls = controls.with_child(control("prompt_agent_install_retry", AppIcon::RotateCcw,
-            "Retry with administrator rights", WorkspaceAction::RetryRemoteToolElevated, 260.0));
+        controls = controls.with_child(control(
+            "prompt_agent_install_retry",
+            AppIcon::RotateCcw,
+            "Retry with administrator rights",
+            WorkspaceAction::RetryRemoteToolElevated,
+            260.0,
+        ));
     }
     body = body.with_child(Box::new(controls));
 
@@ -2194,7 +2524,11 @@ fn links_header(
     let back = Hoverable::new(mouse_state(states, "prompt_links_back"), move |state| {
         Container::new(render_icon(
             AppIcon::ArrowLeft,
-            if state.is_hovered() { theme.main_text() } else { theme.sub_text() },
+            if state.is_hovered() {
+                theme.main_text()
+            } else {
+                theme.sub_text()
+            },
             13.0,
         ))
         .with_uniform_padding(5.0)
@@ -2210,7 +2544,9 @@ fn links_header(
     .on_click(move |event_ctx, _app, _pos| {
         event_ctx.dispatch_typed_action_for(
             workspace_view_id,
-            WorkspaceAction::OpenPromptMenu { menu: PromptMenu::Add },
+            WorkspaceAction::OpenPromptMenu {
+                menu: PromptMenu::Add,
+            },
         );
     })
     .finish();
@@ -2324,7 +2660,12 @@ pub(crate) fn menu_caption(theme: &Theme, ui: FamilyId, text: &str) -> Box<dyn E
     .finish()
 }
 
-pub(crate) fn agent_image(agent: PromptAgent, theme: &Theme, size: f32, opacity: f32) -> Box<dyn Element> {
+pub(crate) fn agent_image(
+    agent: PromptAgent,
+    theme: &Theme,
+    size: f32,
+    opacity: f32,
+) -> Box<dyn Element> {
     let Some(path) = agent.image_path(theme.is_dark) else {
         return render_icon(AppIcon::Agent, theme.sub_text(), size);
     };
@@ -2351,13 +2692,24 @@ fn team_checkbox(theme: &Theme, checked: bool, editable: bool) -> Box<dyn Elemen
     } else {
         warpui::elements::Empty::new().finish()
     };
-    let mut boxed = Container::new(ConstrainedBox::new(inner).with_width(side).with_height(side).finish())
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.0)));
+    let mut boxed = Container::new(
+        ConstrainedBox::new(inner)
+            .with_width(side)
+            .with_height(side)
+            .finish(),
+    )
+    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.0)));
     boxed = if checked {
         let accent = theme.accent;
-        let fill = if editable { accent } else { warpui::color::ColorU::new(accent.r, accent.g, accent.b, 150) };
+        let fill = if editable {
+            accent
+        } else {
+            warpui::color::ColorU::new(accent.r, accent.g, accent.b, 150)
+        };
         // The same width of edge as an empty box, so the rows line up.
-        boxed.with_background_color(fill).with_border(warpui_core::scene::Border::all(1.5).with_border_color(fill))
+        boxed
+            .with_background_color(fill)
+            .with_border(warpui_core::scene::Border::all(1.5).with_border_color(fill))
     } else {
         boxed.with_border(warpui_core::scene::Border::all(1.5).with_border_color(theme.outline()))
     };
@@ -2561,7 +2913,11 @@ pub(crate) fn remember_agent_target(key: &str) {
 }
 
 /// A target's artwork, or the terminal glyph when it has none.
-pub(crate) fn agent_target_image(target: Option<&AgentTarget>, theme: &Theme, size: f32) -> Box<dyn Element> {
+pub(crate) fn agent_target_image(
+    target: Option<&AgentTarget>,
+    theme: &Theme,
+    size: f32,
+) -> Box<dyn Element> {
     let source = match target.and_then(|t| t.image.as_ref()) {
         Some(super::AgentImage::Bundled(path)) => Some(AssetSource::Bundled { path }),
         Some(super::AgentImage::File(path)) => Some(AssetSource::LocalFile { path: path.clone() }),
@@ -2733,7 +3089,11 @@ mod agent_target_tests {
             key: key.into(),
             name: title.into(),
             title: title.into(),
-            detail: if existing { "Claude Code".into() } else { "Start a new session".into() },
+            detail: if existing {
+                "Claude Code".into()
+            } else {
+                "Start a new session".into()
+            },
             agent: "claude".into(),
             existing,
             image: None,
@@ -2755,8 +3115,14 @@ mod agent_target_tests {
         };
         assert_eq!(keys(""), ["existing:a", "new:claude", "new:codex"]);
         assert_eq!(keys("codex"), ["new:codex"]);
-        assert_eq!(target("new:codex", "Codex", false).chip_label(), "New Codex");
-        assert_eq!(target("existing:a", "Fix login", true).chip_label(), "Fix login");
+        assert_eq!(
+            target("new:codex", "Codex", false).chip_label(),
+            "New Codex"
+        );
+        assert_eq!(
+            target("existing:a", "Fix login", true).chip_label(),
+            "Fix login"
+        );
     }
 
     #[test]
@@ -2767,12 +3133,21 @@ mod agent_target_tests {
             target("new:codex", "Codex", false),
         ];
         let mut settings = crate::setup::UiSettings::default();
-        assert_eq!(default_agent_target(&targets, &settings).as_deref(), Some("existing:a"));
+        assert_eq!(
+            default_agent_target(&targets, &settings).as_deref(),
+            Some("existing:a")
+        );
         settings.diff_comment_terminal = Some("existing:b".into());
-        assert_eq!(default_agent_target(&targets, &settings).as_deref(), Some("existing:b"));
+        assert_eq!(
+            default_agent_target(&targets, &settings).as_deref(),
+            Some("existing:b")
+        );
         // A session that has ended falls back to one still running.
         settings.diff_comment_terminal = Some("existing:gone".into());
-        assert_eq!(default_agent_target(&targets, &settings).as_deref(), Some("existing:a"));
+        assert_eq!(
+            default_agent_target(&targets, &settings).as_deref(),
+            Some("existing:a")
+        );
         settings.diff_comment_agent = Some("new:codex".into());
         assert_eq!(
             default_agent_target(&targets[2..], &settings).as_deref(),

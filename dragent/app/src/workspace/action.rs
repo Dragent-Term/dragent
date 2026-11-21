@@ -316,17 +316,39 @@ impl PromptAgent {
     /// `Set-Variable` avoids a `$` the outer shell would expand.
     fn windows_install_command(self) -> Option<&'static str> {
         match self {
-            PromptAgent::Claude => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://claude.ai/install.ps1 | iex""#),
-            PromptAgent::Antigravity => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://antigravity.google/cli/install.ps1 | iex""#),
-            PromptAgent::Cursor => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm 'https://cursor.com/install?win32=true' | iex""#),
-            PromptAgent::Devin => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://static.devin.ai/cli/setup.ps1 | iex""#),
-            PromptAgent::Droid => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://app.factory.ai/cli/windows | iex""#),
-            PromptAgent::Goose => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; Invoke-WebRequest -Uri https://raw.githubusercontent.com/aaif-goose/goose/main/download_cli.ps1 -OutFile download_cli.ps1; .\download_cli.ps1; Remove-Item download_cli.ps1""#),
-            PromptAgent::Grok => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://x.ai/cli/install.ps1 | iex""#),
-            PromptAgent::Hermes => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://hermes-agent.nousresearch.com/install.ps1 | iex""#),
-            PromptAgent::Junie => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://junie.jetbrains.com/install.ps1 | iex""#),
-            PromptAgent::Kimi => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://code.kimi.com/kimi-code/install.ps1 | iex""#),
-            PromptAgent::Kiro => Some(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://cli.kiro.dev/install.ps1 | iex""#),
+            PromptAgent::Claude => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://claude.ai/install.ps1 | iex""#,
+            ),
+            PromptAgent::Antigravity => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://antigravity.google/cli/install.ps1 | iex""#,
+            ),
+            PromptAgent::Cursor => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm 'https://cursor.com/install?win32=true' | iex""#,
+            ),
+            PromptAgent::Devin => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://static.devin.ai/cli/setup.ps1 | iex""#,
+            ),
+            PromptAgent::Droid => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://app.factory.ai/cli/windows | iex""#,
+            ),
+            PromptAgent::Goose => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; Invoke-WebRequest -Uri https://raw.githubusercontent.com/aaif-goose/goose/main/download_cli.ps1 -OutFile download_cli.ps1; .\download_cli.ps1; Remove-Item download_cli.ps1""#,
+            ),
+            PromptAgent::Grok => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://x.ai/cli/install.ps1 | iex""#,
+            ),
+            PromptAgent::Hermes => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://hermes-agent.nousresearch.com/install.ps1 | iex""#,
+            ),
+            PromptAgent::Junie => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://junie.jetbrains.com/install.ps1 | iex""#,
+            ),
+            PromptAgent::Kimi => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://code.kimi.com/kimi-code/install.ps1 | iex""#,
+            ),
+            PromptAgent::Kiro => Some(
+                r#"powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Variable ProgressPreference SilentlyContinue; irm https://cli.kiro.dev/install.ps1 | iex""#,
+            ),
             PromptAgent::Codex => Some("npm install -g @openai/codex"),
             PromptAgent::Gemini => Some("npm install -g @google/gemini-cli"),
             PromptAgent::OpenCode => Some("npm install -g opencode-ai"),
@@ -830,8 +852,13 @@ pub enum WorkspaceAction {
     /// Centered new-worktree modal: branch prompt prefilled with the local
     /// branch, checked out as a subfolder under the managed worktrees root.
     ShowNewWorktreeForm,
-    RenameWorktreeBranch { root: PathBuf, branch: String },
-    RefreshWorktreeDetails { root: PathBuf },
+    RenameWorktreeBranch {
+        root: PathBuf,
+        branch: String,
+    },
+    RefreshWorktreeDetails {
+        root: PathBuf,
+    },
     CloseNewWorktree,
     SubmitNewWorktree,
     /// Folder picked for opening is not a git checkout: initialize it and
@@ -849,10 +876,19 @@ pub enum WorkspaceAction {
     },
     /// The prompt goes to a team: the chosen agent leads it.
     TogglePromptTeam,
-    SetPromptLeadModel { model: Option<String> },
-    BrowsePromptModelTab { tab: crate::teams::models::ModelTab },
-    PickPromptAgentModel { agent: PromptAgent, model: Option<String> },
-    TogglePromptModelFavorite { favorite: crate::settings::AgentModelFavorite },
+    SetPromptLeadModel {
+        model: Option<String>,
+    },
+    BrowsePromptModelTab {
+        tab: crate::teams::models::ModelTab,
+    },
+    PickPromptAgentModel {
+        agent: PromptAgent,
+        model: Option<String>,
+    },
+    TogglePromptModelFavorite {
+        favorite: crate::settings::AgentModelFavorite,
+    },
     /// An agent the team's lead may (or may no longer) give work to.
     TogglePromptTeamAgent {
         agent: PromptAgent,
@@ -890,7 +926,10 @@ pub enum WorkspaceAction {
         root: PathBuf,
     },
     CancelProjectGroup,
-    RemoveProjectGroup { root: PathBuf, group: String },
+    RemoveProjectGroup {
+        root: PathBuf,
+        group: String,
+    },
     SubmitProjectGroup,
     MoveWorkspaceToGroup {
         tab_id: usize,
@@ -1013,10 +1052,16 @@ pub enum WorkspaceAction {
     /// Switch to another top-level workspace tab, parking the current
     /// surface (panes, splits, selection) and restoring the target's.
     /// Blocked while a worktree-removal close is in flight.
-    SelectProjectWorkspace { workspace_id: usize },
-    CloseProjectWorkspace { workspace_id: usize },
+    SelectProjectWorkspace {
+        workspace_id: usize,
+    },
+    CloseProjectWorkspace {
+        workspace_id: usize,
+    },
     /// Put the workspace's idle agents to sleep now.
-    SleepProjectWorkspace { workspace_id: usize },
+    SleepProjectWorkspace {
+        workspace_id: usize,
+    },
     SelectWorkspaceTab {
         workspace_tab_id: usize,
     },
@@ -1065,11 +1110,16 @@ pub enum WorkspaceAction {
     /// parks the current surface, creates a fresh one, launches the agent
     /// there, and activates it. Uninstalled agents never reach this path —
     /// the rail expands to reveal their install action instead.
-    OpenAgentWithAccount { agent_id: String, account: dragent_host::agent_accounts::Selection },
+    OpenAgentWithAccount {
+        agent_id: String,
+        account: dragent_host::agent_accounts::Selection,
+    },
     /// Show the account picker popover for a rail launch. Picking an option
     /// dispatches OpenAgentWithAccount; closing or launching without a pick
     /// falls back to system login via the shared resolver.
-    OpenAgentAccountPicker { agent_id: String },
+    OpenAgentAccountPicker {
+        agent_id: String,
+    },
     CloseAgentAccountPicker,
     OpenAgentInNewWorkspaceTab {
         /// Stable agent-registry id (`"claude"`, `"dragent"`,
@@ -1300,6 +1350,11 @@ pub enum WorkspaceAction {
     OpenExternalUrl {
         url: String,
     },
+    /// Star Dragent's repository with the person's `gh` account, or open it
+    /// on GitHub when that can't be done here.
+    StarOnGitHub,
+    /// Open Dragent's X account in the system browser.
+    FollowOnX,
     StartRenameTab {
         tab_id: usize,
     },
@@ -1517,7 +1572,10 @@ pub enum WorkspaceAction {
     OpenGitWorktreeDiff,
     RefreshDiffCommentAgents,
     SendDiffComment,
-    ShowErrorNotice { title: String, message: String },
+    ShowErrorNotice {
+        title: String,
+        message: String,
+    },
     DismissErrorNotice,
     CopyErrorNotice,
     /// Open the immutable candidate changes captured for one agent execution.

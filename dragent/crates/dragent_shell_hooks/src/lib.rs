@@ -114,12 +114,17 @@ __dragent_report() {
   printf '\033]7979;%s\033\\' "$1"
 }
 
-__dragent_at_prompt=1
+# Ready only once a prompt has run its PROMPT_COMMAND (see __dragent_prompt_ready).
+__dragent_at_prompt=
 
 __dragent_on_precmd() {
   local __dragent_exit=$?
-  __dragent_at_prompt=1
+  # Not ready yet: other PROMPT_COMMAND entries still run after this one,
+  # and the DEBUG trap must not take one of them for the user's command.
+  # __dragent_prompt_ready, kept last, marks the prompt ready.
+  __dragent_at_prompt=
   __dragent_report "precmd;${__dragent_exit};${PWD}"
+  __dragent_keep_ready_last
   # Rendered drain fence — see the zsh hook for the full explanation.
   [ -n "${DRAGENT_CONPTY:-}" ] && printf '\033[48;2;1;2;3m \033[49m'
 }
@@ -139,7 +144,37 @@ __dragent_on_preexec() {
   [ -n "${DRAGENT_CONPTY:-}" ] && printf '\033[2J\033[3J\033[H'
 }
 
-PROMPT_COMMAND="__dragent_on_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+__dragent_prompt_ready() {
+  __dragent_at_prompt=1
+}
+
+# Keeps __dragent_prompt_ready the last PROMPT_COMMAND entry, as a string or
+# as a bash 5.1+ array, whatever other scripts added since.
+__dragent_keep_ready_last() {
+  if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
+    local -a __dragent_kept=()
+    local __dragent_entry
+    for __dragent_entry in "${PROMPT_COMMAND[@]}"; do
+      [ "$__dragent_entry" = "__dragent_prompt_ready" ] || __dragent_kept+=("$__dragent_entry")
+    done
+    PROMPT_COMMAND=("${__dragent_kept[@]}" "__dragent_prompt_ready")
+  else
+    case "$PROMPT_COMMAND" in
+      *__dragent_prompt_ready) ;;
+      *)
+        PROMPT_COMMAND="${PROMPT_COMMAND//;__dragent_prompt_ready/}"
+        PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND;}__dragent_prompt_ready"
+        ;;
+    esac
+  fi
+}
+
+if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
+  PROMPT_COMMAND=("__dragent_on_precmd" "${PROMPT_COMMAND[@]}")
+else
+  PROMPT_COMMAND="__dragent_on_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+fi
+__dragent_keep_ready_last
 trap '__dragent_on_preexec' DEBUG
 
 clear() {
@@ -526,7 +561,10 @@ mod tests {
             std::fs::read_to_string(&first).unwrap(),
             bootstrap_script(ShellKind::Bash).unwrap()
         );
-        assert_ne!(first, install_bootstrap(ShellKind::PowerShell).unwrap().unwrap());
+        assert_ne!(
+            first,
+            install_bootstrap(ShellKind::PowerShell).unwrap().unwrap()
+        );
     }
 
     /// A shell reading the script (PowerShell's Get-Content shares read only)

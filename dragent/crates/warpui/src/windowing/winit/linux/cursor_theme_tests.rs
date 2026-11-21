@@ -4,8 +4,14 @@ use std::path::PathBuf;
 use super::CursorThemeCrawler;
 
 fn with_temp_icons<F: FnOnce(PathBuf)>(setup: impl FnOnce(&PathBuf), test: F) {
-    let base =
-        std::env::temp_dir().join(format!("dragent-cursor-theme-test-{}", std::process::id()));
+    // One folder per test: they run in parallel, and a shared folder let one
+    // test's themes show up in another's.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let base = std::env::temp_dir().join(format!(
+        "dragent-cursor-theme-test-{}-{n}",
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&base);
     fs::create_dir_all(&base).unwrap();
     setup(&base);

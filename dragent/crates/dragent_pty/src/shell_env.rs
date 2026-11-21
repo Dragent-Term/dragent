@@ -106,7 +106,9 @@ fn windows_git_bash_paths() -> Vec<String> {
         ("ProgramFiles(x86)", "Git\\bin\\bash.exe"),
         ("LOCALAPPDATA", "Programs\\Git\\bin\\bash.exe"),
     ] {
-        let Ok(base) = std::env::var(var) else { continue };
+        let Ok(base) = std::env::var(var) else {
+            continue;
+        };
         let full = format!("{}\\{suffix}", base.trim_end_matches('\\'));
         if Path::new(&full).is_file() && !out.iter().any(|p| p.eq_ignore_ascii_case(&full)) {
             out.push(full);
@@ -531,14 +533,23 @@ mod tests {
     #[test]
     fn claude_full_screen_unless_the_user_chose() {
         assert!(claude_full_screen(|_| false));
-        assert!(!claude_full_screen(|key| key == "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"));
+        assert!(!claude_full_screen(
+            |key| key == "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"
+        ));
         assert!(!claude_full_screen(|key| key == "CLAUDE_CODE_NO_FLICKER"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn resolve_shell_prefers_existing_preferred_value() {
-        let shell = resolve_shell(Some("/bin/zsh".to_string()));
-        assert_eq!(shell, "/bin/zsh");
+        // A shell this machine has that isn't $SHELL, so picking it can only
+        // come from the preference (Linux runners have no zsh).
+        let current = std::env::var("SHELL").unwrap_or_default();
+        let preferred = ["/bin/zsh", "/bin/bash", "/bin/sh"]
+            .into_iter()
+            .find(|shell| Path::new(shell).is_file() && *shell != current)
+            .expect("a second shell");
+        assert_eq!(resolve_shell(Some(preferred.to_string())), preferred);
     }
 
     // The login-environment probe only exists off Windows.

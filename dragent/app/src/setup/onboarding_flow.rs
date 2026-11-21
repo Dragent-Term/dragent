@@ -12,9 +12,7 @@ use warpui_core::clipboard::ClipboardContent;
 use warpui_core::elements::MouseStateHandle;
 use warpui_core::fonts::Cache as FontCache;
 
-use crate::auth::{
-    extract_auth_paste, handle_open_url, handle_pasted_auth, AuthManager, AuthManagerEvent,
-};
+use crate::auth::{handle_open_url, AuthManager, AuthManagerEvent};
 use crate::process_ext::NoWindow;
 use crate::terminal::{TerminalEvent, TerminalView};
 use crate::theme::Theme;
@@ -47,8 +45,6 @@ pub enum OnboardingAction {
     Back,
     StartBrowserAuth,
     CancelBrowserAuth,
-    CopySignInLink,
-    PasteAuthCallback,
     SelectGitProvider(GitProvider),
     CheckGitCli,
     InstallGitCli,
@@ -105,8 +101,6 @@ impl OnboardingFlow {
             "github_verify",
             "provider_github",
             "provider_gitlab",
-            "copy_link",
-            "paste_callback",
             "cancel_browser",
         ] {
             hover_states.insert(key.to_string(), MouseStateHandle::default());
@@ -556,28 +550,6 @@ impl TypedActionView for OnboardingFlow {
                 ctx.update_model(&auth, |auth, _| auth.cancel_browser_sign_in());
                 self.browser_auth_active = false;
                 self.auth_error = None;
-            }
-            OnboardingAction::CopySignInLink => {
-                if let Some(url) = &self.sign_in_url {
-                    ctx.clipboard()
-                        .write(ClipboardContent::plain_text(url.clone()));
-                }
-            }
-            OnboardingAction::PasteAuthCallback => {
-                let clip = ctx.clipboard().read();
-                match extract_auth_paste(&clip) {
-                    Some(pasted) => {
-                        self.auth_error = None;
-                        handle_pasted_auth(ctx, &pasted);
-                    }
-                    None => {
-                        self.auth_error = Some(
-                            "Clipboard is empty or does not contain a sign-in link or token. \
-                             Copy the callback URL from your browser, then try again."
-                                .to_string(),
-                        );
-                    }
-                }
             }
             OnboardingAction::CheckGitCli => self.check_git_cli(ctx),
             OnboardingAction::SelectGitProvider(provider) => {

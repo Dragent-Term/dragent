@@ -289,9 +289,7 @@ impl DemoViews {
                             signed_in: true,
                             email: Some("me@example.com".into()),
                             plan: Some("max".into()),
-                            kind: Some(
-                                dragent_host::agent_accounts::CredentialKind::Subscription,
-                            ),
+                            kind: Some(dragent_host::agent_accounts::CredentialKind::Subscription),
                             error: None,
                             credentials_changed_at: Some(1_700_000_000),
                         },
@@ -341,9 +339,12 @@ impl DemoViews {
                         label: "Server".into(),
                         kind: dragent_host::agent_accounts::CredentialKind::Subscription,
                     }],
-                    defaults: [("claude".to_string(), dragent_host::agent_accounts::Selection::System)]
-                        .into_iter()
-                        .collect(),
+                    defaults: [(
+                        "claude".to_string(),
+                        dragent_host::agent_accounts::Selection::System,
+                    )]
+                    .into_iter()
+                    .collect(),
                     identities: vec![dragent_host::development::AccountIdentityView {
                         target: Some(remote_work),
                         provider: "claude".into(),
@@ -681,7 +682,7 @@ impl DemoViews {
         } else {
             terminal(ui, self.mono, &theme)
         };
-        shell(ui, &theme, scene, content)
+        shell(ui, &theme, scene, preview.view_id, content)
     }
 }
 fn text(ui: FamilyId, s: &str, size: f32, color: warpui::color::ColorU) -> Box<dyn Element> {
@@ -756,7 +757,13 @@ fn terminal(ui: FamilyId, mono: FamilyId, t: &Theme) -> Box<dyn Element> {
         .with_padding_bottom(24.0)
         .finish()
 }
-fn shell(ui: FamilyId, t: &Theme, scene: DemoScene, body: Box<dyn Element>) -> Box<dyn Element> {
+fn shell(
+    ui: FamilyId,
+    t: &Theme,
+    scene: DemoScene,
+    view_id: EntityId,
+    body: Box<dyn Element>,
+) -> Box<dyn Element> {
     let title = match scene {
         DemoScene::Solo | DemoScene::SoloBusy | DemoScene::Coordinate => "New workspace",
         DemoScene::Editor => "invitations.ts",
@@ -782,12 +789,30 @@ fn shell(ui: FamilyId, t: &Theme, scene: DemoScene, body: Box<dyn Element>) -> B
     ] {
         nav = nav.with_child(text(ui, s, 13.0, t.sub_text()));
     }
-    let nav = Container::new(nav.finish())
-        .with_padding_left(20.0)
-        .with_padding_right(18.0)
-        .with_padding_top(22.0)
-        .with_background_color(t.sidebar_background())
-        .finish();
+    // The real footer (Star on GitHub, organisation, help, sign out).
+    let states = std::cell::RefCell::new(std::collections::HashMap::new());
+    let nav = Container::new(
+        Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_child(
+                Expanded::new(
+                    1.0,
+                    Container::new(nav.finish())
+                        .with_padding_left(20.0)
+                        .with_padding_right(18.0)
+                        .with_padding_top(22.0)
+                        .finish(),
+                )
+                .finish(),
+            )
+            .with_child(crate::workspace::render_demo_org_footer(
+                t, ui, view_id, &states,
+            ))
+            .finish(),
+    )
+    .with_background_color(t.sidebar_background())
+    .finish();
     let center=Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch).with_main_axis_size(MainAxisSize::Max)
         .with_child(Container::new(text(ui,&format!("{title}                                               Acme app    ·    Demo data"),13.0,t.sub_text())).with_padding_left(20.0).with_padding_top(13.0).with_padding_bottom(13.0).with_background_color(t.surface_1()).finish())
         .with_child(Expanded::new(1.0,body).finish()).finish();
