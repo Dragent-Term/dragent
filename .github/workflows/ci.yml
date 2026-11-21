@@ -20,12 +20,18 @@ jobs:
   # Skip heavy jobs for docs-only PRs; every other job depends on this one.
   paths:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # the filter lists a pull request's files through the API
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # On pushes the filter diffs against the previous commit with git,
+          # and without stored credentials it can't fetch it, so take it all.
+          fetch-depth: 0
       - id: filter
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
@@ -84,6 +90,9 @@ jobs:
           rust-src-dir: dragent
           components: rustfmt
           cache-workspaces: dragent
+          # The action's default is -D warnings; the codebase predates that,
+          # so warnings stay warnings until they're cleaned up.
+          rustflags: ''
       - name: cargo metadata (manifests valid, locked)
         run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
       - name: rustfmt (files this change touches)
@@ -92,11 +101,23 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
+        # rustfmt also checks a touched mod.rs's child modules; only diffs in
+        # the touched files themselves fail the job.
         run: |
           changed=$(git diff --name-only --diff-filter=ACMR "origin/$BASE_REF" HEAD -- '*.rs' | sed -n 's#^dragent/##p')
-          if [ -n "$changed" ]; then
-            echo "$changed" | xargs rustfmt --check --edition 2021
+          [ -n "$changed" ] || exit 0
+          report=$(echo "$changed" | xargs rustfmt --check --edition 2021 2>&1 || true)
+          bad=$(echo "$report" | sed -n "s#^Diff in $PWD/\(.*\):[0-9]*:\$#\1#p" | sort -u | grep -xF -f <(echo "$changed") || true)
+          if [ -n "$bad" ]; then
+            echo "$report"
+            echo "::error::Not formatted (run rustfmt --edition 2021 on them): $(echo "$bad" | tr '\n' ' ')"
+            exit 1
           fi
+      - name: Linux libraries the desktop app links
+        working-directory: .
+        # GTK and WebKitGTK for the embedded browser, D-Bus for the keyring
+        # and notifications, clang for bindgen.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libdbus-1-dev libxkbcommon-dev libwayland-dev libfontconfig1-dev libfreetype-dev libssl-dev libclang-dev pkg-config
       - name: cargo check (workspace)
         run: cargo check --workspace --locked
 
@@ -117,9 +138,12 @@ jobs:
         with:
           rust-src-dir: dragent
           cache-workspaces: dragent
+          rustflags: '' # see the check job
       - name: Linux libraries the desktop app links
         working-directory: .
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-dev libwayland-dev libfontconfig1-dev libssl-dev pkg-config
+        # GTK and WebKitGTK for the embedded browser, D-Bus for the keyring
+        # and notifications, clang for bindgen.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libdbus-1-dev libxkbcommon-dev libwayland-dev libfontconfig1-dev libfreetype-dev libssl-dev libclang-dev pkg-config
       - name: cargo test (workspace)
         run: cargo test --workspace --locked
 
