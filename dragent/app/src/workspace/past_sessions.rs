@@ -156,6 +156,13 @@ impl WorkspaceView {
     /// Continue `session` in a new tab in its own folder, under its account
     /// (also what a phone's "Continue" asks for).
     pub(crate) fn resume_session(&mut self, session: PastSession, ctx: &mut ViewContext<Self>) -> Result<(), String> {
+        // A folder on a remote machine resumes with that machine's account.
+        // The stored selection (profile id or "system") plus the machine
+        // behind the folder is all the resume needs; the machine resolves
+        // it again at resume time.
+        if let Some(machine) = self.machine_agents(Some(&session.cwd), ctx) {
+            return self.resume_remote_session(session, machine, ctx);
+        }
         let settings = crate::setup::UiSettings::load();
         let definition = super::agent_definition::definition_by_cli(
             &session.provider,
@@ -206,6 +213,127 @@ impl WorkspaceView {
             });
         }
         self.after_agent_surface_created(ctx);
+        Ok(())
+    }
+
+    /// Continue a remote `session` where it ran: the resume command
+    /// prefixed with that machine's `LaunchEnv` for the stored account.
+    /// `System` needs no account lookup; any other selection is resolved on
+    /// the machine off the UI thread. Remote accounts are carried by the env
+    /// prefix, never by local staging. Failures show an error notice and
+    /// open nothing.
+    fn resume_remote_session(
+        &mut self,
+        session: PastSession,
+        machine: super::remote_project::MachineAgents,
+        ctx: &mut ViewContext<Self>,
+    ) -> Result<(), String> {
+        use dragent_host::development::{
+            AccountsRequest, AccountsResponse, DevelopmentRequest, DevelopmentResponse,
+        };
+        if !session.cwd.is_dir() {
+            return Err(format!("{} no longer exists.", session.cwd.display()));
+        }
+        let selection = if session.account == "system" {
+            dragent_host::agent_accounts::Selection::System
+        } else {
+            dragent_host::agent_accounts::Selection::parse(&session.account)?
+        };
+        let settings = crate::setup::UiSettings::load();
+        let definition = super::agent_definition::definition_by_cli(
+            &session.provider,
+            &settings.custom_agents,
+            self.theme.is_dark,
+        );
+        let project_root = self.active_project_root();
+        let label = definition.as_ref().map_or_else(|| session.provider.clone(), |d| d.name.clone());
+        let definition_id = definition.as_ref().map(|d| d.id.clone());
+        let remote_resume = machine.launch_line(&session.resume_command());
+        if matches!(selection, dragent_host::agent_accounts::Selection::System) {
+            if self.begin_fresh_surface(ctx).is_none() {
+                return Err("The desktop couldn't open a new tab here.".into());
+            }
+            let new_tab = self.create_tab_with_cwd(ctx, Some(label), None, session.cwd.clone(), project_root);
+            if let Some(id) = definition_id {
+                new_tab.pane.set_agent_id(ctx, Some(id));
+            }
+            let terminal = match &new_tab.pane {
+                super::pane::WorkspacePane::Terminal(terminal) => Some(terminal.clone()),
+                _ => None,
+            };
+            let new_tab_id = new_tab.id;
+            self.tabs.push(new_tab);
+            self.active_tab_id = new_tab_id;
+            if let Some(terminal) = terminal {
+                ctx.update_view(&terminal, |terminal, terminal_ctx| {
+                    terminal.submit_shell_command(&remote_resume, terminal_ctx);
+                });
+            }
+            self.after_agent_surface_created(ctx);
+            return Ok(());
+        }
+        let client = crate::remote_fs::client(&machine.machine_id)?;
+        let provider = session.provider.clone();
+        let cwd = session.cwd.clone();
+        ctx.spawn(
+            async move {
+                match client.development(DevelopmentRequest::Environment) {
+                    Ok(DevelopmentResponse::Environment { os, .. }) => {
+                        let lower = os.to_lowercase();
+                        if lower.contains("windows") || lower == "win32" {
+                            return Err(
+                                "Saved accounts aren't supported on Windows machines yet".to_string(),
+                            );
+                        }
+                    }
+                    Err(error) => return Err(error),
+                    _ => {}
+                }
+                match client.development(DevelopmentRequest::Accounts(
+                    AccountsRequest::LaunchEnv { provider, selection },
+                )) {
+                    Ok(DevelopmentResponse::Accounts(AccountsResponse::LaunchEnv(env))) => Ok(env),
+                    Ok(other) => Err(format!("unexpected development response: {other:?}")),
+                    Err(error) => Err(error),
+                }
+            },
+            move |view, result, ctx| {
+                match result {
+                    Ok(env) => {
+                        let command = format!(
+                            "{}{}",
+                            dragent_host::agent_accounts::posix_prefix(&env),
+                            remote_resume
+                        );
+                        if view.begin_fresh_surface(ctx).is_none() {
+                            return;
+                        }
+                        let new_tab =
+                            view.create_tab_with_cwd(ctx, Some(label), None, cwd, project_root);
+                        if let Some(id) = definition_id {
+                            new_tab.pane.set_agent_id(ctx, Some(id));
+                        }
+                        let terminal = match &new_tab.pane {
+                            super::pane::WorkspacePane::Terminal(terminal) => {
+                                Some(terminal.clone())
+                            }
+                            _ => None,
+                        };
+                        let new_tab_id = new_tab.id;
+                        view.tabs.push(new_tab);
+                        view.active_tab_id = new_tab_id;
+                        if let Some(terminal) = terminal {
+                            ctx.update_view(&terminal, |terminal, terminal_ctx| {
+                                terminal.submit_shell_command(&command, terminal_ctx);
+                            });
+                        }
+                        view.after_agent_surface_created(ctx);
+                    }
+                    Err(message) => view.show_error_notice("Past session", message, ctx),
+                }
+                ctx.notify();
+            },
+        );
         Ok(())
     }
 }

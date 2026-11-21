@@ -67,6 +67,7 @@ fn what_the_person_writes_reaches_a_working_lead_at_once() {
             kind: MessageKind::Note,
             body: "Add Claude Code as a worker".into(),
             reply_to: None,
+            choices: Vec::new(),
         })
         .unwrap();
     // A wait takes it first, and its output may never reach the lead.

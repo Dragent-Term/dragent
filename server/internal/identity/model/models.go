@@ -111,8 +111,22 @@ type TokenStore interface {
 	AuthorizeState(ctx context.Context, stateID string, userID string, accessToken string, refreshToken string) error
 	// ApproveState releases a parked sign-in, only to the user it belongs to.
 	ApproveState(ctx context.Context, stateID string, userID string) error
-	// GetAuthorizedState returns the tokens of an approved sign-in only.
-	GetAuthorizedState(ctx context.Context, stateID string) (accessToken string, refreshToken string, err error)
+	// TakeAuthorizedState hands out an approved sign-in once: the first
+	// caller gets the tokens and the sign-in is gone. Unapproved sign-ins
+	// stay parked.
+	TakeAuthorizedState(ctx context.Context, stateID string) (accessToken string, refreshToken string, err error)
+
+	// SetSignInChallenge records the PKCE challenge (RFC 7636, S256) of a
+	// desktop sign-in when it starts. The first challenge for a state wins.
+	SetSignInChallenge(ctx context.Context, stateID string, challenge string) error
+	// SignInChallenge is the challenge a state started with, or "" for a
+	// sign-in that didn't send one (older desktop builds, the browser).
+	SignInChallenge(ctx context.Context, stateID string) (string, error)
+	// SaveHandoff parks the app's refresh token under a one-time code that
+	// the deep link carries instead of the token.
+	SaveHandoff(ctx context.Context, code string, stateID string, refreshToken string, userID string) error
+	// TakeHandoff returns a handoff once; the code is gone afterwards.
+	TakeHandoff(ctx context.Context, code string) (stateID string, refreshToken string, userID string, err error)
 
 	// SignOutDevice ends a device's session: its access tokens are refused
 	// from now on, though they haven't expired.

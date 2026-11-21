@@ -283,6 +283,25 @@ impl WorkspaceView {
         self.adopt_new_tab(tab, ctx);
     }
 
+    /// Settings → Agent Accounts: open the one-line sign-in command in a
+    /// terminal on the machine, in its remote home. The dialog keeps the same
+    /// command with Copy, so when there is no home to run it in the person
+    /// still signs in by opening a terminal on the machine and running it.
+    pub(crate) fn open_account_sign_in_terminal(
+        &mut self,
+        machine_id: &str,
+        title: &str,
+        command: &str,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(home) = crate::remote_fs::home(machine_id) else {
+            return;
+        };
+        let alias = crate::remote_fs::alias(machine_id, &home);
+        crate::remote_fs::ensure_stand_in(&alias);
+        self.open_page_command_terminal(title, Some(alias), command, ctx);
+    }
+
     /// Settings → Machines: install, update or remove tools in the install
     /// sheet, a terminal on the machine shown over Settings, so prompts such
     /// as a sudo password are answered in place.

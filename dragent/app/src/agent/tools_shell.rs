@@ -326,6 +326,89 @@ pub fn external_read_paths_for_tool(
         .collect()
 }
 
+/// Where a write would land, for the permission check: the deepest folder
+/// that exists, resolved through symlinks, plus the rest of the path. A
+/// file that doesn't exist yet under a symlinked folder is placed where the
+/// write would really go, not where its spelling suggests.
+pub(crate) fn write_permission_path(path: std::path::PathBuf) -> std::path::PathBuf {
+    let normal = permission_path(path);
+    let mut existing = normal.as_path();
+    let mut rest = Vec::new();
+    while !existing.exists() {
+        match (existing.file_name(), existing.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name.to_os_string());
+                existing = parent;
+            }
+            _ => return normal,
+        }
+    }
+    let mut out = existing
+        .canonicalize()
+        .unwrap_or_else(|_| existing.to_path_buf());
+    for name in rest.into_iter().rev() {
+        out.push(name);
+    }
+    out
+}
+
+/// Absolute paths a file-changing tool intends to write, move, create or
+/// delete. Shared by the controller (asks first) and the executor (refuses
+/// without approval), like [`read_paths_for_tool`] for reads.
+pub fn write_paths_for_tool(name: &str, args_json: &str, pane_id: Uuid) -> Vec<std::path::PathBuf> {
+    let Ok(args) = serde_json::from_str::<serde_json::Value>(args_json) else {
+        return Vec::new();
+    };
+    let mut raw: Vec<String> = Vec::new();
+    let mut push = |value: Option<&serde_json::Value>| {
+        if let Some(path) = value.and_then(|v| v.as_str()) {
+            raw.push(path.to_string());
+        }
+    };
+    match name {
+        "write_file" | "edit_file" | "create_directory" | "delete_file" => push(args.get("path")),
+        "move_file" => {
+            push(args.get("source"));
+            push(args.get("destination"));
+        }
+        "batch_edit" => {
+            if let Some(edits) = args.get("edits").and_then(|v| v.as_array()) {
+                for edit in edits {
+                    push(edit.get("path"));
+                }
+            }
+        }
+        "apply_patch" => {
+            if let Some(patch) = args.get("patch").and_then(|v| v.as_str()) {
+                if let Ok(files) = crate::agent::tools_files::parse_patch(patch) {
+                    raw.extend(files.into_iter().map(|file| file.path));
+                }
+            }
+        }
+        _ => {}
+    }
+    raw.iter()
+        .map(|path| write_permission_path(resolve_path_for_pane(path, pane_id)))
+        .collect()
+}
+
+/// Write targets outside the pane's project. Like reads outside it, these
+/// ask in every approval mode: "Accept edits" means edits to the project,
+/// not to `~/.zshrc`.
+pub fn external_write_paths_for_tool(
+    name: &str,
+    args_json: &str,
+    pane_id: Uuid,
+) -> Vec<std::path::PathBuf> {
+    let Some(cwd) = project_cwd_for_pane(pane_id).map(permission_path) else {
+        return Vec::new();
+    };
+    write_paths_for_tool(name, args_json, pane_id)
+        .into_iter()
+        .filter(|path| !path.starts_with(&cwd))
+        .collect()
+}
+
 /// Directory persisted by “Always allow”. A directory request grants itself;
 /// a file request grants its containing directory so related reads do not
 /// prompt one file at a time.
@@ -500,6 +583,56 @@ pub fn execute(name: &str, args_json: &str, pane_id: Uuid) -> (String, bool) {
                 format!(
                     "Permission required: reading outside the project needs user approval: {}",
                     external_paths
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                true,
+            );
+        }
+    }
+
+    // Writes get the same boundary: sensitive locations are refused, and a
+    // change outside the project needs this call's approval (a persisted
+    // read grant doesn't cover writing).
+    let all_write_paths = write_paths_for_tool(name, args_json, pane_id);
+    if !all_write_paths.is_empty() {
+        let protected_check =
+            crate::agent::permissions::AllowedRoots::new(all_write_paths.iter().cloned());
+        if let Some((path, reason)) = all_write_paths.iter().find_map(|path| {
+            protected_check
+                .check(path)
+                .err()
+                .filter(|reason| {
+                    matches!(reason, crate::agent::permissions::DenyReason::SensitivePath)
+                })
+                .map(|reason| (path, reason))
+        }) {
+            return (
+                format!("Permission denied for {}: {reason}", path.display()),
+                true,
+            );
+        }
+    }
+    let external_writes = external_write_paths_for_tool(name, args_json, pane_id);
+    if !external_writes.is_empty() {
+        let one_shot = current_call_id()
+            .and_then(|call_id| {
+                ONE_SHOT_READ_ROOTS
+                    .lock()
+                    .ok()
+                    .and_then(|grants| grants.get(&call_id).cloned())
+            })
+            .unwrap_or_default();
+        if !external_writes
+            .iter()
+            .all(|path| one_shot.iter().any(|root| path.starts_with(root)))
+        {
+            return (
+                format!(
+                    "Permission required: changing files outside the project needs user approval: {}",
+                    external_writes
                         .iter()
                         .map(|path| path.display().to_string())
                         .collect::<Vec<_>>()

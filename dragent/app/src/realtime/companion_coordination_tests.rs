@@ -272,6 +272,42 @@ fn registry_retires_windows_and_never_relabels_projects() {
 }
 
 #[test]
+fn a_coordination_the_sidebar_shows_is_listed_from_its_worktree_folder() {
+    // The team runs in a worktree that isn't itself a sidebar project.
+    let allowed: HashSet<String> = ["/repo".to_string()].into_iter().collect();
+    let shown: HashSet<String> = ["team-wt".to_string()].into_iter().collect();
+    let teams = vec![
+        summary("team-wt", "/worktrees/repo-feature", TeamStatus::Running, 5),
+        summary("team-hidden", "/worktrees/other", TeamStatus::Running, 4),
+    ];
+    let result = build_list_result_with(teams.clone(), &allowed, &shown, None);
+    let ids: Vec<_> = result["items"].as_array().unwrap().iter().map(|t| t["id"].clone()).collect();
+    assert_eq!(ids, vec![json!("team-wt")], "shown team listed, hidden one not");
+    // Without it shown (the old rule), the list came back empty.
+    assert!(build_list_result(teams, &allowed, None)["items"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn registry_keeps_shown_teams_per_window_and_owner() {
+    let mut registry = Registry::default();
+    let alice = AccountKey::new("alice", "org-a");
+    registry.note("win-a".into(), alice.clone(), vec!["/repo".to_string()]);
+    registry.note_teams("win-a", &alice, vec![("team-1".into(), Some("/repo".into()))]);
+    let owner = registry.current().unwrap();
+    assert_eq!(registry.shown_teams(&owner).get("team-1"), Some(&Some("/repo".to_string())));
+    // Another account's note never mixes in, and an unknown window is ignored.
+    registry.note_teams("win-a", &AccountKey::new("bob", "org-b"), vec![("team-x".into(), None)]);
+    registry.note_teams("win-z", &alice, vec![("team-z".into(), None)]);
+    let shown = registry.shown_teams(&owner);
+    assert!(shown.contains_key("team-1") && !shown.contains_key("team-x") && !shown.contains_key("team-z"));
+    // Closing the window drops them.
+    registry.retire("win-a");
+    assert!(registry.current().is_none());
+    registry.note("win-b".into(), alice, vec!["/repo".to_string()]);
+    assert!(registry.shown_teams(&registry.current().unwrap()).is_empty());
+}
+
+#[test]
 fn truncate_is_char_boundary() {
     let emoji = "é".repeat(MAX_TITLE_CHARS + 5);
     let (cut, was) = truncate_chars(&emoji, MAX_TITLE_CHARS);

@@ -14,6 +14,7 @@ import {
 import {
   normalizeDeviceName,
   normalizePairingCode,
+  isTrustedGateway,
   normalizePairingGateway,
   parsePairLink,
   wipeBytes,
@@ -147,4 +148,15 @@ test("p appears in no persisted navigation state", () => {
   assert.equal(redirectSystemPath({ path: "pair?c=short", initial: true }), "/pair-scan");
   assert.equal(peekPendingPairLink(), null);
   clearPendingPairLink();
+});
+
+test("only Dragent's own servers are trusted without asking", () => {
+  assert.equal(isTrustedGateway("https://api.dragent.dev"), true);
+  assert.equal(isTrustedGateway("https://dragent.dev"), true);
+  assert.equal(isTrustedGateway("https://evil.example.com"), false);
+  assert.equal(isTrustedGateway("https://dragent.dev.evil.example.com"), false);
+  assert.equal(isTrustedGateway("https://notdragent.dev"), false);
+  assert.equal(isTrustedGateway("http://api.dragent.dev"), false);
+  assert.equal(isTrustedGateway("http://localhost:8080"), false);
+  assert.equal(isTrustedGateway("http://localhost:8080", true), true);
 });

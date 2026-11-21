@@ -5,8 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Loader2, Mail, ShieldAlert, ShieldCheck } from "lucide-react";
 import SessionControl from "@/components/SessionControl";
-import { setToken } from "@/lib/token";
-import { stashHandoff } from "@/lib/desktopHandoff";
+import { SIGNED_IN_KEY, markSignedIn } from "@/lib/token";
+import { APP_SCHEME, appPart, stashHandoff } from "@/lib/desktopHandoff";
 
 // Custom Google SVG icon
 const GoogleIcon = () => (
@@ -30,9 +30,13 @@ function LoginDesktopContent() {
   
   // URL Parameters
   const router = useRouter();
-  const [scheme, setScheme] = useState("dragent");
+  const scheme = APP_SCHEME;
   const [state, setState] = useState("");
   const isDesktopFlow = Boolean(searchParams.get("state"));
+  // The desktop's PKCE challenge: passed on so the app's half of the sign-in
+  // comes back as a one-time code only the app can redeem.
+  const challenge = searchParams.get("challenge") || undefined;
+  const challengeParam = challenge ? `&challenge=${encodeURIComponent(challenge)}` : "";
   
   // UI State
   const [email, setEmail] = useState("");
@@ -55,10 +59,8 @@ function LoginDesktopContent() {
   
   // Load and check URL parameters
   useEffect(() => {
-    const urlScheme = searchParams.get("scheme") || "dragent";
+    // `scheme` in the URL is ignored: the app's scheme is fixed (APP_SCHEME).
     const urlState = searchParams.get("state");
-    
-    setScheme(urlScheme);
     
     if (urlState) {
       // Opened BY the desktop app: it owns the state and is waiting on it, so
@@ -81,8 +83,10 @@ function LoginDesktopContent() {
   // Polling loop for session status check. It only resolves once a sign-in
   // finished elsewhere (a magic link opened on another device) has been
   // approved there; the same-browser cases arrive by message or storage.
+  // Not when the desktop app started this sign-in: what's parked then is the
+  // app's session, collected once, by the app.
   useEffect(() => {
-    if (!state || session || pollingTimedOut) return;
+    if (!state || session || pollingTimedOut || searchParams.get("state")) return;
 
     const startTime = Date.now();
     const TIMEOUT_LIMIT = 5 * 60 * 1000; // 5 minutes in milliseconds
@@ -98,37 +102,13 @@ function LoginDesktopContent() {
         if (!res.ok) return;
         const data = await res.json();
         
-        if (data && !data.pending && data.refresh_token) {
-          // Sign-in always finishes on the dashboard now — there is one login
-          // flow, not a separate desktop one. Persist the access token, stash
-          // the deep-link payload for the dashboard to offer, and navigate.
-          // Never navigate on a half-finished sign-in. Without an access token
-          // the dashboard has nothing to authenticate with, sees no session,
-          // and bounces straight back here — which looks exactly like being
-          // logged out on its own.
-          if (!data.access_token) {
-            setError(
-              "Sign-in completed but no access token was returned. Please try again."
-            );
-            return;
-          }
-          setToken(data.access_token);
-          // Only when the desktop app initiated this: a browser-only sign-in
-          // has nothing to hand back, and prompting "Open in Dragent" there
-          // would be noise.
-          if (searchParams.get("state")) {
-            stashHandoff({
-              scheme,
-              state,
-              refresh_token: data.refresh_token,
-              user_id: data.user_id ?? "",
-            });
-          }
-          setSession({
-            access_token: data.access_token,
-            refresh_token: data.refresh_token,
-            user_id: data.user_id,
-          });
+        // A browser-only sign-in finished elsewhere (a magic link opened on
+        // another device) and was approved: the route put the session in
+        // this browser's cookie. (Desktop-started sign-ins aren't polled
+        // here at all; see the guard above.)
+        if (data && !data.pending && data.signed_in === true) {
+          markSignedIn();
+          setSession({ user_id: data.user_id });
           router.replace(safeNext(searchParams.get("next")));
         }
       } catch (err) {
@@ -140,7 +120,7 @@ function LoginDesktopContent() {
     const timer = setInterval(checkSessionStatus, 2000);
 
     return () => clearInterval(timer);
-  }, [state, session, pollingTimedOut]);
+  }, [state, session, pollingTimedOut, searchParams]);
 
   // The GitHub/Google popup hands its result back here (same origin only).
   useEffect(() => {
@@ -149,18 +129,18 @@ function LoginDesktopContent() {
       if (event.origin !== window.location.origin) return;
       const data = event.data;
       if (!data || data.type !== "dragent:oauth-complete" || data.state !== state) return;
-      if (typeof data.access_token !== "string" || !data.access_token) return;
-      setToken(data.access_token);
-      if (searchParams.get("state") && typeof data.refresh_token === "string") {
-        stashHandoff({ scheme, state, refresh_token: data.refresh_token, user_id: data.user_id ?? "" });
+      if (data.signed_in !== true) return;
+      markSignedIn();
+      if (searchParams.get("state") && (typeof data.handoff_code === "string" || typeof data.refresh_token === "string")) {
+        stashHandoff({ scheme, state, ...appPart(data), user_id: data.user_id ?? "" });
       }
-      setSession({ access_token: data.access_token, refresh_token: data.refresh_token, user_id: data.user_id });
+      setSession({ user_id: data.user_id });
       router.replace(safeNext(searchParams.get("next")));
     };
     // A magic link opened in another tab of this browser signs that tab in;
     // follow it rather than waiting here.
     const onStorage = (event: StorageEvent) => {
-      if (event.key === "dragent_token" && event.newValue) {
+      if (event.key === SIGNED_IN_KEY && event.newValue) {
         router.replace(safeNext(searchParams.get("next")));
       }
     };
@@ -187,7 +167,7 @@ function LoginDesktopContent() {
     // vars are undefined in the browser bundle, which sent this popup to
     // `<ui-domain>/undefined/auth/start`.
     const popup = window.open(
-      `/api/auth/start?provider=${provider}&state=${state}`,
+      `/api/auth/start?provider=${provider}&state=${state}${challengeParam}`,
       `oauth-${provider}`,
       `width=${width},height=${height},left=${left},top=${top},status=no,resizable=yes`
     );
@@ -209,7 +189,7 @@ function LoginDesktopContent() {
       const res = await fetch("/api/auth/magic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, state, is_registration: false }),
+        body: JSON.stringify({ email, state, challenge, is_registration: false }),
       });
 
       const data = await res.json();
@@ -239,7 +219,7 @@ function LoginDesktopContent() {
       const res = await fetch("/api/auth/magic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, state, first_name: firstName, last_name: lastName, is_registration: true }),
+        body: JSON.stringify({ email, state, challenge, first_name: firstName, last_name: lastName, is_registration: true }),
       });
 
       const data = await res.json();

@@ -3,8 +3,8 @@
 import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ArrowRight } from "lucide-react";
-import { setToken } from "@/lib/token";
-import { stashHandoff } from "@/lib/desktopHandoff";
+import { markSignedIn } from "@/lib/token";
+import { APP_SCHEME, appPart, stashHandoff } from "@/lib/desktopHandoff";
 
 function MagicVerificationContent() {
   const searchParams = useSearchParams();
@@ -17,7 +17,8 @@ function MagicVerificationContent() {
   useEffect(() => {
     const token = searchParams.get("token");
     const state = searchParams.get("state");
-    const scheme = searchParams.get("scheme") || "dragent";
+    // The app's scheme is fixed; `?scheme=` is ignored (see APP_SCHEME).
+    const scheme = APP_SCHEME;
 
     if (!token || !state) {
       setError("Invalid link. Missing token or state verification parameters.");
@@ -41,16 +42,15 @@ function MagicVerificationContent() {
         // the desktop deep link and stop there, which left anyone reading their
         // email in a browser at a dead end with no session.
         //
-        // Never navigate without an access token. The dashboard authenticates
-        // with a Bearer header; landing there tokenless renders "Authentication
-        // required" and bounces to /login, which reads as being logged out the
-        // instant you log in.
-        if (!data.access_token) {
+        // Never navigate without a session: the route sets the session cookie
+        // on success. Landing on the dashboard without one bounces to /login,
+        // which reads as being logged out the instant you log in.
+        if (!data.success) {
           throw new Error(
             "Signed in, but no access token was issued. Please request a new link."
           );
         }
-        setToken(data.access_token);
+        markSignedIn();
 
         // Let the dashboard offer "Open in Dragent". Safe to always stash: the
         // desktop app completes by polling this state, not by the deep link
@@ -59,7 +59,7 @@ function MagicVerificationContent() {
         stashHandoff({
           scheme,
           state: data.state || state,
-          refresh_token: data.refresh_token,
+          ...appPart(data),
           user_id: data.user_id ?? "",
         });
 

@@ -54,6 +54,7 @@ fn parse_https_callback(raw: &str) -> Result<AuthCallback> {
         refresh_token,
         state,
         user_id,
+        code: None,
     })
 }
 

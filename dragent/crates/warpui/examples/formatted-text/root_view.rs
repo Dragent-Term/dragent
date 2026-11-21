@@ -95,7 +95,6 @@ impl View for FormattedTextView {
                                             "cd\n",
                                             "this is a [link](https://www.google.com)\n",
                                         ))
-                                        .unwrap()
                                         .append_line(
                                             FormattedTextLine::Line(vec![
                                                 FormattedTextFragment::plain_text(

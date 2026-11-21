@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bearerFrom, sameOrigin } from "@/lib/server/session";
 
 // Server-side only. Proxies /api/billing/* → Go backend /api/v1/billing/*,
-// forwarding the caller's Bearer token (the billing endpoints require it). The
+// forwarding the session cookie as a Bearer token (the billing endpoints require it). The
 // Go backend URL is never exposed to the browser.
 const GO_BACKEND_URL = process.env.NEXT_BACKEND_URL || "http://localhost:8080";
 
 async function proxy(req: NextRequest, path: string[]) {
   const search = new URL(req.url).search;
   const target = `${GO_BACKEND_URL}/api/v1/billing/${path.join("/")}${search}`;
-  const auth = req.headers.get("authorization") ?? "";
+  const auth = bearerFrom(req);
+  if (req.method !== "GET" && req.method !== "HEAD" && !sameOrigin(req)) {
+    return NextResponse.json({ error: "Cross-site request refused" }, { status: 403 });
+  }
 
   const init: RequestInit = {
     method: req.method,

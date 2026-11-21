@@ -10,13 +10,15 @@
  */
 export class ApiError extends Error {}
 
-export function apiFetch(token: string | null | undefined) {
+// The session travels as the httpOnly cookie; `session` only marks that
+// there is one (callers re-create the client when it changes).
+export function apiFetch(session: string | null | undefined) {
+  void session;
   return async (path: string, init?: RequestInit) => {
     const res = await fetch(path, {
       ...init,
       headers: {
         ...(init?.headers ?? {}),
-        Authorization: `Bearer ${token ?? ""}`,
         "Content-Type": "application/json",
       },
     });

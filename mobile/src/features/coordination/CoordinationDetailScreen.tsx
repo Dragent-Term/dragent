@@ -35,7 +35,7 @@ const VIEW_OPTIONS = [
 
 const PLAN_STATUS: Record<PreviewCoordination["plan"][number]["status"], { label: string; tone: StatusTone }> = {
   pending: { label: "Pending", tone: "neutral" },
-  working: { label: "Working", tone: "accent" },
+  working: { label: "Working", tone: "working" },
   done: { label: "Done", tone: "success" },
   blocked: { label: "Blocked", tone: "warning" },
   cancelled: { label: "Cancelled", tone: "neutral" },

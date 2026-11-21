@@ -84,6 +84,88 @@ pub enum DevelopmentRequest {
         pin: Option<ToolPin>,
     },
     PullRequests(crate::pull_requests::Request),
+    /// Machine-local agent accounts, answered by the owning host (local or
+    /// remote `dragent-host`). No credential ever passes through here.
+    Accounts(AccountsRequest),
+}
+
+/// One account request over the host protocol.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AccountsRequest {
+    List,
+    Add {
+        provider: String,
+        label: String,
+        #[serde(default)]
+        kind: crate::agent_accounts::CredentialKind,
+    },
+    Rename {
+        id: uuid::Uuid,
+        label: String,
+    },
+    Remove {
+        id: uuid::Uuid,
+    },
+    SetDefault {
+        provider: String,
+        selection: crate::agent_accounts::Selection,
+    },
+    SignInCommand {
+        provider: String,
+        target: Option<uuid::Uuid>,
+    },
+    LaunchEnv {
+        provider: String,
+        selection: crate::agent_accounts::Selection,
+    },
+}
+
+/// One profile as the account list shows it. No credential.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AccountProfileView {
+    pub id: uuid::Uuid,
+    pub provider: String,
+    pub label: String,
+    pub kind: crate::agent_accounts::CredentialKind,
+}
+
+/// One signed-in identity as the agent reports it, plus any probe error.
+/// An error never fails the list.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AccountIdentityView {
+    pub target: Option<uuid::Uuid>,
+    pub provider: String,
+    pub signed_in: bool,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub plan: Option<String>,
+    #[serde(default)]
+    pub kind: Option<crate::agent_accounts::CredentialKind>,
+    #[serde(default)]
+    pub error: Option<String>,
+    /// Newest sign-in file change (unix seconds), for the Settings
+    /// "Sign in again" fix. None for the system login or when none of the
+    /// profile's sign-in files exist.
+    #[serde(default)]
+    pub credentials_changed_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AccountsResponse {
+    List {
+        machine_id: Option<uuid::Uuid>,
+        profiles: Vec<AccountProfileView>,
+        defaults: std::collections::BTreeMap<String, crate::agent_accounts::Selection>,
+        identities: Vec<AccountIdentityView>,
+    },
+    Added(AccountProfileView),
+    Ack,
+    SignInCommand {
+        command: String,
+        shell: crate::agent_accounts::ShellKind,
+    },
+    LaunchEnv(crate::agent_accounts::LaunchEnv),
 }
 
 /// One tool to report on: its executable, and the arguments that print its
@@ -209,6 +291,7 @@ pub struct FileEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DevelopmentResponse {
+    Accounts(AccountsResponse),
     Environment {
         home: String,
         os: String,
@@ -638,10 +721,194 @@ mod runtime {
             git,
         }
     }
+
+    fn accounts_execute(request: AccountsRequest) -> Result<DevelopmentResponse, String> {
+        match request {
+            AccountsRequest::List => {
+                let registry = crate::agent_accounts::Registry::load()?;
+                let machine_id = registry.machine_id;
+                let profiles: Vec<AccountProfileView> = registry
+                    .profiles
+                    .iter()
+                    .map(|p| AccountProfileView {
+                        id: p.id,
+                        provider: p.provider.clone(),
+                        label: p.label.clone(),
+                        kind: p.kind,
+                    })
+                    .collect();
+                let defaults = registry.defaults.clone();
+                // Profiles whose binding no longer resolves still appear, with the error.
+                let mut identities: Vec<AccountIdentityView> = Vec::new();
+                struct Job {
+                    target: Option<uuid::Uuid>,
+                    provider: String,
+                    kind: Option<crate::agent_accounts::CredentialKind>,
+                    binding: crate::agent_accounts::Binding,
+                    exe: PathBuf,
+                }
+                let mut jobs: Vec<Job> = Vec::new();
+                for p in &registry.profiles {
+                    match registry.resolve(
+                        &p.provider,
+                        None,
+                        &crate::agent_accounts::Selection::Profile(p.id),
+                    ) {
+                        Ok(binding) => jobs.push(Job {
+                            target: Some(p.id),
+                            provider: p.provider.clone(),
+                            kind: Some(p.kind),
+                            binding,
+                            exe: PathBuf::from(&p.provider),
+                        }),
+                        Err(error) => identities.push(AccountIdentityView {
+                            target: Some(p.id),
+                            provider: p.provider.clone(),
+                            signed_in: false,
+                            email: None,
+                            plan: None,
+                            kind: Some(p.kind),
+                            error: Some(error),
+                            credentials_changed_at:
+                                crate::agent_accounts::credentials_changed_at_in(
+                                    &crate::agent_accounts::root(),
+                                    &p.provider,
+                                    Some(p.id),
+                                ),
+                        }),
+                    }
+                }
+                for (name, present) in
+                    crate::host_tools::lookup(&["claude".to_string(), "codex".to_string()])
+                {
+                    if present {
+                        jobs.push(Job {
+                            target: None,
+                            provider: name.clone(),
+                            kind: None,
+                            binding: crate::agent_accounts::Binding::system(&name),
+                            exe: PathBuf::from(&name),
+                        });
+                    }
+                }
+                // Probes run in parallel threads; an error becomes `error`, never fails the list.
+                let probed: Vec<AccountIdentityView> = std::thread::scope(|s| {
+                    let handles: Vec<_> = jobs
+                        .into_iter()
+                        .map(|job| {
+                            s.spawn(move || {
+                                match crate::agent_accounts::identity(&job.binding, &job.exe) {
+                                    Ok(who) => AccountIdentityView {
+                                        target: job.target,
+                                        provider: job.provider,
+                                        signed_in: who.signed_in,
+                                        email: who.email,
+                                        plan: who.plan,
+                                        kind: job.kind.or(who.kind),
+                                        error: None,
+                                        credentials_changed_at: who.credentials_changed_at,
+                                    },
+                                    Err(error) => AccountIdentityView {
+                                        target: job.target,
+                                        provider: job.provider,
+                                        signed_in: false,
+                                        email: None,
+                                        plan: None,
+                                        kind: job.kind,
+                                        error: Some(error),
+                                        credentials_changed_at:
+                                            crate::agent_accounts::credentials_changed_at(
+                                                &job.binding,
+                                            ),
+                                    },
+                                }
+                            })
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|h| {
+                            h.join().unwrap_or(AccountIdentityView {
+                                target: None,
+                                provider: "unknown".into(),
+                                signed_in: false,
+                                email: None,
+                                plan: None,
+                                kind: None,
+                                error: Some("account probe failed".into()),
+                                credentials_changed_at: None,
+                            })
+                        })
+                        .collect()
+                });
+                identities.extend(probed);
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::List {
+                    machine_id,
+                    profiles,
+                    defaults,
+                    identities,
+                }))
+            }
+            AccountsRequest::Add {
+                provider,
+                label,
+                kind,
+            } => {
+                let profile =
+                    crate::agent_accounts::Registry::update(|r| r.add(&provider, &label, kind))?;
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::Added(
+                    AccountProfileView {
+                        id: profile.id,
+                        provider: profile.provider,
+                        label: profile.label,
+                        kind: profile.kind,
+                    },
+                )))
+            }
+            AccountsRequest::Rename { id, label } => {
+                crate::agent_accounts::Registry::update(|r| r.rename(id, &label))?;
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::Ack))
+            }
+            AccountsRequest::Remove { id } => {
+                crate::agent_accounts::Registry::update(|r| r.remove(id))?;
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::Ack))
+            }
+            AccountsRequest::SetDefault {
+                provider,
+                selection,
+            } => {
+                crate::agent_accounts::Registry::update(|r| {
+                    r.set_default(&provider, None, selection)
+                })?;
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::Ack))
+            }
+            AccountsRequest::SignInCommand { provider, target } => {
+                let shell = crate::agent_accounts::host_shell_kind();
+                let command = crate::agent_accounts::sign_in_command(&provider, target, shell)?;
+                Ok(DevelopmentResponse::Accounts(
+                    AccountsResponse::SignInCommand { command, shell },
+                ))
+            }
+            AccountsRequest::LaunchEnv {
+                provider,
+                selection,
+            } => {
+                let registry = crate::agent_accounts::Registry::load()?;
+                let binding = registry.resolve(&provider, None, &selection)?;
+                let env = crate::agent_accounts::launch_env(&binding)?;
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::LaunchEnv(
+                    env,
+                )))
+            }
+        }
+    }
     pub fn execute(request: DevelopmentRequest) -> Result<DevelopmentResponse, String> {
         use DevelopmentRequest::*;
         match request {
-            PullRequests(request) => crate::pull_requests::execute(request).map(DevelopmentResponse::Text),
+            Accounts(request) => accounts_execute(request),
+            PullRequests(request) => {
+                crate::pull_requests::execute(request).map(DevelopmentResponse::Text)
+            }
             PullRequest { root } => {
                 let output = crate::host_tools::command("gh")
                     .args(["pr", "view", "--json", "number,title,url,state,isDraft,reviewDecision,baseRefName,headRefName,statusCheckRollup"])

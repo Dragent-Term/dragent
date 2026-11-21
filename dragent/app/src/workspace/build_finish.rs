@@ -554,6 +554,16 @@ impl WorkspaceView {
                         Err(error) => ws.show_error_notice("Agent account", error, ctx),
                     }
                 }
+                SettingsEvent::AgentAccountSignIn { machine_id, title, command } => {
+                    match machine_id {
+                        None => ws.open_new_workspace_tab(
+                            Some(title),
+                            Some(command),
+                            ctx,
+                        ),
+                        Some(id) => ws.open_account_sign_in_terminal(id, title, command, ctx),
+                    }
+                }
                 SettingsEvent::Project(action) => ws.handle_projects_settings(action, ctx),
                 SettingsEvent::MachinesChanged => ws.remote_machines_changed(ctx),
                 SettingsEvent::AddRemoteProject(machine) => {

@@ -48,35 +48,60 @@ pub(crate) fn host_outdated(running: &str, on_disk: &str, own: &str) -> bool {
 impl HostClient {
     #[cfg(not(target_family = "wasm"))]
     pub fn connect_remote(host: super::remote::SshHost) -> Result<Self, String> {
-        let remote = super::remote::RemoteConnection::shared(host,None,false)?;
-        Ok(Self { endpoint: remote.endpoint()?, client_id: client_id(), local_endpoint: None, remote: Some(remote) })
+        let remote = super::remote::RemoteConnection::shared(host, None, false)?;
+        Ok(Self {
+            endpoint: remote.endpoint()?,
+            client_id: client_id(),
+            local_endpoint: None,
+            remote: Some(remote),
+        })
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn connect_remote_with_secret(host: super::remote::SshHost, secret: Option<String>, remember: bool) -> Result<Self, String> {
-        let remote = super::remote::RemoteConnection::shared(host,secret,remember)?;
-        Ok(Self { endpoint: remote.endpoint()?, client_id: client_id(), local_endpoint: None, remote: Some(remote) })
+    pub fn connect_remote_with_secret(
+        host: super::remote::SshHost,
+        secret: Option<String>,
+        remember: bool,
+    ) -> Result<Self, String> {
+        let remote = super::remote::RemoteConnection::shared(host, secret, remember)?;
+        Ok(Self {
+            endpoint: remote.endpoint()?,
+            client_id: client_id(),
+            local_endpoint: None,
+            remote: Some(remote),
+        })
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn connect_remote_explicit(host: super::remote::SshHost, secret: Option<String>) -> Result<Self, String> {
+    pub fn connect_remote_explicit(
+        host: super::remote::SshHost,
+        secret: Option<String>,
+    ) -> Result<Self, String> {
         let remote = super::remote::RemoteConnection::shared(host, secret, false)?;
         remote.resume();
-        Ok(Self { endpoint: remote.endpoint()?, client_id: client_id(), local_endpoint: None, remote: Some(remote) })
+        Ok(Self {
+            endpoint: remote.endpoint()?,
+            client_id: client_id(),
+            local_endpoint: None,
+            remote: Some(remote),
+        })
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn remote_connection(&self) -> Option<&std::sync::Arc<super::remote::RemoteConnection>> { self.remote.as_ref() }
+    pub fn remote_connection(&self) -> Option<&std::sync::Arc<super::remote::RemoteConnection>> {
+        self.remote.as_ref()
+    }
 
     fn current_endpoint(&self) -> Result<ServiceEndpoint, String> {
         #[cfg(not(target_family = "wasm"))]
-        if let Some(remote) = &self.remote { return remote.endpoint(); }
+        if let Some(remote) = &self.remote {
+            return remote.endpoint();
+        }
         // Long-lived tabs survive host replacement. Reusing the captured token
         // would retry the predecessor forever, including for input and resize.
         if let Some(path) = &self.local_endpoint {
             let raw = std::fs::read(path).map_err(|e| format!("host endpoint unavailable: {e}"))?;
-            return serde_json::from_slice(&raw)
-                .map_err(|e| format!("invalid host endpoint: {e}"));
+            return serde_json::from_slice(&raw).map_err(|e| format!("invalid host endpoint: {e}"));
         }
         Ok(self.endpoint.clone())
     }
@@ -89,25 +114,54 @@ impl HostClient {
         discovery::rpc_with_timeout(&self.current_endpoint()?, &self.client_id, request, timeout)
     }
 
-    pub fn development(&self, request: super::development::DevelopmentRequest) -> Result<super::development::DevelopmentResponse, String> {
+    pub fn development(
+        &self,
+        request: super::development::DevelopmentRequest,
+    ) -> Result<super::development::DevelopmentResponse, String> {
         match self.rpc_with_timeout(Request::Development(request), Duration::from_secs(15 * 60))? {
             Response::Development(result) => Ok(result),
             other => Err(format!("unexpected development response: {other:?}")),
         }
     }
 
+    pub fn accounts(
+        &self,
+        request: super::development::AccountsRequest,
+    ) -> Result<super::development::AccountsResponse, String> {
+        match self.development(super::development::DevelopmentRequest::Accounts(request))? {
+            super::development::DevelopmentResponse::Accounts(response) => Ok(response),
+            other => Err(format!("unexpected development response: {other:?}")),
+        }
+    }
+
     /// A team request; a `Wait` gets its own timeout plus a margin.
-    pub fn coordination(&self, tool: &str, arguments: serde_json::Value, caller: serde_json::Value) -> Result<serde_json::Value, String> {
-        match self.rpc_with_timeout(Request::Coordination { tool: tool.into(), arguments, caller }, Duration::from_secs(120))? {
+    pub fn coordination(
+        &self,
+        tool: &str,
+        arguments: serde_json::Value,
+        caller: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        match self.rpc_with_timeout(
+            Request::Coordination {
+                tool: tool.into(),
+                arguments,
+                caller,
+            },
+            Duration::from_secs(120),
+        )? {
             Response::Coordination(value) => Ok(value),
             other => Err(format!("Unexpected coordination response: {other:?}")),
         }
     }
 
-    pub fn team(&self, request: super::team::TeamRequest) -> Result<super::team::TeamResponse, String> {
+    pub fn team(
+        &self,
+        request: super::team::TeamRequest,
+    ) -> Result<super::team::TeamResponse, String> {
         let timeout = match &request {
             super::team::TeamRequest::Wait { timeout_ms, .. } => {
-                Duration::from_millis((*timeout_ms).min(super::team::MAX_WAIT_MS)) + Duration::from_secs(30)
+                Duration::from_millis((*timeout_ms).min(super::team::MAX_WAIT_MS))
+                    + Duration::from_secs(30)
             }
             _ => Duration::from_secs(30),
         };
@@ -116,7 +170,11 @@ impl HostClient {
 
     /// A team call within the caller's remaining request budget. Companion
     /// reads share one deadline across projects instead of stacking timeouts.
-    pub fn team_with_timeout(&self, request: super::team::TeamRequest, timeout: Duration) -> Result<super::team::TeamResponse, String> {
+    pub fn team_with_timeout(
+        &self,
+        request: super::team::TeamRequest,
+        timeout: Duration,
+    ) -> Result<super::team::TeamResponse, String> {
         match self.rpc_with_timeout(Request::Team(request), timeout)? {
             Response::Team(result) => Ok(result),
             other => Err(format!("unexpected team response: {other:?}")),
@@ -137,7 +195,9 @@ impl HostClient {
         }
         let fresh = Self::ensure_host()?;
         if fresh.local_endpoint != self.local_endpoint {
-            return Err("The selected organisation changed while reconnecting the terminal.".into());
+            return Err(
+                "The selected organisation changed while reconnecting the terminal.".into(),
+            );
         }
         Ok(fresh)
     }
@@ -167,7 +227,11 @@ impl HostClient {
             let compatible = endpoint.version == PROTOCOL_VERSION;
             let healthy = compatible && discovery::ping(&endpoint, &client_id);
             let desired = super::build_identity::executable(exe).unwrap_or_default();
-            let outdated = host_outdated(&endpoint.build_id, &desired, super::build_identity::current());
+            let outdated = host_outdated(
+                &endpoint.build_id,
+                &desired,
+                super::build_identity::current(),
+            );
             let deferred_update = DEFERRED_UPDATE.get_or_init(|| Mutex::new(None));
             let update_deferred = deferred_update
                 .lock()
@@ -292,7 +356,8 @@ impl HostClient {
     }
 
     pub fn ping(&self) -> bool {
-        self.current_endpoint().is_ok_and(|endpoint| discovery::ping(&endpoint, &self.client_id))
+        self.current_endpoint()
+            .is_ok_and(|endpoint| discovery::ping(&endpoint, &self.client_id))
     }
 
     pub fn host_info(&self) -> Result<HostInfo, String> {
@@ -325,7 +390,8 @@ impl HostClient {
         env: &[(String, String)],
         env_remove: &[String],
     ) -> Result<(i32, Vec<u8>, Vec<u8>), String> {
-        match self.rpc_with_timeout(Request::RunGit {
+        match self.rpc_with_timeout(
+            Request::RunGit {
                 root: root.to_string(),
                 args: args.to_vec(),
                 stdin: stdin.to_vec(),
@@ -366,9 +432,8 @@ impl HostClient {
 
     pub fn create_workspace(&self, root: &str) -> Result<String, String> {
         match self.rpc(Request::CreateWorkspace {
-                root: root.to_string(),
-            },
-        )? {
+            root: root.to_string(),
+        })? {
             Response::WorkspaceCreated { workspace_id } => Ok(workspace_id),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -376,9 +441,8 @@ impl HostClient {
 
     pub fn create_local_workspace(&self, root: &str) -> Result<String, String> {
         match self.rpc(Request::CreateLocalWorkspace {
-                root: root.to_string(),
-            },
-        )? {
+            root: root.to_string(),
+        })? {
             Response::WorkspaceCreated { workspace_id } => Ok(workspace_id),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -389,9 +453,8 @@ impl HostClient {
         workspace_id: &str,
     ) -> Result<super::protocol::WorkspaceSnapshot, String> {
         match self.rpc(Request::GetWorkspaceState {
-                workspace_id: workspace_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+        })? {
             Response::WorkspaceStateSnapshot(snapshot) => Ok(snapshot),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -403,10 +466,9 @@ impl HostClient {
         command: dragent_session_protocol::workspace::WorkspaceCommandEnvelope,
     ) -> Result<usize, String> {
         match self.rpc(Request::AcceptWorkspaceCommand {
-                workspace_id: workspace_id.to_string(),
-                command,
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            command,
+        })? {
             Response::WorkspaceEventsAccepted { count } => Ok(count),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -416,8 +478,7 @@ impl HostClient {
         &self,
         project: dragent_workspace_model::Project,
     ) -> Result<(), String> {
-        match self.rpc(Request::SaveWorkspaceProject { project },
-        )? {
+        match self.rpc(Request::SaveWorkspaceProject { project })? {
             Response::Ack => Ok(()),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -427,8 +488,7 @@ impl HostClient {
         &self,
         work_item: dragent_workspace_model::WorkItem,
     ) -> Result<(), String> {
-        match self.rpc(Request::SaveWorkspaceWorkItem { work_item },
-        )? {
+        match self.rpc(Request::SaveWorkspaceWorkItem { work_item })? {
             Response::Ack => Ok(()),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -438,8 +498,7 @@ impl HostClient {
         &self,
         event: dragent_workspace_model::WorkspaceEvent,
     ) -> Result<(), String> {
-        match self.rpc(Request::SaveWorkspaceEvent { event },
-        )? {
+        match self.rpc(Request::SaveWorkspaceEvent { event })? {
             Response::Ack => Ok(()),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -450,9 +509,8 @@ impl HostClient {
         project_id: &str,
     ) -> Result<Option<dragent_workspace_model::Project>, String> {
         match self.rpc(Request::LoadWorkspaceProject {
-                project_id: project_id.to_string(),
-            },
-        )? {
+            project_id: project_id.to_string(),
+        })? {
             Response::WorkspaceProjectLoaded { project } => Ok(project),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -462,8 +520,7 @@ impl HostClient {
         &self,
         limit: usize,
     ) -> Result<Vec<dragent_workspace_model::WorkspaceEvent>, String> {
-        match self.rpc(Request::LoadRecentWorkspaceEvents { limit },
-        )? {
+        match self.rpc(Request::LoadRecentWorkspaceEvents { limit })? {
             Response::WorkspaceEventList { events } => Ok(events),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -474,9 +531,8 @@ impl HostClient {
         workspace_id: &str,
     ) -> Result<Option<super::protocol::SchedulerStatus>, String> {
         match self.rpc(Request::GetSchedulerStatus {
-                workspace_id: workspace_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+        })? {
             Response::SchedulerStatusReport { status } => Ok(status),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -492,12 +548,11 @@ impl HostClient {
         branch: &str,
     ) -> Result<super::protocol::WorktreeHome, String> {
         match self.rpc(Request::CreateWorktree {
-                workspace_id: workspace_id.to_string(),
-                flow: flow.to_string(),
-                repo_root: repo_root.to_string(),
-                branch: branch.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            flow: flow.to_string(),
+            repo_root: repo_root.to_string(),
+            branch: branch.to_string(),
+        })? {
             Response::WorktreeCreated { home } => Ok(home),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -515,12 +570,11 @@ impl HostClient {
         flow: &str,
     ) -> Result<super::protocol::WorktreeHome, String> {
         match self.rpc(Request::AdoptCheckout {
-                workspace_id: workspace_id.to_string(),
-                repo_root: repo_root.to_string(),
-                path: path.to_string(),
-                flow: flow.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            repo_root: repo_root.to_string(),
+            path: path.to_string(),
+            flow: flow.to_string(),
+        })? {
             Response::HomeEnsured { home } => Ok(home),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -560,10 +614,9 @@ impl HostClient {
         root: &str,
     ) -> Result<super::protocol::WorktreeHome, String> {
         match self.rpc(Request::EnsureHome {
-                workspace_id: workspace_id.to_string(),
-                root: root.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            root: root.to_string(),
+        })? {
             Response::HomeEnsured { home } => Ok(home),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -574,9 +627,8 @@ impl HostClient {
         workspace_id: &str,
     ) -> Result<Vec<super::protocol::WorktreeHome>, String> {
         match self.rpc(Request::ListWorktrees {
-                workspace_id: workspace_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+        })? {
             Response::WorktreeList { homes } => Ok(homes),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -588,10 +640,9 @@ impl HostClient {
         worktree_id: &str,
     ) -> Result<super::protocol::WorktreeHome, String> {
         match self.rpc(Request::GetWorktree {
-                workspace_id: workspace_id.to_string(),
-                worktree_id: worktree_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            worktree_id: worktree_id.to_string(),
+        })? {
             Response::WorktreeSnapshot(home) => Ok(home),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -603,10 +654,9 @@ impl HostClient {
         worktree_id: &str,
     ) -> Result<super::protocol::TeardownReport, String> {
         match self.rpc(Request::TeardownWorktree {
-                workspace_id: workspace_id.to_string(),
-                worktree_id: worktree_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            worktree_id: worktree_id.to_string(),
+        })? {
             Response::WorktreeTornDown { report } => Ok(report),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -618,10 +668,9 @@ impl HostClient {
         label: &str,
     ) -> Result<super::protocol::WorktreeHome, String> {
         match self.rpc(Request::CreateStandaloneSession {
-                workspace_id: workspace_id.to_string(),
-                label: label.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            label: label.to_string(),
+        })? {
             Response::StandaloneSessionCreated { home } => Ok(home),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -633,10 +682,9 @@ impl HostClient {
         session_id: &str,
     ) -> Result<String, String> {
         match self.rpc(Request::TeardownStandaloneSession {
-                workspace_id: workspace_id.to_string(),
-                session_id: session_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            session_id: session_id.to_string(),
+        })? {
             Response::StandaloneSessionTornDown { worktree_id } => Ok(worktree_id),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -649,11 +697,10 @@ impl HostClient {
         session_id: &str,
     ) -> Result<super::protocol::WorktreeHome, String> {
         match self.rpc(Request::AttachSession {
-                workspace_id: workspace_id.to_string(),
-                worktree_id: worktree_id.to_string(),
-                session_id: session_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            worktree_id: worktree_id.to_string(),
+            session_id: session_id.to_string(),
+        })? {
             Response::WorktreeSnapshot(home) => Ok(home),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -666,11 +713,10 @@ impl HostClient {
         session_id: &str,
     ) -> Result<super::protocol::WorktreeHome, String> {
         match self.rpc(Request::DetachSession {
-                workspace_id: workspace_id.to_string(),
-                worktree_id: worktree_id.to_string(),
-                session_id: session_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            worktree_id: worktree_id.to_string(),
+            session_id: session_id.to_string(),
+        })? {
             Response::WorktreeSnapshot(home) => Ok(home),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -678,10 +724,9 @@ impl HostClient {
 
     pub fn allocate_port(&self, workspace_id: &str, worktree_id: &str) -> Result<u16, String> {
         match self.rpc(Request::AllocatePort {
-                workspace_id: workspace_id.to_string(),
-                worktree_id: worktree_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            worktree_id: worktree_id.to_string(),
+        })? {
             Response::PortAllocated { port } => Ok(port),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -694,11 +739,10 @@ impl HostClient {
         port: u16,
     ) -> Result<(), String> {
         match self.rpc(Request::ReleasePort {
-                workspace_id: workspace_id.to_string(),
-                worktree_id: worktree_id.to_string(),
-                port,
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            worktree_id: worktree_id.to_string(),
+            port,
+        })? {
             Response::Ack => Ok(()),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -729,7 +773,8 @@ impl HostClient {
         rows: u16,
         shell: Option<&str>,
     ) -> Result<super::protocol::TerminalSession, String> {
-        match self.rpc_with_timeout(Request::CreateTerminal {
+        match self.rpc_with_timeout(
+            Request::CreateTerminal {
                 workspace_id: workspace_id.to_string(),
                 worktree_id: worktree_id.to_string(),
                 command: command.map(|s| s.to_string()),
@@ -750,9 +795,8 @@ impl HostClient {
         workspace_id: &str,
     ) -> Result<Vec<super::protocol::TerminalSession>, String> {
         match self.rpc(Request::ListTerminals {
-                workspace_id: workspace_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+        })? {
             Response::TerminalList { sessions } => Ok(sessions),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -764,10 +808,9 @@ impl HostClient {
         session_id: &str,
     ) -> Result<super::protocol::TerminalSession, String> {
         match self.rpc(Request::GetTerminal {
-                workspace_id: workspace_id.to_string(),
-                session_id: session_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            session_id: session_id.to_string(),
+        })? {
             Response::TerminalSnapshot(session) => Ok(session),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -780,11 +823,10 @@ impl HostClient {
         data: &[u8],
     ) -> Result<(), String> {
         match self.rpc(Request::SendTerminalInput {
-                workspace_id: workspace_id.to_string(),
-                session_id: session_id.to_string(),
-                data: data.to_vec(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            session_id: session_id.to_string(),
+            data: data.to_vec(),
+        })? {
             Response::Ack => Ok(()),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -797,11 +839,10 @@ impl HostClient {
         max_lines: Option<usize>,
     ) -> Result<(String, bool, Option<i32>), String> {
         match self.rpc(Request::ReadTerminal {
-                workspace_id: workspace_id.to_string(),
-                session_id: session_id.to_string(),
-                max_lines,
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            session_id: session_id.to_string(),
+            max_lines,
+        })? {
             Response::TerminalOutput {
                 text,
                 alive,
@@ -817,10 +858,9 @@ impl HostClient {
         session_id: &str,
     ) -> Result<super::screen_protocol::TerminalScreen, String> {
         match self.rpc(Request::ReadTerminalScreen {
-                workspace_id: workspace_id.to_string(),
-                session_id: session_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            session_id: session_id.to_string(),
+        })? {
             Response::TerminalScreen(screen) => Ok(screen),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -866,12 +906,11 @@ impl HostClient {
         max_bytes: usize,
     ) -> Result<TerminalChunk, String> {
         match self.rpc(Request::ReadTerminalSince {
-                workspace_id: workspace_id.to_string(),
-                session_id: session_id.to_string(),
-                offset,
-                max_bytes,
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            session_id: session_id.to_string(),
+            offset,
+            max_bytes,
+        })? {
             Response::TerminalData {
                 data,
                 base,
@@ -897,12 +936,11 @@ impl HostClient {
         rows: u16,
     ) -> Result<super::protocol::TerminalSession, String> {
         match self.rpc(Request::ResizeTerminal {
-                workspace_id: workspace_id.to_string(),
-                session_id: session_id.to_string(),
-                cols,
-                rows,
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            session_id: session_id.to_string(),
+            cols,
+            rows,
+        })? {
             Response::TerminalSnapshot(session) => Ok(session),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -930,10 +968,9 @@ impl HostClient {
         session_id: &str,
     ) -> Result<super::protocol::TerminalSession, String> {
         match self.rpc(Request::CloseTerminal {
-                workspace_id: workspace_id.to_string(),
-                session_id: session_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            session_id: session_id.to_string(),
+        })? {
             Response::TerminalSnapshot(session) => Ok(session),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -958,14 +995,13 @@ impl HostClient {
         env: std::collections::BTreeMap<String, String>,
     ) -> Result<super::protocol::AgentConfig, String> {
         match self.rpc(Request::AddAgentConfig {
-                label: label.to_string(),
-                command: command.to_string(),
-                args,
-                prompt_transport,
-                prompt_args,
-                env,
-            },
-        )? {
+            label: label.to_string(),
+            command: command.to_string(),
+            args,
+            prompt_transport,
+            prompt_args,
+            env,
+        })? {
             Response::AgentConfigAdded { config } => Ok(config),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -980,13 +1016,12 @@ impl HostClient {
         dispatch: super::protocol::AgentDispatch,
     ) -> Result<super::protocol::AgentRun, String> {
         match self.rpc(Request::RunAgent {
-                workspace_id: workspace_id.to_string(),
-                worktree_id: worktree_id.to_string(),
-                agent: agent.to_string(),
-                prompt: prompt.to_string(),
-                dispatch,
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            worktree_id: worktree_id.to_string(),
+            agent: agent.to_string(),
+            prompt: prompt.to_string(),
+            dispatch,
+        })? {
             Response::AgentRunStarted { run } => Ok(run),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -994,9 +1029,8 @@ impl HostClient {
 
     pub fn agent_run(&self, run_id: &str) -> Result<super::protocol::AgentRun, String> {
         match self.rpc(Request::GetAgentRun {
-                run_id: run_id.to_string(),
-            },
-        )? {
+            run_id: run_id.to_string(),
+        })? {
             Response::AgentRunSnapshot { run } => Ok(run),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -1007,9 +1041,8 @@ impl HostClient {
         workspace_id: &str,
     ) -> Result<Vec<super::protocol::AgentRun>, String> {
         match self.rpc(Request::ListAgentRuns {
-                workspace_id: workspace_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+        })? {
             Response::AgentRunList { runs } => Ok(runs),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -1022,11 +1055,10 @@ impl HostClient {
         max_tail_lines: Option<usize>,
     ) -> Result<super::protocol::RestorePlan, String> {
         match self.rpc(Request::GetRestorePlan {
-                workspace_id: workspace_id.to_string(),
-                known_session_ids,
-                max_tail_lines,
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+            known_session_ids,
+            max_tail_lines,
+        })? {
             Response::RestorePlanSnapshot(plan) => Ok(plan),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -1040,10 +1072,9 @@ impl HostClient {
         max_bytes: usize,
     ) -> Result<(super::protocol::HistoryRecord, Vec<u8>), String> {
         match self.rpc(Request::ReadSessionHistory {
-                session_id: session_id.to_string(),
-                max_bytes,
-            },
-        )? {
+            session_id: session_id.to_string(),
+            max_bytes,
+        })? {
             Response::SessionHistory { record, tail } => Ok((record, tail)),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -1058,9 +1089,8 @@ impl HostClient {
 
     pub fn purge_home_history(&self, home_id: &str) -> Result<(), String> {
         match self.rpc(Request::PurgeHomeHistory {
-                home_id: home_id.to_string(),
-            },
-        )? {
+            home_id: home_id.to_string(),
+        })? {
             Response::Ack => Ok(()),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -1090,9 +1120,8 @@ impl HostClient {
 
     pub fn watch_workspace(&self, workspace_id: &str) -> Result<(), String> {
         match self.rpc(Request::WatchWorkspace {
-                workspace_id: workspace_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+        })? {
             Response::Ack => Ok(()),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -1100,9 +1129,8 @@ impl HostClient {
 
     pub fn unwatch_workspace(&self, workspace_id: &str) -> Result<(), String> {
         match self.rpc(Request::UnwatchWorkspace {
-                workspace_id: workspace_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+        })? {
             Response::Ack => Ok(()),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -1120,9 +1148,8 @@ impl HostClient {
         workspace_id: &str,
     ) -> Result<Vec<super::router::RouteProposal>, String> {
         match self.rpc(Request::ProposeAgentRuns {
-                workspace_id: workspace_id.to_string(),
-            },
-        )? {
+            workspace_id: workspace_id.to_string(),
+        })? {
             Response::AgentRouteList { proposals } => Ok(proposals),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -1133,9 +1160,8 @@ impl HostClient {
         agent: &str,
     ) -> Result<super::protocol::AgentReadiness, String> {
         match self.rpc(Request::CheckAgentReadiness {
-                agent: agent.to_string(),
-            },
-        )? {
+            agent: agent.to_string(),
+        })? {
             Response::AgentReadinessReport { readiness } => Ok(readiness),
             other => Err(format!("unexpected response: {other:?}")),
         }
@@ -1272,14 +1298,16 @@ impl HostClient {
         };
         super::protocol::write_message(&mut &stream, &envelope)
             .map_err(|e| format!("write: {e}"))?;
-        Ok(std::thread::spawn(move || loop {
-            match super::protocol::read_frame(&mut &stream) {
-                Ok(bytes) => {
-                    if let Ok(env) = super::protocol::decode_message::<EventEnvelope>(&bytes) {
-                        on_event(env.event);
+        Ok(std::thread::spawn(move || {
+            loop {
+                match super::protocol::read_frame(&mut &stream) {
+                    Ok(bytes) => {
+                        if let Ok(env) = super::protocol::decode_message::<EventEnvelope>(&bytes) {
+                            on_event(env.event);
+                        }
                     }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
         }))
     }

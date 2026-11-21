@@ -60,8 +60,10 @@ A worker never creates a team.
    its whole answer every time: what it hands over isn't handed over again,
    so never filter it, send it to a file or leave it to a script. What the
    person writes from the team's page is typed straight into your terminal,
-   even mid-turn: it comes first, and you answer with
-   `dragent msg reply ID "…"`, since they're reading that page.
+   even mid-turn: it comes first, so act on it. When it asks you something
+   or you need their input, answer with `dragent msg reply ID "…"`, since
+   they're reading that page. Don't reply to acknowledgements ("Carry on",
+   "ok", a button they clicked): just carry on.
 
    **When the person changes what they want, update the plan you have.** Never
    cancel work, stop the team or start a new team for it:

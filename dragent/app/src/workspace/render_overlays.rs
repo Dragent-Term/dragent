@@ -391,18 +391,40 @@ impl WorkspaceView {
                 .as_ref()
                 .map(|d| d.name.clone())
                 .unwrap_or_else(|| agent_id.clone());
-            let registry = dragent_host::agent_accounts::Registry::load().ok();
             let project_root = self.active_project_root();
             let project_name = project_root.as_ref()
                 .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string));
-            let effective = registry.as_ref().and_then(|r| {
-                let project = project_root.as_deref().and_then(|p| {
-                    dragent_host::agent_accounts::project_for(p, r).or_else(|| Some(p.to_path_buf()))
-                });
-                r.resolve(&agent_id, project.as_deref(), &dragent_host::agent_accounts::Selection::Inherit)
-                    .ok()
-                    .map(|b| b.label)
-            }).unwrap_or_else(|| "System login".to_string());
+            // A remote project lists the accounts stored on its machine
+            // (cached per machine, refreshed when the picker opens).
+            let remote = project_root.as_deref().and_then(crate::remote_fs::resolve);
+            let registry = if remote.is_none() {
+                dragent_host::agent_accounts::Registry::load().ok()
+            } else {
+                None
+            };
+            let effective = match remote.as_ref() {
+                Some(resolved) => {
+                    let cache = self.machine_account_caches.get(&resolved.machine_id);
+                    cache
+                        .and_then(|c| c.defaults.get(&agent_id))
+                        .map(|selection| match selection {
+                            dragent_host::agent_accounts::Selection::Profile(id) => cache
+                                .and_then(|c| c.profiles.iter().find(|p| &p.id == id))
+                                .map(|p| p.label.clone())
+                                .unwrap_or_else(|| "System login".to_string()),
+                            _ => "System login".to_string(),
+                        })
+                        .unwrap_or_else(|| "System login".to_string())
+                }
+                None => registry.as_ref().and_then(|r| {
+                    let project = project_root.as_deref().and_then(|p| {
+                        dragent_host::agent_accounts::project_for(p, r).or_else(|| Some(p.to_path_buf()))
+                    });
+                    r.resolve(&agent_id, project.as_deref(), &dragent_host::agent_accounts::Selection::Inherit)
+                        .ok()
+                        .map(|b| b.label)
+                }).unwrap_or_else(|| "System login".to_string()),
+            };
             let workspace_view_id = self.workspace_view_id;
 
             // Header: title + close, same as the create-project modal.
@@ -451,7 +473,20 @@ impl WorkspaceView {
                 ("Project default".to_string(), format!("Currently {effective}"), true, dragent_host::agent_accounts::Selection::Inherit),
                 ("System login".to_string(), "Your current CLI sign-in — nothing to set up".to_string(), false, dragent_host::agent_accounts::Selection::System),
             ];
-            if let Some(r) = registry.as_ref() {
+            if let Some(resolved) = remote.as_ref() {
+                if let Some(cache) = self.machine_account_caches.get(&resolved.machine_id) {
+                    let mut profiles: Vec<_> = cache.profiles.iter().filter(|p| p.provider == agent_id).collect();
+                    profiles.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+                    for p in profiles {
+                        let desc = if p.kind == dragent_host::agent_accounts::CredentialKind::ApiKey {
+                            "API key · Saved login for this agent".to_string()
+                        } else {
+                            "Saved login for this agent".to_string()
+                        };
+                        options.push((p.label.clone(), desc, false, dragent_host::agent_accounts::Selection::Profile(p.id)));
+                    }
+                }
+            } else if let Some(r) = registry.as_ref() {
                 let mut profiles: Vec<_> = r.profiles.iter().filter(|p| p.provider == agent_id).collect();
                 profiles.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
                 for p in profiles {
@@ -477,6 +512,26 @@ impl WorkspaceView {
                 .with_border(Border::all(1.0).with_border_color(theme.outline()))
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.0)))
                 .finish();
+            // Remote fetch state: loading text while empty, error text on
+            // failure. The System login option above still works.
+            let remote_status: Option<String> = remote.as_ref().and_then(|resolved| {
+                let cache = self.machine_account_caches.get(&resolved.machine_id);
+                match cache {
+                    Some(c) if c.loading && c.profiles.is_empty() => {
+                        Some("Loading accounts…".to_string())
+                    }
+                    Some(c) if c.error.is_some() => {
+                        let name = if c.machine_name.is_empty() {
+                            resolved.machine_id.clone()
+                        } else {
+                            c.machine_name.clone()
+                        };
+                        Some(format!("Couldn't read accounts on {name}"))
+                    }
+                    None => Some("Loading accounts…".to_string()),
+                    _ => None,
+                }
+            });
 
             // Footer: hand-typed note left, Cancel + Manage right.
             let footer_view = self.workspace_view_id;
@@ -562,16 +617,21 @@ impl WorkspaceView {
                 )
                 .finish();
 
+            let mut picker_column = Flex::column()
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_spacing(12.0)
+                .with_child(header)
+                .with_child(Text::new(subtitle, ui, crate::theme::text_size(13.0)).with_color(theme.sub_text()).finish())
+                .with_child(options_card);
+            if let Some(status) = remote_status {
+                picker_column = picker_column.with_child(
+                    Text::new(status, ui, crate::theme::text_size(12.0)).with_color(theme.sub_text()).finish(),
+                );
+            }
+            picker_column = picker_column.with_child(footer);
             let modal = ConstrainedBox::new(
                 Container::new(
-                    Flex::column()
-                        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                        .with_spacing(12.0)
-                        .with_child(header)
-                        .with_child(Text::new(subtitle, ui, crate::theme::text_size(13.0)).with_color(theme.sub_text()).finish())
-                        .with_child(options_card)
-                        .with_child(footer)
-                        .finish(),
+                    picker_column.finish(),
                 )
                 .with_padding_left(24.0)
                 .with_padding_right(24.0)

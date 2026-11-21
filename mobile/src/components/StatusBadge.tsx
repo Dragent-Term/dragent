@@ -3,8 +3,10 @@ import { useMemo } from "react";
 import { statusMarkColors, useTheme } from "../theme";
 import { radii, spacing } from "../theme/tokens";
 import { AppText, type TextTone } from "./AppText";
+import { AgentStateDot } from "./AgentStateDot";
 
-export type StatusTone = "neutral" | "accent" | "success" | "warning" | "danger";
+/** `working` draws the amber spinner agents show while they work. */
+export type StatusTone = "neutral" | "accent" | "success" | "warning" | "danger" | "working";
 
 export interface StatusBadgeProps {
   label: string;
@@ -15,7 +17,7 @@ export interface StatusBadgeProps {
 export function StatusBadge({ label, tone = "neutral", accessibilityLabel = label }: StatusBadgeProps) {
   const { theme } = useTheme();
   const marks = useMemo(() => statusMarkColors(theme.colors), [theme.colors]);
-  const dotTone: TextTone = tone === "neutral" ? "textSubtle" : tone;
+  const dotTone: TextTone = tone === "neutral" || tone === "working" ? "textSubtle" : tone;
   // Status colours sharpened for this theme's background, in their own family.
   const dotColor =
     tone === "success" ? marks.success
@@ -24,7 +26,7 @@ export function StatusBadge({ label, tone = "neutral", accessibilityLabel = labe
     : theme.colors[dotTone];
   return (
     <View accessible accessibilityRole="text" accessibilityLabel={accessibilityLabel} style={styles.shell}>
-      <View style={[styles.dot, { backgroundColor: dotColor }]} />
+      {tone === "working" ? <AgentStateDot state="working" /> : <View style={[styles.dot, { backgroundColor: dotColor }]} />}
       <AppText
         variant="caption"
         tone={tone === "danger" ? "danger" : "textMuted"}

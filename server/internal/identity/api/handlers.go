@@ -2,18 +2,13 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"server/internal/identity/components"
 	"server/internal/identity/model"
 	"server/internal/identity/types"
-
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 )
 
 type AuthHandlers struct {
@@ -52,6 +47,10 @@ func (h *AuthHandlers) StartAuth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing state parameter", http.StatusBadRequest)
 		return
 	}
+	if err := h.recordChallenge(r.Context(), state, r.URL.Query().Get("challenge")); err != nil {
+		http.Error(w, "invalid sign-in, start again", http.StatusBadRequest)
+		return
+	}
 
 	var authURL string
 	switch strings.ToLower(provider) {
@@ -82,6 +81,10 @@ func (h *AuthHandlers) RequestMagicLink(w http.ResponseWriter, r *http.Request) 
 	if !h.allowMagicLink(w, r, req.Email) {
 		return
 	}
+	if err := h.recordChallenge(r.Context(), req.State, req.Challenge); err != nil {
+		http.Error(w, "invalid sign-in, start again", http.StatusBadRequest)
+		return
+	}
 
 	cmd := components.SendMagicLinkCommand{
 		Email:          req.Email,
@@ -108,17 +111,6 @@ func wantsJSON(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "application/json")
 }
 
-func writeSignInJSON(w http.ResponseWriter, accessToken, refreshToken, stateID string, userID uuid.UUID) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"access_token":  accessToken,
-		"refresh_token": refreshToken,
-		"state":         stateID,
-		"user_id":       userID.String(),
-	})
-}
-
 // GET /auth/magic?token=xyz&state=abc
 func (h *AuthHandlers) VerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
@@ -135,24 +127,7 @@ func (h *AuthHandlers) VerifyMagicLink(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("<html><body><h3>Link expired or invalid. Please try signing in again.</h3></body></html>"))
 		return
 	}
-	if wantsJSON(r) {
-		writeSignInJSON(w, result.AccessToken, result.RefreshToken, result.StateID, result.UserID)
-		return
-	}
-
-	deepLink := fmt.Sprintf("dragent://auth/callback?refresh_token=%s&state=%s&user_id=%s",
-		url.QueryEscape(result.RefreshToken), url.QueryEscape(result.StateID), url.QueryEscape(result.UserID.String()))
-
-	w.Header().Set("Location", deepLink)
-	w.WriteHeader(http.StatusFound)
-	_, _ = w.Write([]byte(fmt.Sprintf(`<html>
-<head><title>Sign In Successful</title></head>
-<body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-  <h2>Sign In Successful!</h2>
-  <p>You can close this tab and return to your terminal workspace.</p>
-  <p>If you are not redirected automatically, <a href="%s">click here</a>.</p>
-</body>
-</html>`, deepLink)))
+	h.finishSignIn(w, r, result.AccessToken, result.RefreshToken, result.StateID, result.UserID)
 }
 
 // GET /auth/callback/github?code=xyz&state=abc
@@ -186,24 +161,7 @@ func (h *AuthHandlers) oauthCallback(w http.ResponseWriter, r *http.Request, pro
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
-	if wantsJSON(r) {
-		writeSignInJSON(w, result.AccessToken, result.RefreshToken, result.StateID, result.UserID)
-		return
-	}
-
-	deepLink := fmt.Sprintf("dragent://auth/callback?refresh_token=%s&state=%s&user_id=%s",
-		url.QueryEscape(result.RefreshToken), url.QueryEscape(result.StateID), url.QueryEscape(result.UserID.String()))
-
-	w.Header().Set("Location", deepLink)
-	w.WriteHeader(http.StatusFound)
-	_, _ = w.Write([]byte(fmt.Sprintf(`<html>
-<head><title>Sign In Successful</title></head>
-<body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-  <h2>Sign In Successful!</h2>
-  <p>You can close this tab and return to your terminal workspace.</p>
-  <p>If you are not redirected automatically, <a href="%s">click here</a>.</p>
-</body>
-</html>`, deepLink)))
+	h.finishSignIn(w, r, result.AccessToken, result.RefreshToken, result.StateID, result.UserID)
 }
 
 // GET /auth/desktop/session?state=xyz
@@ -221,27 +179,13 @@ func (h *AuthHandlers) PollDesktopSession(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	accessToken, refreshToken, err := h.tokenStore.GetAuthorizedState(r.Context(), state)
-	if err != nil {
+	// A sign-in that started with a challenge is collected only with its
+	// verifier (POST); this path is for desktop builds from before that.
+	if challenge, err := h.tokenStore.SignInChallenge(r.Context(), state); err != nil || challenge != "" {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-
-	// The signed-in user, from the token this server minted and just took
-	// out of its own store (not the caller's state, which isn't an identity).
-	userID := ""
-	claims := &types.TokenClaims{}
-	if _, _, err := jwt.NewParser().ParseUnverified(accessToken, claims); err == nil && claims.UserID != uuid.Nil {
-		userID = claims.UserID.String()
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"access_token":  accessToken,
-		"refresh_token": refreshToken,
-		"user_id":       userID,
-	})
+	h.handOutApproved(w, r, state)
 }
 
 // POST /auth/desktop/approve {"state": "..."}, signed in.

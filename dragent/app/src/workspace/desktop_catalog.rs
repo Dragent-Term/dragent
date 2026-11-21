@@ -173,7 +173,7 @@ pub(crate) fn note_rendered(view: &WorkspaceView, app: &AppContext) {
     let mut tabs = Vec::new();
     // Reuse the sidebar's already-resolved projection. Resolving roots here
     // would repeat canonicalize/.git reads on every root render.
-    let (sidebar_rows, sidebar_projects, sidebar_teams) = view.left_panel_view.read(app, |panel, _| {
+    let (sidebar_rows, sidebar_projects, sidebar_teams, shown_coordinations) = view.left_panel_view.read(app, |panel, _| {
         let rows: HashMap<usize, (String, Option<String>)> = panel
             .tabs
             .iter()
@@ -216,7 +216,13 @@ pub(crate) fn note_rendered(view: &WorkspaceView, app: &AppContext) {
                 })
             })
             .collect();
-        (rows, projects, teams)
+        // Every coordination the sidebar shows, with the project it sits under.
+        let shown: Vec<(String, Option<String>)> = panel
+            .coordination
+            .iter()
+            .map(|group| (group.team_id.clone(), group.project_key.clone()))
+            .collect();
+        (rows, projects, teams, shown)
     });
     let mut covered_projects: HashSet<String> = HashSet::new();
     // Built-in agent tabs: (window tab id, pane).
@@ -475,10 +481,11 @@ pub(crate) fn note_rendered(view: &WorkspaceView, app: &AppContext) {
         crate::realtime::companion_host::note_workspaces(&contributor, &account, index, published);
     }
     crate::realtime::companion_coordination::note_projects(
-        contributor,
-        account,
+        contributor.clone(),
+        account.clone(),
         allowed_projects,
     );
+    crate::realtime::companion_coordination::note_teams(&contributor, &account, shown_coordinations);
 }
 
 /// Web viewer: no local workspaces to publish.

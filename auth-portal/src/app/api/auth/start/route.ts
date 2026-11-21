@@ -23,5 +23,8 @@ export async function GET(request: Request) {
   const target = new URL(`${GO_BACKEND_URL}/auth/start`);
   target.searchParams.set("provider", provider);
   target.searchParams.set("state", state);
+  // The desktop's PKCE challenge, when the desktop started this sign-in.
+  const challenge = searchParams.get("challenge");
+  if (challenge) target.searchParams.set("challenge", challenge);
   return NextResponse.redirect(target, 307);
 }

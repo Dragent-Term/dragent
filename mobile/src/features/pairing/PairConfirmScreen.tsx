@@ -6,6 +6,7 @@ import { AppText, Button, Icon, PageHeader } from "../../components";
 import { ScrollScreen } from "../../layout";
 import { useDevice } from "../../pairing/DeviceContext";
 import { PairingError } from "../../pairing/api";
+import { isTrustedGateway } from "../../pairing/pairing";
 import { clearPendingPairLink, peekPendingPairLink, takePendingPairLink } from "../../pairing/pendingLink";
 import { useAsyncAction } from "../../hooks/useAsyncAction";
 import { Feedback } from "../shared/Feedback";
@@ -27,6 +28,14 @@ export function phoneDisplayName(): string {
   const own = typeof Constants.deviceName === "string" ? Constants.deviceName.trim() : "";
   if (own) return own.slice(0, 64);
   return Platform.OS === "android" ? "Android phone" : "iPhone";
+}
+
+function hostOf(origin: string): string {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return origin;
+  }
 }
 
 export function PairConfirmScreen() {
@@ -60,14 +69,17 @@ export function PairConfirmScreen() {
     router.replace("/");
   });
 
-  // Scanning is the consent: connect straight away (no extra screen to fill in).
+  // Scanning is the consent for Dragent's own servers: connect straight away.
+  // A link can also arrive from a web page or a message, so one that names
+  // another server waits for the person to see which server and tap Connect.
+  const trusted = pending ? isTrustedGateway(pending.gateway, __DEV__) : false;
   const [started, setStarted] = useState(false);
   useEffect(() => {
-    if (pending && !started) {
+    if (pending && trusted && !started) {
       setStarted(true);
       void connect.run();
     }
-  }, [pending, started, connect]);
+  }, [pending, trusted, started, connect]);
 
   if (!pending) {
     return <ScrollScreen maxWidth={680}>
@@ -86,7 +98,12 @@ export function PairConfirmScreen() {
     />
     <View style={styles.form}>
       <AppText variant="caption" tone="textSubtle">Pairing code {pending.code.slice(0, 4)}…{pending.code.slice(-4)}</AppText>
-      <AppText tone="textMuted">{connect.pending ? `Connecting as “${name}”…` : connect.error ? "" : `Connecting as “${name}”…`}</AppText>
+      {!trusted && !connect.pending && !connect.error ? <>
+        <AppText tone="text">This code connects to {hostOf(pending.gateway)}, which isn&apos;t a Dragent server.</AppText>
+        <AppText tone="textMuted" style={styles.hint}>
+          Only connect if you run that server yourself or trust whoever does: it would relay this phone&apos;s connection. If you didn&apos;t expect this, go back.
+        </AppText>
+      </> : <AppText tone="textMuted">{connect.pending ? `Connecting as “${name}”…` : connect.error ? "" : `Connecting as “${name}”…`}</AppText>}
       <Feedback message={connect.error} />
       {connect.error ? <AppText tone="textMuted" style={styles.hint}>
         On your desktop, open Settings → Mobile and pair again for a fresh code.
@@ -104,8 +121,13 @@ export function PairConfirmScreen() {
           loading={connect.pending}
           disabled={connect.pending}
           trailing={<Icon name="arrow-right" size={16} tone="onAccent" />}
-          onPress={() => { void connect.run(); }}
+          onPress={() => { setStarted(true); void connect.run(); }}
         />}
+        {!trusted && !connect.pending && !connect.error ? <Button
+          label="Go back"
+          variant="ghost"
+          onPress={() => router.replace("/")}
+        /> : null}
       </View>
     </View>
   </ScrollScreen>;

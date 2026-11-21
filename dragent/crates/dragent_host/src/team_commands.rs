@@ -2623,9 +2623,11 @@ tools if you have Dragent's MCP server.
    hands over isn't handed over again, so never send it to a file or
    /dev/null, filter it, or leave it to a script.
    - The person writes to you from the team's page: Dragent types it straight
-     in here, even while you work. It comes first: act on it, and answer with
+     in here, even while you work. It comes first: act on it. When it asks
+     you something or you need their input, answer with
      `dragent msg reply ID \"…\"`, because they're reading that page and may
-     not see this terminal.
+     not see this terminal. Don't reply to acknowledgements (\"Carry on\",
+     \"ok\", a button they clicked): just carry on.
    - The person changes what they want (another agent, a different split, new
      requirements): update the plan you have, in place. Workers keep what
      they've done. Never cancel work, stop the team or start a new team to

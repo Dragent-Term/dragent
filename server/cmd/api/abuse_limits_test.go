@@ -15,15 +15,16 @@ import (
 
 func TestMaxBodyLimitRoutes(t *testing.T) {
 	cases := map[string]int64{
-		"/auth/magic/request":                              defaultMaxBodyBytes,
-		"/api/v1/organizations/o1/tasks":                   defaultMaxBodyBytes,
-		"/api/v1/agent/tasks":                              agentMaxBodyBytes,
-		"/api/v1/agent/steps/stream":                       agentMaxBodyBytes,
-		"/api/v1/agent/compact":                            agentMaxBodyBytes,
-		"/api/v1/haiku/extract":                            agentMaxBodyBytes,
-		"/v1/embeddings":                                   4 << 20,
-		"/query":                                           8 << 20,
-		"/v1/relay/catalog":                                4 << 20,
+		"/auth/magic/request":            defaultMaxBodyBytes,
+		"/api/v1/organizations/o1/tasks": defaultMaxBodyBytes,
+		"/api/v1/agent/tasks":            agentMaxBodyBytes,
+		"/api/v1/agent/steps/stream":     agentMaxBodyBytes,
+		"/api/v1/agent/compact":          agentMaxBodyBytes,
+		"/api/v1/haiku/extract":          agentMaxBodyBytes,
+		"/v1/embeddings":                 4 << 20,
+		"/query":                         8 << 20,
+		"/v1/relay/catalog":              4 << 20,
+
 		"/api/v1/organizations/o1/integrations/c1/request": 2 << 20,
 		"/api/v1/billing/webhook/lemonsqueezy":             0,
 		"/forward/abc/upload":                              0,

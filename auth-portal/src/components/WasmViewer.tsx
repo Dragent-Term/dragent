@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getToken } from "@/lib/token";
 
 // Mounts the Dragent web viewer — the desktop app compiled to WebAssembly. The
 // wasm bundle renders the ENTIRE shared-session UI (navbar, presence, terminal)
@@ -38,6 +37,7 @@ export default function WasmViewer() {
   useEffect(() => {
     let script: HTMLScriptElement | null = null;
     let cancelled = false;
+    let ticketTimer: number | undefined;
     // The wasm signals it has taken over the canvas through this hook.
     const gReady = window as unknown as { __DRAGENT_VIEWER_READY__?: () => void };
     gReady.__DRAGENT_VIEWER_READY__ = () => setReady(true);
@@ -70,7 +70,7 @@ export default function WasmViewer() {
     // sessionStorage on its own).
     const g = window as unknown as {
       __DRAGENT_GATEWAY__?: string;
-      __DRAGENT_TOKEN__?: string;
+      __DRAGENT_TICKET__?: string;
       __DRAGENT_DISPLAY_NAME__?: string;
     };
 
@@ -89,25 +89,36 @@ export default function WasmViewer() {
         return (await res.text()).trim();
       });
 
-      // Identity (best-effort): a signed-in viewer's token + name so the gateway
-      // attaches their real identity/avatar to the presence list. Anonymous
-      // link viewers skip this and join as "Viewer", authorised by the secret.
+      // Identity (best-effort): a signed-in viewer joins with a one-minute
+      // ticket (never the access token, which stays in the httpOnly session
+      // cookie) and their name, so the gateway shows who they are. The
+      // ticket is renewed every 30s so a reconnect always has a fresh one.
+      // Anonymous link viewers get no ticket and join as "Viewer",
+      // authorised by the secret.
+      const fetchTicket = async (): Promise<boolean> => {
+        try {
+          const res = await fetch("/api/session/ticket", { method: "POST" });
+          if (!res.ok) return false;
+          const { ticket } = await res.json();
+          if (typeof ticket !== "string" || !ticket) return false;
+          g.__DRAGENT_TICKET__ = ticket;
+          return true;
+        } catch {
+          return false;
+        }
+      };
       const identityPromise = (async () => {
         try {
-          const token = getToken();
-          if (token) {
-            g.__DRAGENT_TOKEN__ = token;
-            const acc = await fetch("/api/account", {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (acc.ok) {
-              const u = (await acc.json())?.user ?? {};
-              const name =
-                u.display_name ||
-                [u.first_name, u.last_name].filter(Boolean).join(" ") ||
-                u.email;
-              if (name) g.__DRAGENT_DISPLAY_NAME__ = name;
-            }
+          if (!(await fetchTicket())) return;
+          ticketTimer = window.setInterval(() => void fetchTicket(), 30_000);
+          const acc = await fetch("/api/account");
+          if (acc.ok) {
+            const u = (await acc.json())?.user ?? {};
+            const name =
+              u.display_name ||
+              [u.first_name, u.last_name].filter(Boolean).join(" ") ||
+              u.email;
+            if (name) g.__DRAGENT_DISPLAY_NAME__ = name;
           }
         } catch {
           /* anonymous viewer — no identity */
@@ -185,6 +196,8 @@ export default function WasmViewer() {
 
     return () => {
       cancelled = true;
+      if (ticketTimer !== undefined) window.clearInterval(ticketTimer);
+      delete g.__DRAGENT_TICKET__;
       if (script) script.remove();
       console.error = origConsoleError;
       delete g0.__DRAGENT_NEEDS_LOGIN__;
