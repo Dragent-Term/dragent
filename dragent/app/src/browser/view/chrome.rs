@@ -218,7 +218,11 @@ impl BrowserView {
             .with_child(divider)
             .with_child(self.icon_button(
                 "split",
-                AppIcon::SplitHorizontal,
+                if self.split_vertical {
+                    AppIcon::SplitVertical
+                } else {
+                    AppIcon::SplitHorizontal
+                },
                 true,
                 BrowserAction::SplitPane,
             ))

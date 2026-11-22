@@ -170,18 +170,76 @@ fn platform_key() -> &'static str {
     "unsupported"
 }
 
-/// Parse "1.2.3" (optionally "v1.2.3") into a comparable tuple.
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut it = v.trim().trim_start_matches('v').splitn(3, '.');
+/// A release version, ordered as semantic versions are: `0.2.9-rc.1` <
+/// `0.2.9-rc.2` < `0.2.9-rc.10` < `0.2.9`. A pre-release (`-rc.N`) is older
+/// than the release it leads to, so a release candidate's testers move on
+/// to each later candidate and then to the release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AppVersion {
+    core: (u64, u64, u64),
+    /// Dot-separated pre-release identifiers; empty for a release.
+    pre: Vec<String>,
+}
+
+impl Ord for AppVersion {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        self.core.cmp(&other.core).then_with(|| {
+            match (self.pre.is_empty(), other.pre.is_empty()) {
+                (true, true) => Ordering::Equal,
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                (false, false) => {
+                    for (a, b) in self.pre.iter().zip(&other.pre) {
+                        let order = match (a.parse::<u64>(), b.parse::<u64>()) {
+                            (Ok(x), Ok(y)) => x.cmp(&y),
+                            (Ok(_), Err(_)) => Ordering::Less,
+                            (Err(_), Ok(_)) => Ordering::Greater,
+                            (Err(_), Err(_)) => a.cmp(b),
+                        };
+                        if order != Ordering::Equal {
+                            return order;
+                        }
+                    }
+                    self.pre.len().cmp(&other.pre.len())
+                }
+            }
+        })
+    }
+}
+
+impl PartialOrd for AppVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Parse "1.2.3", "v1.2.3" or "1.2.3-rc.4" (build metadata after `+` is
+/// ignored).
+fn parse_version(v: &str) -> Option<AppVersion> {
+    let v = v.trim().trim_start_matches('v');
+    let v = v.split('+').next()?;
+    let (core, pre) = match v.split_once('-') {
+        Some((_, "")) => return None,
+        Some((core, pre)) => (core, pre),
+        None => (v, ""),
+    };
+    let mut it = core.splitn(3, '.');
     let maj = it.next()?.parse().ok()?;
     let min = it.next()?.parse().ok()?;
-    // Tolerate suffixes like "3-beta" on the patch component.
-    let patch_raw = it.next().unwrap_or("0");
-    let patch = patch_raw
-        .split(|c: char| !c.is_ascii_digit())
-        .next()
-        .and_then(|p| p.parse().ok())?;
-    Some((maj, min, patch))
+    let patch = it.next().unwrap_or("0").parse().ok()?;
+    let pre: Vec<String> = if pre.is_empty() {
+        Vec::new()
+    } else {
+        pre.split('.').map(str::to_string).collect()
+    };
+    if pre.iter().any(|id| id.is_empty()) {
+        return None;
+    }
+    Some(AppVersion {
+        core: (maj, min, patch),
+        pre,
+    })
 }
 
 fn updates_dir() -> PathBuf {
@@ -346,10 +404,17 @@ mod tests {
 
     #[test]
     fn version_parsing_and_ordering() {
-        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
-        assert_eq!(parse_version("v0.1.0"), Some((0, 1, 0)));
-        assert_eq!(parse_version("1.2.3-beta"), Some((1, 2, 3)));
-        assert!(parse_version("0.2.0") > parse_version("0.1.9"));
+        let v = |s| parse_version(s).unwrap();
+        assert_eq!(v("1.2.3"), v("v1.2.3"));
+        assert!(v("0.2.0") > v("0.1.9"));
         assert!(parse_version("garbage").is_none());
+        assert!(parse_version("1.2.3-").is_none());
+        // Release candidates: each later one, then the release.
+        assert!(v("0.2.9-rc.1") < v("0.2.9-rc.2"));
+        assert!(v("0.2.9-rc.9") < v("0.2.9-rc.10"));
+        assert!(v("0.2.9-rc.10") < v("0.2.9"));
+        assert!(v("0.2.8") < v("0.2.9-rc.1"));
+        assert!(v("0.2.9") < v("0.2.10-rc.1"));
+        assert_eq!(v("0.2.9-rc.1+build.5"), v("0.2.9-rc.1"));
     }
 }

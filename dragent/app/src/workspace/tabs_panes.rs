@@ -182,6 +182,32 @@ impl WorkspaceView {
         self.update_active_pane_with_focus(true, ctx);
     }
 
+    /// A browser pane's split button follows the same rule as a terminal
+    /// pane's header: the opposite of the split it sits in (stacked inside a
+    /// side-by-side split and vice versa), side by side when alone.
+    pub(crate) fn sync_browser_split_icons(&self, ctx: &mut ViewContext<Self>) {
+        let browsers: Vec<(ViewHandle<crate::browser::BrowserView>, bool)> = self
+            .tabs
+            .iter()
+            .filter_map(|tab| match &tab.pane {
+                WorkspacePane::Browser(browser) => {
+                    let vertical = self
+                        .split_tree
+                        .as_ref()
+                        .and_then(|layout| layout.parent_direction(tab.id))
+                        == Some(SplitDirection::Horizontal);
+                    Some((browser.clone(), vertical))
+                }
+                _ => None,
+            })
+            .collect();
+        for (browser, vertical) in browsers {
+            ctx.update_view(&browser, |view, view_ctx| {
+                view.set_split_vertical(vertical, view_ctx)
+            });
+        }
+    }
+
     /// A native focus event updates context without queuing another focus
     /// request, which could keep two panes redirecting each other forever.
     pub(crate) fn update_active_pane_with_focus(
@@ -199,6 +225,7 @@ impl WorkspaceView {
                 if tab.color != Some(color) { tab.color = Some(color); tab.pane.set_theme(theme,ctx); }
             }
         }
+        self.sync_browser_split_icons(ctx);
         // Focusing a terminal pane always releases editor focus with it.
         self.editor_pane_focused = false;
         let active = self.tabs.iter().find(|t| t.id == self.active_tab_id);
@@ -935,6 +962,9 @@ impl WorkspaceView {
     /// LeftPanelView so it can render without touching WorkspaceView's fields.
     /// Call this after any mutation that changes what the sidebar should show.
     pub(crate) fn sync_left_panel(&self, ctx: &mut ViewContext<Self>) {
+        // Runs after every pane change: keep browser bars' split buttons
+        // pointing the right way too (only repaints on a change).
+        self.sync_browser_split_icons(ctx);
         ctx.update_view(&self.project_sidebar_view, |view, vc| {
             if view.diff_comment.as_ref().and_then(|c| c.workspace.as_ref()).is_some_and(|scope| scope != &(self.organisation_id.clone(), self.active_workspace_tab_id)) {
                 view.diff_comment = None;

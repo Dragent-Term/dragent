@@ -264,7 +264,11 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$STAGING_BINARY" "$MACOS_DIR/$BINARY_NAME"
-sed "s/__VERSION__/$VERSION/g" "$INFO_PLIST_TEMPLATE" > "$APP_DIR/Contents/Info.plist"
+# Apple's bundle versions are dot-separated numbers only: a release
+# candidate (0.2.9-rc.1) is 0.2.9 there. The file names keep the full version.
+PLIST_VERSION="${VERSION%%-*}"
+PLIST_VERSION="${PLIST_VERSION%%+*}"
+sed "s/__VERSION__/$PLIST_VERSION/g" "$INFO_PLIST_TEMPLATE" > "$APP_DIR/Contents/Info.plist"
 
 # TCC reads these keys from the final app bundle, not from the source template
 # or the executable's embedded plist. Fail before signing if either key is

@@ -214,6 +214,10 @@ pub struct BrowserView {
     parent: Option<Rc<dyn warpui::platform::Window>>,
     phase: Phase,
     loading: bool,
+    /// The bar's split button stacks (top/bottom) instead of splitting side
+    /// by side: the opposite of the split this pane sits in, as a terminal
+    /// pane's header does. Set by the workspace as the layout changes.
+    split_vertical: bool,
     /// The current navigation has committed (its first response arrived).
     committed: bool,
     title: String,
@@ -290,6 +294,14 @@ pub struct BrowserView {
 }
 
 impl BrowserView {
+    /// Point the bar's split button down (stacked) or right (side by side).
+    pub fn set_split_vertical(&mut self, vertical: bool, ctx: &mut ViewContext<Self>) {
+        if self.split_vertical != vertical {
+            self.split_vertical = vertical;
+            ctx.notify();
+        }
+    }
+
     /// The address of the page shown.
     pub(crate) fn address(&self) -> &str {
         self.session.url.as_str()
@@ -395,6 +407,7 @@ impl BrowserView {
             parent: ctx.windows().platform_window(ctx.window_id()),
             phase: Phase::Start,
             loading: false,
+            split_vertical: false,
             committed: false,
             title: String::new(),
             notice: None,

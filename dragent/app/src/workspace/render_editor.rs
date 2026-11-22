@@ -671,11 +671,36 @@ impl WorkspaceView {
             })
             .finish()
         };
-        let terminal_btn = button(
-            header_mouse_state("editor_terminal"),
-            AppIcon::SplitVertical,
-            WorkspaceAction::ToggleDocumentTerminal,
-        );
+        // Always the stacked icon (it shows and hides the terminal under
+        // the editor), in the accent colour while that terminal is open.
+        let terminal_open = self.document_terminal_visible;
+        let terminal_btn = Hoverable::new(header_mouse_state("editor_terminal"), move |state| {
+            Container::new(render_icon(
+                AppIcon::SplitVertical,
+                if terminal_open {
+                    theme.accent
+                } else if state.is_hovered() {
+                    theme.main_text()
+                } else {
+                    theme.sub_text()
+                },
+                ICON_SIZE_MD,
+            ))
+            .with_uniform_padding(4.0)
+            .with_background_color(if state.is_hovered() {
+                theme.surface_2()
+            } else {
+                ColorU::new(0, 0, 0, 0)
+            })
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.0)))
+            .finish()
+        })
+        .with_cursor(Cursor::PointingHand)
+        .on_click(move |event_ctx, _app, _pos| {
+            event_ctx
+                .dispatch_typed_action_for(workspace_view_id, WorkspaceAction::ToggleDocumentTerminal);
+        })
+        .finish();
 
         // Tab bar: the scrollable strip takes the remaining width and clips
         // underneath the pinned docked-terminal button on the right. Shared

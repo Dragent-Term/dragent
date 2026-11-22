@@ -351,11 +351,15 @@ impl WorkspaceView {
                 // the worktree this tab is the last one in, stopping a running
                 // command, or closing an idle tab.
                 let removes_worktree = self.worktree_removed_on_close(tab_id).is_some();
+                // A browser pane has no process to stop: it closes at once
+                // (unless closing it deletes its worktree).
+                let is_browser = tab.pane.is_browser();
                 let ask = (removes_worktree
                     && crate::settings::git_consumers::confirm_delete_worktree())
                     || (command.is_some()
                         && crate::settings::git_consumers::confirm_close_terminal())
                     || (!removes_worktree
+                        && !is_browser
                         && command.is_none()
                         && crate::settings::AppSettings::global()
                             .agent

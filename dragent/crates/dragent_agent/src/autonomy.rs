@@ -140,9 +140,11 @@ pub struct AgentAutonomySettings {
     /// if trusted.
     #[serde(default = "default_true")]
     pub workspace_trust_enabled: bool,
-    /// Ask before closing an idle tab. Running processes use the General
-    /// setting. Stored under its earlier name, which other builds read.
-    #[serde(default = "default_true", rename = "confirm_close_pinned_tab")]
+    /// Ask before closing a tab with nothing running. Off by default:
+    /// closing an idle pane loses nothing (running processes use the General
+    /// setting). Stored under a new name so the old default-on value saved
+    /// by earlier builds (`confirm_close_pinned_tab`) no longer applies.
+    #[serde(default, rename = "confirm_close_idle")]
     pub confirm_close_idle_tab: bool,
     /// When true, Codex launches keep their isolated-server sandbox bypass
     /// flags; when false those flags are stripped so Codex runs sandboxed.
@@ -184,7 +186,7 @@ impl Default for AgentAutonomySettings {
             disabled_agents: Vec::new(),
             stored_permission: StoredPermission::FullAccess,
             workspace_trust_enabled: true,
-            confirm_close_idle_tab: true,
+            confirm_close_idle_tab: false,
             terminal_server_isolation: true,
             idle_sleep_minutes: default_idle_sleep_minutes(),
         }
@@ -273,9 +275,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn old_settings_preserve_idle_close_choice_and_ignore_retired_controls() {
+    fn old_settings_ignore_retired_controls() {
         let settings: AgentAutonomySettings = serde_json::from_value(serde_json::json!({
-            "confirm_close_pinned_tab": false,
+            "confirm_close_pinned_tab": true,
             "status_hooks_enabled": false,
             "state_rules_path": "unused.md",
             "state_rules_live_updates": false,
@@ -283,12 +285,14 @@ mod tests {
             "workspace_trust_enabled": false,
             "terminal_server_isolation": false
         })).unwrap();
+        // The old idle-close value (default on) no longer applies: idle
+        // panes close without asking unless the new setting is turned on.
         assert!(!settings.confirm_close_idle_tab);
         assert!(!settings.workspace_trust_enabled);
         assert!(!settings.terminal_server_isolation);
         let saved = serde_json::to_value(&settings).unwrap();
-        // Saved under the name other builds read, so they keep the choice.
-        assert_eq!(saved["confirm_close_pinned_tab"], false);
+        assert_eq!(saved["confirm_close_idle"], false);
+        assert!(saved.get("confirm_close_pinned_tab").is_none());
         assert!(saved.get("confirm_close_idle_tab").is_none());
         assert!(saved.get("state_rules_path").is_none());
         let restored: AgentAutonomySettings = serde_json::from_value(saved).unwrap();
@@ -302,7 +306,7 @@ mod tests {
         assert_eq!(settings.default_agent, None);
         assert!(settings.disabled_agents.is_empty());
         assert!(settings.workspace_trust_enabled);
-        assert!(settings.confirm_close_idle_tab);
+        assert!(!settings.confirm_close_idle_tab);
         assert!(settings.terminal_server_isolation);
     }
 
