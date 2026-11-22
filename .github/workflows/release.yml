@@ -452,6 +452,22 @@ jobs:
           fi
           gh release upload rc-latest release/latest.json --repo "$GITHUB_REPOSITORY" --clobber
 
+      # Until there is a release (production), the website's Download buttons
+      # point at rc-latest/download/<name>: the newest release candidate.
+      - name: Newest release-candidate downloads
+        if: contains(github.ref_name, '-')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view rc-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create rc-latest --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --prerelease --latest=false \
+              --title "Release-candidate update channel" \
+              --notes "Holds the newest release candidate's installers and latest.json. Download builds from the versions listed under Releases."
+          fi
+          gh release upload rc-latest release/Dragent-*.dmg release/Dragent-*-setup.exe \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
       # TEMPORARY bridge: apps from before this change check CloudFront's
       # stable/latest.json. Point it at this release's GitHub files so they
       # update across; drop this step once installs are past this version.
