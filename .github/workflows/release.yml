@@ -3,6 +3,14 @@
 # downloads. Fixed file names mean `releases/latest/download/<name>` always
 # fetches the newest build (the website's Download buttons use those).
 #
+# Two kinds of tag:
+#   v0.3.0-rc.1  release candidate: a pre-release built for the STAGING
+#                servers, updating only installs of release candidates
+#                (manifest on the rolling `rc-latest` pre-release).
+#   v0.3.0       release: built for PRODUCTION (vars RELEASE_BACKEND_URL,
+#                RELEASE_WEB_ORIGIN), marked Latest, updating everyone. Refused
+#                while those variables still point at staging.
+#
 #   macOS  arm64 + x86_64  → Dragent-macos-<arch>.dmg   (signed + notarized when secrets exist)
 #   Windows x64 + arm64    → Dragent-windows-<arch>-setup.exe (Inno Setup; unsigned for now)
 #   Remote host runtime    → dragent-host-<os>-<arch> + .sha256 (installed over SSH)
@@ -31,10 +39,12 @@ permissions:
 
 env:
   # Compile-time bakes (option_env!) picked up by cargo builds in the scripts.
-  DRAGENT_BACKEND_URL_DEFAULT: ${{ vars.RELEASE_BACKEND_URL || 'https://beta.api.dragent.dev' }}
+  # A tag with a "-" (v0.3.0-rc.1) is a release candidate: staging servers.
+  DRAGENT_BACKEND_URL_DEFAULT: ${{ contains(github.ref_name, '-') && (vars.STAGING_BACKEND_URL || 'https://beta.api.dragent.dev') || vars.RELEASE_BACKEND_URL }}
   # Web frontend origin: browser sign-in page + desktop session polling.
-  DRAGENT_WEB_ORIGIN_DEFAULT: ${{ vars.RELEASE_WEB_ORIGIN || 'https://beta.dragent.dev' }}
-  DRAGENT_UPDATE_MANIFEST_URL_DEFAULT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+  DRAGENT_WEB_ORIGIN_DEFAULT: ${{ contains(github.ref_name, '-') && (vars.STAGING_WEB_ORIGIN || 'https://beta.dragent.dev') || vars.RELEASE_WEB_ORIGIN }}
+  # Candidates update from the rolling rc-latest manifest, releases from Latest.
+  DRAGENT_UPDATE_MANIFEST_URL_DEFAULT: ${{ contains(github.ref_name, '-') && format('https://github.com/{0}/releases/download/rc-latest/latest.json', github.repository) || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
   DRAGENT_UPDATE_PUBLIC_KEYS: ${{ vars.RELEASE_MANIFEST_PUBLIC_KEYS }}
 
 jobs:
@@ -62,6 +72,34 @@ jobs:
             exit 1
           fi
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
+      # A release (no "-rc.N") is for production: refuse one that would be
+      # built without production addresses or with a staging one.
+      - name: Check a release is built for production
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          BACKEND: ${{ vars.RELEASE_BACKEND_URL }}
+          WEB: ${{ vars.RELEASE_WEB_ORIGIN }}
+          STAGING_BACKEND: ${{ vars.STAGING_BACKEND_URL || 'https://beta.api.dragent.dev' }}
+          STAGING_WEB: ${{ vars.STAGING_WEB_ORIGIN || 'https://beta.dragent.dev' }}
+        run: |
+          norm() { printf '%s' "$1" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' | sed 's#/*$##'; }
+          fail() { echo "::error::A release ($GITHUB_REF_NAME) is built for production: $1. Tag a release candidate (v<version>-rc.N) for staging."; exit 1; }
+          backend=$(norm "$BACKEND"); web=$(norm "$WEB")
+          [ -n "$backend" ] || fail "RELEASE_BACKEND_URL is unset"
+          [ -n "$web" ] || fail "RELEASE_WEB_ORIGIN is unset"
+          for value in "$backend" "$web"; do
+            case "$value" in
+              https://*) ;;
+              *) fail "$value is not an https:// address" ;;
+            esac
+            if [ "$value" = "$(norm "$STAGING_BACKEND")" ] || [ "$value" = "$(norm "$STAGING_WEB")" ]; then
+              fail "$value is a staging address"
+            fi
+            case "$value" in
+              *://beta.*|*://staging.*|*.beta.*|*.staging.*) fail "$value looks like a staging address" ;;
+            esac
+          done
+          echo "Release built for $backend and $web"
       # Every build bakes this list; one malformed entry would make those
       # apps refuse all updates. Empty entries are ignored by the app.
       - name: Check the update public keys
@@ -383,13 +421,36 @@ jobs:
               gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
             fi
           else
+            if [[ "$TAG" == *-* ]]; then
+              kind=(--prerelease --latest=false)
+              title="Dragent $VERSION (release candidate, staging)"
+            else
+              kind=(--latest)
+              title="Dragent $VERSION"
+            fi
             gh release create "$TAG" release/* \
               --repo "$GITHUB_REPOSITORY" \
-              --title "Dragent $VERSION" \
+              --title "$title" \
               --generate-notes \
-              --verify-tag
+              --verify-tag \
+              "${kind[@]}"
           fi
           echo "Published $TAG: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+
+      # Release-candidate installs update from the rolling rc-latest
+      # pre-release: every candidate and every release moves it forward.
+      - name: Update the release-candidate channel
+        if: steps.manifest.outputs.signed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view rc-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create rc-latest --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --prerelease --latest=false \
+              --title "Release-candidate update channel" \
+              --notes "Holds latest.json for installs of release candidates. Not a release: download builds from the versions listed under Releases."
+          fi
+          gh release upload rc-latest release/latest.json --repo "$GITHUB_REPOSITORY" --clobber
 
       # TEMPORARY bridge: apps from before this change check CloudFront's
       # stable/latest.json. Point it at this release's GitHub files so they
