@@ -439,8 +439,35 @@ jobs:
 
       # Release-candidate installs update from the rolling rc-latest
       # pre-release: every candidate and every release moves it forward.
+      # Only a release at least as new as what rc-latest holds moves it: a
+      # re-run of an older candidate must not take testers backwards.
+      - name: Is this the newest release on the candidate channel?
+        id: channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          held=""
+          if gh release download rc-latest --repo "$GITHUB_REPOSITORY" --pattern latest.json \
+              --output held.json >/dev/null 2>&1; then
+            held=$(python3 -c "import json; print(json.load(open('held.json'))['stable']['version'])" 2>/dev/null || true)
+          fi
+          newest=$(python3 - "$VERSION" "$held" <<'PY'
+          import re, sys
+          def key(v):
+              m = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?', v)
+              if not m:
+                  return None
+              a, b, c, rc = m.groups()
+              return (int(a), int(b), int(c), 1 if rc is None else 0, int(rc or 0))
+          new, held = key(sys.argv[1]), key(sys.argv[2])
+          print('true' if held is None or (new is not None and new >= held) else 'false')
+          PY
+          )
+          echo "rc-latest holds ${held:-nothing}; this is $VERSION: newest=$newest"
+          echo "newest=$newest" >> "$GITHUB_OUTPUT"
+
       - name: Update the release-candidate channel
-        if: steps.manifest.outputs.signed == 'true'
+        if: steps.manifest.outputs.signed == 'true' && steps.channel.outputs.newest == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -455,7 +482,7 @@ jobs:
       # Until there is a release (production), the website's Download buttons
       # point at rc-latest/download/<name>: the newest release candidate.
       - name: Newest release-candidate downloads
-        if: contains(github.ref_name, '-')
+        if: contains(github.ref_name, '-') && steps.channel.outputs.newest == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
