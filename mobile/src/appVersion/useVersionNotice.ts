@@ -8,7 +8,7 @@ import * as Application from "expo-application";
 import { buildNumber, noticeFor, parseRelease, type VersionNotice } from "./notice";
 
 /** Public, numbers-and-links only (see notice.ts). */
-export const RELEASES_URL = "https://d8d93sixrrr9g.cloudfront.net/mobile/latest.json";
+export const RELEASES_URL = "https://github.com/Dragent-Term/dragent/releases/download/mobile-latest/latest.json";
 const MIN_GAP_MS = 30 * 60 * 1000;
 const TIMEOUT_MS = 10_000;
 

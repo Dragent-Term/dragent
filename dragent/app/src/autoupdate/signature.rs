@@ -49,8 +49,13 @@ pub(super) fn verify_manifest(body: &str) -> Result<Release, String> {
     // Trusted build configuration only: a runtime environment variable must
     // never be able to change the release trust root.
     if let Some(configured) = option_env!("DRAGENT_UPDATE_PUBLIC_KEYS") {
-        for key in configured.split(',') {
-            keys.push(decode_hex::<32>(key.trim(), "release public key")?);
+        // An unset repository variable bakes an empty string: no keys.
+        for key in configured
+            .split(',')
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+        {
+            keys.push(decode_hex::<32>(key, "release public key")?);
         }
     }
     verify_manifest_with_keys(body, &keys)

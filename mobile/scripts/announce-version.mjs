@@ -6,28 +6,35 @@
 //   pnpm version:announce android 9 --url https://expo.dev/artifacts/eas/….apk
 //   pnpm version:announce show
 //
-// Writes mobile/latest.json on the releases CDN: build numbers and links
-// only, never code (docs/design/e2ee.md §1.3). iOS links to the app in
-// TestFlight unless --url says otherwise; Android needs the APK's --url.
+// Writes latest.json on the public repository's rolling `mobile-latest`
+// GitHub pre-release (needs `gh` signed in with write access): build numbers
+// and links only, never code (docs/design/e2ee.md §1.3). iOS links to the app
+// in TestFlight unless --url says otherwise; Android needs the APK's --url.
+//
+// Phone builds from before the move read the releases CDN, so the file is
+// also copied there while `aws` is signed in (skipped otherwise).
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const BUCKET = process.env.DRAGENT_RELEASES_BUCKET ?? "dragent-releases-269235677023";
-const KEY = "mobile/latest.json";
-const DISTRIBUTION = process.env.DRAGENT_RELEASES_DISTRIBUTION_DOMAIN ?? "d8d93sixrrr9g.cloudfront.net";
+const REPO = process.env.DRAGENT_RELEASES_REPO ?? "Dragent-Term/dragent";
+const TAG = "mobile-latest";
+const PUBLIC_URL = `https://github.com/${REPO}/releases/download/${TAG}/latest.json`;
+const LEGACY_BUCKET = "dragent-releases-269235677023";
+const LEGACY_KEY = "mobile/latest.json";
 const TESTFLIGHT = "itms-beta://beta.itunes.apple.com/v1/app/6830027415";
 
 const fail = (message) => {
   console.error(message);
   process.exit(2);
 };
-const aws = (args) => execFileSync("aws", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const run = (cmd, args) => execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const gh = (args) => run("gh", args);
 
 function current() {
   try {
-    return JSON.parse(aws(["s3", "cp", `s3://${BUCKET}/${KEY}`, "-"]));
+    return JSON.parse(gh(["release", "download", TAG, "--repo", REPO, "--pattern", "latest.json", "--output", "-"]));
   } catch {
     return {};
   }
@@ -57,10 +64,24 @@ manifest[platform] = { latest, minimum, url, ...(flags.notes ? { notes: flags.no
 
 const file = join(mkdtempSync(join(tmpdir(), "dragent-version-")), "latest.json");
 writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
-aws([
-  "s3", "cp", file, `s3://${BUCKET}/${KEY}`,
-  "--content-type", "application/json",
-  "--cache-control", "public, max-age=300",
-]);
+try {
+  gh(["release", "view", TAG, "--repo", REPO]);
+} catch {
+  gh([
+    "release", "create", TAG, "--repo", REPO, "--prerelease",
+    "--title", "Phone app version notice",
+    "--notes", "The newest phone builds, read by the Dragent phone app to offer updates. Not a desktop release.",
+  ]);
+}
+gh(["release", "upload", TAG, file, "--repo", REPO, "--clobber"]);
+try {
+  run("aws", [
+    "s3", "cp", file, `s3://${LEGACY_BUCKET}/${LEGACY_KEY}`,
+    "--content-type", "application/json",
+    "--cache-control", "public, max-age=300",
+  ]);
+} catch {
+  console.warn("(Skipped the CDN copy older phone builds read: aws isn't signed in.)");
+}
 console.log(readFileSync(file, "utf8"));
-console.log(`Published: https://${DISTRIBUTION}/${KEY} (phones see it within about 5 minutes)`);
+console.log(`Published: ${PUBLIC_URL}`);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   RelayCatalogError, dragentActivity, dragentStatusLine, fetchRelayCatalog, isDragentTab, isRelayTabKind, parseRelayCatalog, resolveRelayCatalogURL,
 } from "../src/transport/relayCatalog";
@@ -16,8 +16,10 @@ test("catalog URL derives from the realtime gateway and rejects credential carri
   assert.equal(resolveRelayCatalogURL("not a url"), null);
 });
 
-test("catalog wire shape stays in sync with the Go relay package", () => {
-  const go = readFileSync(new URL("../../server/internal/relay/catalog.go", import.meta.url), "utf8");
+// The server is only in the private repository; the public copy skips this.
+const goCatalog = new URL("../../server/internal/relay/catalog.go", import.meta.url);
+test("catalog wire shape stays in sync with the Go relay package", { skip: !existsSync(goCatalog) && "server not in this checkout" }, () => {
+  const go = readFileSync(goCatalog, "utf8");
   for (const tag of [
     '`json:"projects"`', '`json:"workspaces"`', '`json:"tabs"`',
     '`json:"name"`', '`json:"path"`', '`json:"branch,omitempty"`',

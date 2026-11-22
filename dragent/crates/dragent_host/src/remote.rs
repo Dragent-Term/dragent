@@ -624,8 +624,9 @@ fn provision(
     update: bool,
     scope: &str,
 ) -> Result<ServiceEndpoint, String> {
+    // Each release's runtime is a file on that version's GitHub Release.
     let cdn = std::env::var("DRAGENT_REMOTE_RELEASE_URL")
-        .unwrap_or_else(|_| "https://d8d93sixrrr9g.cloudfront.net".into());
+        .unwrap_or_else(|_| "https://github.com/Dragent-Term/dragent/releases/download".into());
     if !cdn.starts_with("https://") {
         return Err("Remote releases require HTTPS".into());
     }
@@ -663,7 +664,7 @@ fn provision(
 
 /// Development desktops can be launched by Finder without inheriting a shell
 /// environment. For loopback hosts, use a matching adjacent debug host binary
-/// when one is present. Real remote hosts continue through the release CDN.
+/// when one is present. Real remote hosts download from the GitHub Release.
 /// The script that installs (when missing, or on `update`) and starts the
 /// runtime on the remote machine, then prints its endpoint.
 #[cfg(test)]
@@ -699,7 +700,7 @@ if [ {managed} = 1 ] && {{ [ ! -x "$binary" ] || [ {update} = 1 ]; }}; then
       echo "Dragent needs glibc {min_glibc} or newer on this machine, which has $glibc (for example Ubuntu 20.04, Debian 11 or RHEL 9 and later)" >&2; exit 1
     fi
   fi
-  url={cdn}/remote/v{protocol}/{release}/$os-$arch
+  url={cdn}/v{release}/dragent-host-$os-$arch
   if command -v curl >/dev/null 2>&1; then
     fetch() {{ curl --fail --silent --show-error --location --proto '=https' --max-time "$3" "$1" -o "$2"; }}
   elif command -v wget >/dev/null 2>&1; then
@@ -709,7 +710,7 @@ if [ {managed} = 1 ] && {{ [ ! -x "$binary" ] || [ {update} = 1 ]; }}; then
   fi
   staging=$(mktemp -d "$HOME/.dragent/remote/bin/install.XXXXXX")
   trap 'rm -rf "$staging"' EXIT
-  if ! fetch "$url/dragent-host" "$staging/dragent-host" 120 || ! fetch "$url/dragent-host.sha256" "$staging/dragent-host.sha256" 30; then
+  if ! fetch "$url" "$staging/dragent-host" 120 || ! fetch "$url.sha256" "$staging/dragent-host.sha256" 30; then
     echo "Couldn't download Dragent's workspace runtime {release} for $os-$arch. Check the machine's internet access; if it has access, this version's runtime isn't published yet." >&2; exit 1
   fi
   (cd "$staging"; if command -v sha256sum >/dev/null 2>&1; then sha256sum -c dragent-host.sha256; else shasum -a 256 -c dragent-host.sha256; fi) >&2
