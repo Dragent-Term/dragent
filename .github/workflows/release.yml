@@ -72,16 +72,34 @@ jobs:
             exit 1
           fi
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
-      # A release (no "-rc.N") is for production: refuse one built for staging.
+      # A release (no "-rc.N") is for production: refuse one that would be
+      # built without production addresses or with a staging one.
       - name: Check a release is built for production
         if: ${{ !contains(github.ref_name, '-') }}
         env:
           BACKEND: ${{ vars.RELEASE_BACKEND_URL }}
           WEB: ${{ vars.RELEASE_WEB_ORIGIN }}
+          STAGING_BACKEND: ${{ vars.STAGING_BACKEND_URL || 'https://beta.api.dragent.dev' }}
+          STAGING_WEB: ${{ vars.STAGING_WEB_ORIGIN || 'https://beta.dragent.dev' }}
         run: |
-          case "$BACKEND $WEB" in
-            *beta.*|" "*|*" ") echo "::error::A release ($GITHUB_REF_NAME) is built for production, but RELEASE_BACKEND_URL / RELEASE_WEB_ORIGIN are unset or point at staging. Tag a release candidate (v<version>-rc.N) for staging."; exit 1 ;;
-          esac
+          norm() { printf '%s' "$1" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' | sed 's#/*$##'; }
+          fail() { echo "::error::A release ($GITHUB_REF_NAME) is built for production: $1. Tag a release candidate (v<version>-rc.N) for staging."; exit 1; }
+          backend=$(norm "$BACKEND"); web=$(norm "$WEB")
+          [ -n "$backend" ] || fail "RELEASE_BACKEND_URL is unset"
+          [ -n "$web" ] || fail "RELEASE_WEB_ORIGIN is unset"
+          for value in "$backend" "$web"; do
+            case "$value" in
+              https://*) ;;
+              *) fail "$value is not an https:// address" ;;
+            esac
+            if [ "$value" = "$(norm "$STAGING_BACKEND")" ] || [ "$value" = "$(norm "$STAGING_WEB")" ]; then
+              fail "$value is a staging address"
+            fi
+            case "$value" in
+              *://beta.*|*://staging.*|*.beta.*|*.staging.*) fail "$value looks like a staging address" ;;
+            esac
+          done
+          echo "Release built for $backend and $web"
       # Every build bakes this list; one malformed entry would make those
       # apps refuse all updates. Empty entries are ignored by the app.
       - name: Check the update public keys
