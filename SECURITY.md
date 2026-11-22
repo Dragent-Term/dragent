@@ -31,9 +31,9 @@ request.
 ## Scope
 
 In scope: this repository's application surfaces — the desktop app
-(`dragent/`, Rust), the relay/server (`server/`, Go), the auth portal
-(`auth-portal/`), and the mobile
-companion (`mobile/`).
+(`dragent/`, Rust), the auth portal (`auth-portal/`), and the mobile
+companion (`mobile/`). Vulnerabilities in Dragent's hosted service
+(accounts, sync, the relay) are in scope too: report them the same way.
 
 Out of scope: denial-of-service/volumetric findings, social engineering,
 physical-access attacks, and vulnerabilities in third-party vendors or

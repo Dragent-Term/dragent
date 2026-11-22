@@ -4,14 +4,7 @@
 
 *                                   @Jahsminemma
 
-# Authentication, sessions, the relay, encryption, payments.
-/server/internal/identity/          @Jahsminemma
-/server/internal/relay/             @Jahsminemma
-/server/internal/companionpairing/  @Jahsminemma
-/server/internal/companionsession/  @Jahsminemma
-/server/internal/integrations/      @Jahsminemma
-/server/internal/billing/           @Jahsminemma
-/server/migrations/                 @Jahsminemma
+# Encryption and the realtime client.
 /dragent/crates/dragent_e2ee/       @Jahsminemma
 /dragent/app/src/realtime/          @Jahsminemma
 /mobile/modules/dragent-e2ee/       @Jahsminemma

@@ -4,7 +4,6 @@ on:
   push:
     branches: [main, staging]
     paths:
-      - "server/**"
       - "dragent/crates/dragent_e2ee/**"
       - "mobile/modules/dragent-e2ee/**"
       - "mobile/src/transport/**"
@@ -12,7 +11,6 @@ on:
       - ".github/workflows/e2ee.yml"
   pull_request:
     paths:
-      - "server/**"
       - "dragent/crates/dragent_e2ee/**"
       - "mobile/modules/dragent-e2ee/**"
       - "mobile/src/transport/**"
@@ -29,53 +27,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ciphertext-only-proof:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: server/go.mod
-      - name: Vet the proof package
-        run: go vet ./test/e2ee/
-      - name: Ciphertext-only recorder + log checks (§12.9, §12.10)
-        run: go test ./test/e2ee/ -count=1 -v
-
-  # Fuzzing is the slow part: it runs only after a merge to staging/main
-  # (or by hand), never on pull requests.
-  go-fuzz:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - FuzzRelayHeaderDecode
-          - FuzzRouterRouting
-          - FuzzSealedCatalogBlob
-          - FuzzPushNotifyIntake
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: server/go.mod
-      - name: Fuzz ${{ matrix.target }} (§12.11)
-        run: go test ./test/e2ee/ -run XXX -fuzz ${{ matrix.target }} -fuzztime 1m
-
-  # Client-side E2EE suites that the server proof builds on: the Rust crypto
-  # crate (unit + vector tests) and the phone transport E2EE tests. The full
+  # Client-side E2EE suites: the Rust crypto crate (unit + vector tests) and
+  # the phone transport E2EE tests. The relay's ciphertext-only proof and
+  # fuzzing run with the hosted service, which isn't in this repository. The full
   # desktop app suite is deliberately not here — it needs macOS system libs.
   clients:
     runs-on: ubuntu-latest

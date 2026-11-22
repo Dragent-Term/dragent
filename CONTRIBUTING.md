@@ -79,10 +79,8 @@ as extra provenance, but they do not replace the CLA signature above.
 This is a monorepo. First, at the repository root, run `npm install` once:
 it turns on the git hooks (they refuse credential files, scan for secrets
 when [gitleaks](https://github.com/gitleaks/gitleaks) is installed, and
-check Go and Rust formatting). Then set up only the parts you are changing:
+check Rust formatting). Then set up only the parts you are changing:
 
-- **Server** (`server/`, Go 1.25): `go build ./...`, `go test ./...`.
-  See `server/` sources for package layout (`go.mod` module `server`).
 - **Desktop** (`dragent/`, Rust; toolchain per `rust-toolchain.toml`):
   `cargo build`, `cargo test`. Workspace members are listed in
   `dragent/Cargo.toml`; the app crate lives in `dragent/app/`.

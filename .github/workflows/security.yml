@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [go, javascript-typescript]
+        language: [javascript-typescript]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -73,25 +73,6 @@ jobs:
         run: >
           docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1
           git /repo --config /repo/.github/gitleaks.toml --redact --no-banner --exit-code 1
-
-  govulncheck:
-    name: govulncheck (server)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          # The newest Go release: govulncheck itself needs a recent one, and
-          # the standard library is checked as of the version we'd ship.
-          go-version: stable
-      # Fails only when the code reaches a vulnerable function.
-      - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   cargo-deny:
     name: cargo-deny (licenses / sources / bans / advisories)

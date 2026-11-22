@@ -158,20 +158,23 @@ your first agent team.
 | Folder | What it is | Built with |
 |---|---|---|
 | [`dragent/`](dragent/) | The desktop app: terminal, agents, workspaces, coordination, browser | Rust |
-| [`server/`](server/) | The API and the relay between desktops and phones | Go |
 | [`mobile/`](mobile/) | The phone companion | Expo / React Native |
 | [`auth-portal/`](auth-portal/) | Sign-in and account pages | Next.js |
 | [`contracts/`](contracts/) | Wire formats shared by the apps | JSON / schemas |
 
 - **Desktop:** `cd dragent && cargo run -p dragent` (the toolchain version is
   pinned in `dragent/rust-toolchain.toml`).
-- **Server:** `cd server && go run ./cmd/api` (needs PostgreSQL and Redis;
-  configuration is read from the environment, see
-  `server/internal/platform/config`).
 - **Phone:** `cd mobile && pnpm install && pnpm start`.
 - **Auth portal:** `cd auth-portal && npm ci && npm run dev`.
 
 Each folder's README has the details.
+
+The hosted service (accounts, sync and the relay between desktops and
+phones) is run by Dragent and isn't in this repository. The apps, the
+end-to-end encryption and the wire formats they speak are all here, so you
+can check what the relay can see: everything your devices send each other
+is end-to-end encrypted, and the relay sees only what it needs to connect
+them (which devices are paired, and routing and sign-in details).
 
 ## Contributing
 
