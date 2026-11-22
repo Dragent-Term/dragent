@@ -37,6 +37,11 @@ on:
 permissions:
   contents: read # the publish job adds what it needs
 
+# One release at a time: rc-latest is read, compared and replaced as a unit.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 env:
   # Compile-time bakes (option_env!) picked up by cargo builds in the scripts.
   # A tag with a "-" (v0.3.0-rc.1) is a release candidate: staging servers.
@@ -446,10 +451,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Nothing held only when the channel or its manifest doesn't exist;
+          # a failed read stops here instead of looking like an empty channel.
           held=""
-          if gh release download rc-latest --repo "$GITHUB_REPOSITORY" --pattern latest.json \
-              --output held.json >/dev/null 2>&1; then
-            held=$(python3 -c "import json; print(json.load(open('held.json'))['stable']['version'])" 2>/dev/null || true)
+          if assets=$(gh release view rc-latest --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]|join(" ")' 2>/dev/null); then
+            if [[ " $assets " == *" latest.json "* ]]; then
+              gh release download rc-latest --repo "$GITHUB_REPOSITORY" --pattern latest.json --output held.json
+              held=$(python3 -c "import json; print(json.load(open('held.json'))['stable']['version'])")
+              [ -n "$held" ] || { echo "::error::rc-latest's latest.json has no version"; exit 1; }
+            fi
+          elif gh api "repos/$GITHUB_REPOSITORY/releases/tags/rc-latest" >/dev/null 2>&1; then
+            echo "::error::couldn't read rc-latest"; exit 1
           fi
           newest=$(python3 - "$VERSION" "$held" <<'PY'
           import re, sys
@@ -482,7 +494,7 @@ jobs:
       # Until there is a release (production), the website's Download buttons
       # point at rc-latest/download/<name>: the newest release candidate.
       - name: Newest release-candidate downloads
-        if: contains(github.ref_name, '-') && steps.channel.outputs.newest == 'true'
+        if: contains(github.ref_name, '-') && steps.manifest.outputs.signed == 'true' && steps.channel.outputs.newest == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
