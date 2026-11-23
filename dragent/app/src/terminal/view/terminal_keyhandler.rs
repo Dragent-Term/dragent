@@ -196,8 +196,14 @@ impl TerminalView {
                 // A view-only viewer can copy from the output but cannot type or
                 // send anything to the host — swallow every other key.
                 if remote_read_only {
-                    if let Some(action) = clipboard_shortcut_action(keystroke) {
-                        event_ctx.dispatch_typed_action(action);
+                    // Copy only, and only while this pane has the focus:
+                    // nothing pastes here, and keys typed in another pane's
+                    // field stay there.
+                    if !pane_active {
+                        return DispatchEventResult::PropagateToParent;
+                    }
+                    if let Some(TerminalAction::Copy) = clipboard_shortcut_action(keystroke) {
+                        event_ctx.dispatch_typed_action(TerminalAction::Copy);
                     }
                     return DispatchEventResult::StopPropagation;
                 }
@@ -315,13 +321,21 @@ impl TerminalView {
                 // Allow clipboard shortcuts when focus is outside the command input
                 // (e.g. output area or another pane control).
                 if !input_keys_active {
-                    if let Some(action) = clipboard_shortcut_action(keystroke) {
-                        event_ctx.dispatch_typed_action(action);
-                        return DispatchEventResult::StopPropagation;
-                    }
-                    if let Some(action) = terminal_palette_keystroke(keystroke) {
-                        event_ctx.dispatch_typed_action(action);
-                        return DispatchEventResult::StopPropagation;
+                    // This handler sees keys no binding took, from anywhere in
+                    // the window. Clipboard and palette chords are this
+                    // terminal's only while focus is inside it (its output
+                    // area or a control of its own): a paste typed into
+                    // another pane's field (a browser's address bar) must
+                    // never land here.
+                    if pane_active {
+                        if let Some(action) = clipboard_shortcut_action(keystroke) {
+                            event_ctx.dispatch_typed_action(action);
+                            return DispatchEventResult::StopPropagation;
+                        }
+                        if let Some(action) = terminal_palette_keystroke(keystroke) {
+                            event_ctx.dispatch_typed_action(action);
+                            return DispatchEventResult::StopPropagation;
+                        }
                     }
                     // ── Running-command escape hatch ─────────────────────────
                     // A foreground command must NEVER become uncontrollable.

@@ -1238,9 +1238,10 @@ impl TypedActionView for AutomationsView {
                 self.row_menu = (self.row_menu.as_deref() != Some(id.as_str())).then(|| id.clone());
             }
             A::CopyLink(id) => {
+                let scheme = dragent_paths::url_scheme();
                 ctx.clipboard()
                     .write(warpui_core::clipboard::ClipboardContent::plain_text(
-                        format!("dragent://automations/{id}"),
+                        format!("{scheme}://automations/{id}"),
                     ));
                 self.notice = Some("Link copied.".into());
             }

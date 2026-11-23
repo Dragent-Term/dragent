@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Package Dragent for Linux (.tar.gz portable layout; basis for .deb / AppImage).
 #
-# Layout:
-#   dist/linux-dragent/
+# Layout (Release; Dev uses dist/linux-dragent-dev/ instead):
+#   dist/linux-dragent[ -dev]/
 #     dragent
 #
 # Examples:
@@ -18,6 +18,21 @@ BINARY_NAME="dragent"
 PROFILE="release"
 OUTPUT_DIR="$ROOT/dist"
 DO_BUILD=1
+APP_NAME="Dragent"
+URL_SCHEME="dragent"
+DESKTOP_NAME="dragent.desktop"
+STAGE_NAME="linux-dragent"
+# Dev edition (every build without DRAGENT_RELEASE_EDITION=1 in the
+# environment): its own display name, .desktop file and URL scheme, so its
+# launcher and links never collide with the installed Dragent. The release
+# workflow builds with DRAGENT_RELEASE_EDITION=1 and gets the values above,
+# byte-for-byte the previous Release layout.
+if [[ "${DRAGENT_RELEASE_EDITION:-}" != "1" ]]; then
+  APP_NAME="Dragent Dev"
+  URL_SCHEME="dragent-dev"
+  DESKTOP_NAME="dragent-dev.desktop"
+  STAGE_NAME="linux-dragent-dev"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,7 +68,7 @@ if [[ ! -f "$BUILT" ]]; then
   exit 1
 fi
 
-STAGE="$OUTPUT_DIR/linux-dragent"
+STAGE="$OUTPUT_DIR/$STAGE_NAME"
 LINUX_ICONS="$ROOT/app/assets/resources/linux/hicolor"
 LINUX_DESKTOP="$ROOT/app/assets/resources/linux/dragent.desktop"
 rm -rf "$STAGE"
@@ -78,8 +93,16 @@ if [[ -d "$LINUX_ICONS" ]]; then
   mkdir -p "$STAGE/share/icons" "$STAGE/share/applications"
   cp -R "$LINUX_ICONS" "$STAGE/share/icons/"
   if [[ -f "$LINUX_DESKTOP" ]]; then
-    DESKTOP_DEST="$STAGE/share/applications/dragent.desktop"
+    DESKTOP_DEST="$STAGE/share/applications/$DESKTOP_NAME"
     cp "$LINUX_DESKTOP" "$DESKTOP_DEST"
+    # Dev edition: its own display name and URL scheme (Release keeps this
+    # file's values).
+    if [[ "$DESKTOP_NAME" != "dragent.desktop" ]]; then
+      sed -i.bak -e "s/^Name=.*/Name=$APP_NAME/" \
+        -e "s|^MimeType=.*|MimeType=x-scheme-handler/$URL_SCHEME;|" \
+        "$DESKTOP_DEST"
+      rm -f "${DESKTOP_DEST}.bak"
+    fi
     # Portable layout: point Exec at the bundled binary and pass callback URLs (%u).
     sed -i.bak "s|^Exec=.*|Exec=$STAGE/$BINARY_NAME %u|" "$DESKTOP_DEST"
     rm -f "${DESKTOP_DEST}.bak"
@@ -87,17 +110,21 @@ if [[ -d "$LINUX_ICONS" ]]; then
   echo "Bundled .desktop entry and hicolor icons"
 fi
 
-ARCHIVE="$OUTPUT_DIR/Dragent-${VERSION}-linux-x86_64.tar.gz"
-tar -czf "$ARCHIVE" -C "$OUTPUT_DIR" "linux-dragent"
+ARCHIVE="$OUTPUT_DIR/${APP_NAME}-${VERSION}-linux-x86_64.tar.gz"
+tar -czf "$ARCHIVE" -C "$OUTPUT_DIR" "$STAGE_NAME"
 
 echo ""
 echo "Linux packaging complete."
 echo "  Staging dir: $STAGE"
 echo "  Archive:     $ARCHIVE"
 echo ""
+BIN_INSTALL=dragent
+if [[ "$DESKTOP_NAME" != "dragent.desktop" ]]; then
+  BIN_INSTALL=dragent-dev
+fi
 echo "For .deb, install to:"
-echo "  /usr/bin/dragent"
-echo "  /usr/share/applications/dragent.desktop  (MimeType=x-scheme-handler/dragent)"
+echo "  /usr/bin/$BIN_INSTALL"
+echo "  /usr/share/applications/$DESKTOP_NAME  (MimeType=x-scheme-handler/$URL_SCHEME)"
 echo ""
 echo "After install, register the auth URL handler (once per user):"
-echo "  xdg-mime default dragent.desktop x-scheme-handler/dragent"
+echo "  xdg-mime default $DESKTOP_NAME x-scheme-handler/$URL_SCHEME"

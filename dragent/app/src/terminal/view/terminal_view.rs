@@ -223,6 +223,12 @@ pub struct TerminalView {
     /// [`set_remote_read_only`](Self::set_remote_read_only)). Always false for a
     /// local terminal.
     pub(crate) remote_read_only: bool,
+    /// The pop-up terminal over a page (sign-ins, installers): web links it
+    /// shows open in the system browser, never in Dragent's browser pane.
+    pub(crate) links_open_in_system_browser: bool,
+    /// A shell statement written once, ahead of the next submitted command
+    /// (the pop-up terminal's system `BROWSER`); the block shows the command.
+    pub(crate) pending_shell_setup: Option<String>,
     /// Mirror only: this viewer authenticated as the HOST's own account (e.g. the
     /// user's second device). Such a controller may drive the host's terminal
     /// SIZE (self-sizes + resizes the host to match — WYSIWYG). A teammate
@@ -757,6 +763,27 @@ impl TerminalView {
         )
     }
 
+    /// Open a web link shown in this terminal: the workspace opens it like
+    /// every link (Dragent's browser unless the user turned that off), and
+    /// the pop-up terminal over a page always in the system browser.
+    pub(crate) fn open_web_link(&self, url: String, ctx: &mut ViewContext<Self>) {
+        if self.links_open_in_system_browser {
+            ctx.open_url(&url);
+        } else {
+            ctx.dispatch_typed_action_deferred(
+                crate::workspace::WorkspaceAction::OpenExternalUrl { url },
+            );
+        }
+    }
+
+    /// Make this the pop-up terminal over a page: links it shows, and pages
+    /// the programs in its shell open, go to the system browser. The shell
+    /// statement rides in front of the first command, and the shell keeps it.
+    pub(crate) fn use_system_browser(&mut self, shell_setup: Option<String>) {
+        self.links_open_in_system_browser = true;
+        self.pending_shell_setup = shell_setup;
+    }
+
     pub fn submit_shell_command(&mut self, command: &str, ctx: &mut ViewContext<Self>) {
         self.submit_shell_command_with_focus(command, true, ctx);
     }
@@ -814,7 +841,8 @@ impl TerminalView {
         self.command_input_passthrough
             .store(true, std::sync::atomic::Ordering::Relaxed);
         let mode = self.active_term_mode(ctx);
-        self.write_command(&command, mode);
+        let setup = self.pending_shell_setup.take();
+        self.write_command_after(setup.as_deref(), &command, mode);
         crate::confirm::set_foreground_command(self.pane_uuid, Some(command.clone()));
         self.pin_to_bottom(ctx);
         if take_focus {

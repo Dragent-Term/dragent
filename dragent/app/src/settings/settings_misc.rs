@@ -81,12 +81,15 @@ impl SettingsView {
             }
             SettingsAction::ResetOnboarding => {
                 reset_for_onboarding();
-                self.status_message =
-                    Some("Onboarding reset — restart Dragent to see the setup wizard.".to_string());
+                self.status_message = Some(format!(
+                    "Onboarding reset — restart {} to see the setup wizard.",
+                    dragent_paths::app_name()
+                ));
             }
             SettingsAction::CheckForUpdates => {
                 self.status_message = Some(format!(
-                    "Dragent {} — manual update checks are not wired yet.",
+                    "{} {} — manual update checks are not wired yet.",
+                    dragent_paths::app_name(),
                     env!("CARGO_PKG_VERSION")
                 ));
             }

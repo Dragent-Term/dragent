@@ -2,10 +2,10 @@
 //!
 //! Launchers call the app binary with [`CLI_ARG`] first, so a command never
 //! starts the app itself (a second copy of the app would sign the first one
-//! out). Two are installed: `~/.dragent/bin/dragent`, for any terminal, works
-//! in the organisation the app last had open; one per organisation is first
-//! on the PATH of Dragent's own terminals, so they act in the window's
-//! organisation.
+//! out). Two are installed: one in this edition's `bin` folder (see
+//! [`user_bin_dir`]), for any terminal, works in the organisation the app
+//! last had open; one per organisation is first on the PATH of Dragent's own
+//! terminals, so they act in the window's organisation.
 
 mod account;
 mod agent_accounts;
@@ -25,8 +25,8 @@ pub mod model;
 mod panes;
 pub(crate) mod plugins;
 pub(crate) mod presentation;
-pub(crate) mod scope;
 pub mod requests;
+pub(crate) mod scope;
 pub mod settings;
 pub(crate) mod setup;
 pub mod shell_setup;
@@ -184,6 +184,8 @@ Account and app
   theme list | theme set ID
   feedback TEXT                         Send feedback to the Dragent team
   help | version
+  service-address [--json]              The Dragent service this build was made for
+                                        (backend and web addresses; release builds only)
 
 Options for workspaces create
   --project PATH       The project (default: the one you're in, or your only one)
@@ -255,6 +257,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "setup",
     "plugins",
     "plugin",
+    "service-address",
 ];
 
 /// Run a command if this process was started as one. `None` starts the app.
@@ -352,6 +355,10 @@ pub(crate) fn signed_in() -> bool {
     if let Some(identity) = live_identity() {
         return identity["signed_in"].as_bool() == Some(true);
     }
+    // Local mode: the demo identity is always signed in, with nothing saved.
+    if crate::api::is_local_mode() {
+        return true;
+    }
     crate::auth::has_saved_session()
         && crate::organisation_context::cached_active()
             .is_some_and(|active| active.context == dragent_paths::organisation_id())
@@ -403,6 +410,52 @@ pub(super) fn live_identity() -> Option<serde_json::Value> {
     }
 }
 
+/// Whether `command` may run. Signed out, only [`needs_sign_in`]'s
+/// exceptions run. In local mode (a Dev build with no server) the person is
+/// the local demo identity, always signed in, and only the commands that need
+/// Dragent's server are refused, with [`crate::api::NEEDS_ACCOUNT`].
+fn sign_in_gate(
+    command: &str,
+    rest: &[String],
+    local_mode: bool,
+    signed_in: impl FnOnce() -> bool,
+) -> Result<(), String> {
+    if local_mode {
+        return match needs_server(command, rest) {
+            true => Err(needs_account()),
+            false => Ok(()),
+        };
+    }
+    if needs_sign_in(command, rest) && !signed_in() {
+        return Err(signed_out());
+    }
+    Ok(())
+}
+
+/// Commands that only Dragent's server can answer: the organisation list
+/// and switch, sending feedback, and the organisation's task list.
+fn needs_server(command: &str, rest: &[String]) -> bool {
+    let help = rest
+        .first()
+        .is_some_and(|arg| matches!(arg.as_str(), "help" | "--help" | "-h"));
+    let draft_preview = command == "feedback"
+        && rest
+            .iter()
+            .any(|arg| arg == "--draft" || arg.starts_with("--draft="));
+    !help && !draft_preview && matches!(command, "org" | "feedback" | "issues")
+}
+
+/// [`crate::api::NEEDS_ACCOUNT`] as a structured failure.
+pub(crate) fn needs_account() -> String {
+    Failure::new(
+        Status::NeedsAuth,
+        "needs_account",
+        crate::api::NEEDS_ACCOUNT,
+    )
+    .next(crate::api::NEEDS_ACCOUNT_DETAIL)
+    .encode()
+}
+
 /// Commands that work signed out: help, and saying who and what is here.
 /// `mcp` always starts, and refuses each tool call instead (see
 /// `integrations::bridge`), so the agent can say why.
@@ -413,7 +466,9 @@ fn needs_sign_in(command: &str, rest: &[String]) -> bool {
     });
     // `feedback --draft` only renders the draft; it never contacts the app.
     let draft_preview = command == "feedback"
-        && rest.iter().any(|arg| arg == "--draft" || arg.starts_with("--draft="));
+        && rest
+            .iter()
+            .any(|arg| arg == "--draft" || arg.starts_with("--draft="));
     // The next-run preview only works out times from a schedule and a zone.
     let schedule_preview = matches!(command, "automations" | "automation")
         && rest.first().is_some_and(|arg| arg == "preview");
@@ -439,7 +494,36 @@ fn needs_sign_in(command: &str, rest: &[String]) -> bool {
                 | "whoami"
                 | "mcp"
                 | "open-url"
+                | "service-address"
         )
+}
+
+/// `dragent service-address`: the Dragent service this build was compiled
+/// for (see [`crate::api::compiled_service_address`]). Read-only and
+/// offline. `scripts/dev.sh --account` runs it on the installed Dragent so a
+/// Dev build signs in to the same service. A build without baked addresses
+/// prints nothing on stdout and fails.
+fn service_address(rest: &[String]) -> Result<String, String> {
+    service_address_output(rest, crate::api::compiled_service_address())
+}
+
+fn service_address_output(
+    rest: &[String],
+    address: Option<(String, String)>,
+) -> Result<String, String> {
+    let Some((backend, web)) = address else {
+        return Err(Failure::new(
+            Status::Unsupported,
+            "no_service_address",
+            "this build wasn't made for a Dragent service (no addresses were built in)",
+        )
+        .next("Official Dragent releases have them; a local build doesn't.")
+        .encode());
+    };
+    if rest.iter().any(|arg| arg == "--json") {
+        return Ok(serde_json::json!({ "backend": backend, "web": web }).to_string());
+    }
+    Ok(format!("backend {backend}\nweb {web}"))
 }
 
 pub(crate) fn dispatch(args: &[String]) -> Result<String, String> {
@@ -465,9 +549,7 @@ fn dispatch_command(args: &[String]) -> Result<String, String> {
         .next("`dragent capabilities --json` lists every command this build has.")
         .encode());
     }
-    if needs_sign_in(command, rest) && !signed_in() {
-        return Err(signed_out());
-    }
+    sign_in_gate(command, rest, crate::api::is_local_mode(), signed_in)?;
     match command {
         "help" | "--help" | "-h" => Ok(HELP.trim_end().to_string()),
         "version" | "--version" | "-V" => Ok(format!("dragent {}", env!("CARGO_PKG_VERSION"))),
@@ -512,6 +594,7 @@ fn dispatch_command(args: &[String]) -> Result<String, String> {
         "feedback" => account::feedback(rest),
         "settings" => settings::run(rest),
         "theme" => settings::theme(rest),
+        "service-address" => service_address(rest),
         other => Err(Failure::new(
             Status::InvalidInput,
             "unknown_command",
@@ -1242,7 +1325,11 @@ pub(crate) fn delete_blockers(root: &Path, main_checkout: bool) -> DeleteBlocker
         .filter(|agent| agent.session.cwd.starts_with(root))
         .map(|agent| format!("{} ({})", agent.session.provider, agent.id()))
         .collect();
-    let changes = if main_checkout { 0 } else { uncommitted_changes(root) };
+    let changes = if main_checkout {
+        0
+    } else {
+        uncommitted_changes(root)
+    };
     DeleteBlockers { agents, changes }
 }
 
@@ -1576,6 +1663,30 @@ mod tests {
     }
 
     #[test]
+    fn service_address_prints_the_built_in_service_or_fails() {
+        let address = Some((
+            "https://api.example.test".to_string(),
+            "https://example.test".to_string(),
+        ));
+        let json: serde_json::Value = serde_json::from_str(
+            &service_address_output(&args(&["--json"]), address.clone()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json["backend"], "https://api.example.test");
+        assert_eq!(json["web"], "https://example.test");
+        assert_eq!(
+            service_address_output(&[], address).unwrap(),
+            "backend https://api.example.test\nweb https://example.test"
+        );
+        let error = service_address_output(&args(&["--json"]), None).unwrap_err();
+        assert!(error.contains("no_service_address"), "{error}");
+        // Works signed out and in local mode: it only reads this build.
+        assert!(!needs_sign_in("service-address", &[]));
+        assert!(!needs_server("service-address", &[]));
+        assert!(KNOWN_COMMANDS.contains(&"service-address"));
+    }
+
+    #[test]
     fn only_help_and_identity_work_signed_out() {
         for open in ["help", "--help", "version", "-V", "status", "whoami", "mcp"] {
             assert!(!needs_sign_in(open, &[]), "{open}");
@@ -1603,6 +1714,70 @@ mod tests {
         ] {
             assert!(needs_sign_in(command, &args(&rest)), "{command} {rest:?}");
         }
+    }
+
+    #[test]
+    fn local_mode_is_signed_in_and_refuses_only_server_commands() {
+        let never_asked = || -> bool { panic!("local mode must not ask who is signed in") };
+        for (command, rest) in [
+            ("workspaces", vec!["list"]),
+            ("projects", vec![]),
+            ("team", vec!["list"]),
+            ("tasks", vec!["done", "--summary", "x"]),
+            ("msg", vec!["send", "lead", "hi"]),
+            ("browser", vec!["status"]),
+            ("panes", vec!["list"]),
+            ("agents", vec!["list"]),
+            ("whoami", vec![]),
+            ("mcp", vec![]),
+            ("feedback", vec!["--draft"]),
+            ("issues", vec!["--help"]),
+        ] {
+            assert_eq!(
+                sign_in_gate(command, &args(&rest), true, never_asked),
+                Ok(()),
+                "{command} {rest:?}"
+            );
+        }
+        for (command, rest) in [
+            ("org", vec!["list"]),
+            ("org", vec!["switch", "acme"]),
+            ("feedback", vec!["hi"]),
+            ("issues", vec!["list"]),
+        ] {
+            let error = sign_in_gate(command, &args(&rest), true, never_asked).unwrap_err();
+            let failure = Failure::decode(&error).expect("structured failure");
+            assert_eq!(
+                failure.message,
+                crate::api::NEEDS_ACCOUNT,
+                "{command} {rest:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn outside_local_mode_the_sign_in_gate_is_unchanged() {
+        let list = args(&["list"]);
+        assert_eq!(sign_in_gate("workspaces", &list, false, || true), Ok(()));
+        assert_eq!(sign_in_gate("org", &list, false, || true), Ok(()));
+        assert_eq!(
+            sign_in_gate("workspaces", &list, false, || false),
+            Err(signed_out())
+        );
+        assert_eq!(sign_in_gate("whoami", &[], false, || false), Ok(()));
+    }
+
+    #[test]
+    fn local_identity_is_the_demo_user_in_the_local_organisation() {
+        let identity = crate::api::local_mode::identity_json();
+        assert_eq!(identity["signed_in"], true);
+        assert_eq!(identity["name"], crate::api::local_mode::DEMO_NAME);
+        assert_eq!(identity["email"], crate::api::local_mode::DEMO_EMAIL);
+        assert_eq!(identity["context"], "local");
+        assert_eq!(identity["organisation_id"], "local");
+        assert!(identity["user_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty()));
     }
 
     #[test]

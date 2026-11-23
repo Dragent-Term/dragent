@@ -16,6 +16,19 @@ cd "$ROOT"
 
 APP_NAME="Dragent"
 BUNDLE_ID="com.dragent.app"
+URL_SCHEME="dragent"
+# Dev edition (every build without DRAGENT_RELEASE_EDITION=1 in the
+# environment): its own bundle id, display name, .app name and URL scheme,
+# so it never collides with the installed Dragent. The release workflow
+# builds with DRAGENT_RELEASE_EDITION=1, which keeps the values above and is
+# byte-for-byte the previous Release packaging. Cargo inherits the same
+# environment, so the binary's edition (see dragent_paths) always matches
+# the bundle it is packaged into.
+if [[ "${DRAGENT_RELEASE_EDITION:-}" != "1" ]]; then
+  APP_NAME="Dragent Dev"
+  BUNDLE_ID="com.dragent.app.dev"
+  URL_SCHEME="dragent-dev"
+fi
 BINARY_NAME="dragent"
 INFO_PLIST_TEMPLATE="$ROOT/app/assets/resources/mac/Dragent-Info.plist"
 ENTITLEMENTS="$ROOT/app/assets/resources/mac/Dragent.entitlements"
@@ -268,7 +281,11 @@ cp "$STAGING_BINARY" "$MACOS_DIR/$BINARY_NAME"
 # candidate (0.2.9-rc.1) is 0.2.9 there. The file names keep the full version.
 PLIST_VERSION="${VERSION%%-*}"
 PLIST_VERSION="${PLIST_VERSION%%+*}"
-sed "s/__VERSION__/$PLIST_VERSION/g" "$INFO_PLIST_TEMPLATE" > "$APP_DIR/Contents/Info.plist"
+sed -e "s/__VERSION__/$PLIST_VERSION/g" \
+    -e "s/__BUNDLE_ID__/$BUNDLE_ID/g" \
+    -e "s/__APP_NAME__/$APP_NAME/g" \
+    -e "s/__URL_SCHEME__/$URL_SCHEME/g" \
+    "$INFO_PLIST_TEMPLATE" > "$APP_DIR/Contents/Info.plist"
 
 # TCC reads these keys from the final app bundle, not from the source template
 # or the executable's embedded plist. Fail before signing if either key is

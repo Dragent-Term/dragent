@@ -96,7 +96,14 @@ impl WorkspaceView {
                 agent,
                 prompt,
                 model,
-            } => self.start_agent_for_cli(&workspace, agent.as_deref(), &prompt, model.as_deref(), &account, ctx),
+            } => self.start_agent_for_cli(
+                &workspace,
+                agent.as_deref(),
+                &prompt,
+                model.as_deref(),
+                &account,
+                ctx,
+            ),
             Request::DeleteWorkspace { path } => self.delete_workspace_for_cli(&path, ctx),
             Request::Organisations => self.organisations_for_cli(ctx),
             Request::SwitchOrganisation { organisation } => {
@@ -134,11 +141,14 @@ impl WorkspaceView {
                         server.replace('-', "_"),
                         tool.replace('-', "_")
                     );
-                    let (output, failed) = crate::agent::mcp::call_tool(&name, &arguments.to_string());
+                    let (output, failed) =
+                        crate::agent::mcp::call_tool(&name, &arguments.to_string());
                     let output: String = output.chars().take(4_000).collect();
                     CliInbox::respond(
                         &id,
-                        &Response::with_data(serde_json::json!({ "output": output, "failed": failed })),
+                        &Response::with_data(
+                            serde_json::json!({ "output": output, "failed": failed }),
+                        ),
                     );
                 });
                 return;
@@ -149,7 +159,11 @@ impl WorkspaceView {
                 self.feedback_for_cli(id.to_string(), text, ctx);
                 return;
             }
-            Request::IntegrationTool { tool, arguments, root } => {
+            Request::IntegrationTool {
+                tool,
+                arguments,
+                root,
+            } => {
                 // Answered when the service replies, off the main thread.
                 let id = id.to_string();
                 std::thread::spawn(move || {
@@ -222,10 +236,12 @@ impl WorkspaceView {
                 terminal,
                 tool,
                 arguments,
-            } => self.pane_tool_for_cli(pane.as_deref(), terminal.as_deref(), &tool, &arguments, ctx),
+            } => {
+                self.pane_tool_for_cli(pane.as_deref(), terminal.as_deref(), &tool, &arguments, ctx)
+            }
             Request::StopAgent { pane } => {
-                let closed = uuid::Uuid::parse_str(&pane)
-                    .is_ok_and(|pane| self.close_agent_tab(pane, ctx));
+                let closed =
+                    uuid::Uuid::parse_str(&pane).is_ok_and(|pane| self.close_agent_tab(pane, ctx));
                 Response::with_data(serde_json::json!({ "tab_closed": closed }))
             }
         };
@@ -248,7 +264,10 @@ impl WorkspaceView {
     /// the folder as a project (through the usual trust prompt), in front.
     fn open_for_cli(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) -> Response {
         if let Some(workspace_id) = self.workspace_for(&path) {
-            self.handle_action(&WorkspaceAction::SelectProjectWorkspace { workspace_id }, ctx);
+            self.handle_action(
+                &WorkspaceAction::SelectProjectWorkspace { workspace_id },
+                ctx,
+            );
         } else if path.is_dir() {
             self.receive_project_folder(path.clone(), ProjectFolderIntent::OpenFolder, ctx);
         } else {
@@ -265,10 +284,18 @@ impl WorkspaceView {
 
     /// `dragent workspaces create`: a worktree (from a branch, a new branch
     /// or a pull request), or the project's own checkout with `local`.
-    fn create_workspace_for_cli(&mut self, id: String, new: NewWorkspace, ctx: &mut ViewContext<Self>) {
+    fn create_workspace_for_cli(
+        &mut self,
+        id: String,
+        new: NewWorkspace,
+        ctx: &mut ViewContext<Self>,
+    ) {
         let fail = |id: &str, error: String| CliInbox::respond(id, &Response::failed(error));
         if new.background && new.command.is_some() {
-            return fail(&id, "A workspace opened in the background can't run a command yet.".into());
+            return fail(
+                &id,
+                "A workspace opened in the background can't run a command yet.".into(),
+            );
         }
         if let Some(agent) = new.agent {
             if let Err(error) = Self::agent_launch(agent, new.model.as_deref()) {
@@ -276,10 +303,16 @@ impl WorkspaceView {
             }
         }
         if crate::remote_fs::resolve(&new.project).is_some() {
-            return fail(&id, "Projects on other machines can't get workspaces from the command line yet.".into());
+            return fail(
+                &id,
+                "Projects on other machines can't get workspaces from the command line yet.".into(),
+            );
         }
         if new.local {
-            let root = new.project.canonicalize().unwrap_or_else(|_| new.project.clone());
+            let root = new
+                .project
+                .canonicalize()
+                .unwrap_or_else(|_| new.project.clone());
             let branch = super::project_naming::local_branch_name(&root);
             let title = new
                 .name
@@ -290,7 +323,10 @@ impl WorkspaceView {
             return;
         }
         let Some(repo) = super::project_sidebar::detect::find_git_root(&new.project) else {
-            return fail(&id, format!("{} isn't a git repository.", new.project.display()));
+            return fail(
+                &id,
+                format!("{} isn't a git repository.", new.project.display()),
+            );
         };
         let naming_prompt = new.prompt.clone();
         let naming_agent = new.agent.unwrap_or(self.prompt_agent);
@@ -310,7 +346,8 @@ impl WorkspaceView {
                         branch: format!("pr-{number}"),
                     },
                     (None, None) => {
-                        project_workspace_creation::generate_names(&naming_prompt, naming_agent).await
+                        project_workspace_creation::generate_names(&naming_prompt, naming_agent)
+                            .await
                     }
                 };
                 let base = source.clone();
@@ -362,20 +399,40 @@ impl WorkspaceView {
         }
         let opened = if new.background {
             // In the sidebar, its agent at work, without leaving what's in front.
-            self.agent_tab(root.clone(), title.clone(), new.agent, &new.prompt, new.model.as_deref(), false, &dragent_host::agent_accounts::Selection::Inherit, ctx)
-                .map(|tab| {
-                    let pane = tab.pane.pane_uuid(ctx);
-                    self.park_new_surface(root.clone(), title.clone(), tab);
-                    pane
-                })
+            self.agent_tab(
+                root.clone(),
+                title.clone(),
+                new.agent,
+                &new.prompt,
+                new.model.as_deref(),
+                false,
+                &dragent_host::agent_accounts::Selection::Inherit,
+                ctx,
+            )
+            .map(|tab| {
+                let pane = tab.pane.pane_uuid(ctx);
+                self.park_new_surface(root.clone(), title.clone(), tab);
+                pane
+            })
         } else {
-            self.open_agent_surface(root.clone(), title.clone(), new.agent, &new.prompt, new.model.as_deref(), ctx)
+            self.open_agent_surface(
+                root.clone(),
+                title.clone(),
+                new.agent,
+                &new.prompt,
+                new.model.as_deref(),
+                ctx,
+            )
         };
         let pane = match opened {
             Ok(pane) => pane,
             Err(error) => return CliInbox::respond(&id, &Response::failed(error)),
         };
-        if let Some(command) = new.command.as_deref().filter(|command| !command.trim().is_empty()) {
+        if let Some(command) = new
+            .command
+            .as_deref()
+            .filter(|command| !command.trim().is_empty())
+        {
             match new.agent {
                 // Its own tab, so the agent's stays in front.
                 Some(_) => {
@@ -389,19 +446,25 @@ impl WorkspaceView {
                     );
                     if let WorkspacePane::Terminal(terminal) = &tab.pane {
                         let command = command.to_string();
-                        ctx.update_view(terminal, |terminal, tctx| terminal.submit_shell_command(&command, tctx));
+                        ctx.update_view(terminal, |terminal, tctx| {
+                            terminal.submit_shell_command(&command, tctx)
+                        });
                     }
                     self.tabs.push(tab);
                 }
                 // The workspace's only terminal runs it.
                 None => {
                     let terminal = self.tabs.iter().find_map(|tab| match &tab.pane {
-                        WorkspacePane::Terminal(terminal) if tab.pane.pane_uuid(ctx) == pane => Some(terminal.clone()),
+                        WorkspacePane::Terminal(terminal) if tab.pane.pane_uuid(ctx) == pane => {
+                            Some(terminal.clone())
+                        }
                         _ => None,
                     });
                     if let Some(terminal) = terminal {
                         let command = command.to_string();
-                        ctx.update_view(&terminal, |terminal, tctx| terminal.submit_shell_command(&command, tctx));
+                        ctx.update_view(&terminal, |terminal, tctx| {
+                            terminal.submit_shell_command(&command, tctx)
+                        });
                     }
                 }
             }
@@ -437,7 +500,10 @@ impl WorkspaceView {
         ctx: &mut ViewContext<Self>,
     ) -> Response {
         let Some(workspace_id) = self.workspace_for(workspace) else {
-            return Response::failed(format!("{} isn't a workspace in Dragent.", workspace.display()));
+            return Response::failed(format!(
+                "{} isn't a workspace in Dragent.",
+                workspace.display()
+            ));
         };
         let agent = match self.cli_agent(agent, prompt) {
             Ok(Some(agent)) => agent,
@@ -452,7 +518,15 @@ impl WorkspaceView {
         let Some((root, title)) = root else {
             return Response::failed("That workspace closed.");
         };
-        match self.add_agent_surface(workspace_id, root.clone(), agent, prompt, model, account, ctx) {
+        match self.add_agent_surface(
+            workspace_id,
+            root.clone(),
+            agent,
+            prompt,
+            model,
+            account,
+            ctx,
+        ) {
             Ok(pane) => Response {
                 ok: true,
                 workspace: Some(root),
@@ -468,25 +542,43 @@ impl WorkspaceView {
     /// `dragent agents stop`: close the tab showing pane `pane` (ending its
     /// terminal) without switching surfaces. Never removes a worktree.
     /// `false` when no tab in this window shows it.
-    pub(crate) fn close_agent_tab(&mut self, pane: uuid::Uuid, ctx: &mut ViewContext<Self>) -> bool {
+    pub(crate) fn close_agent_tab(
+        &mut self,
+        pane: uuid::Uuid,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
         let shows = |tab: &super::view::PaneTab, ctx: &ViewContext<Self>| {
             !tab.pane.is_settings() && tab.pane.pane_uuid(ctx) == pane
         };
-        if let Some(tab_id) = self.tabs.iter().find(|tab| shows(tab, ctx)).map(|tab| tab.id) {
+        if let Some(tab_id) = self
+            .tabs
+            .iter()
+            .find(|tab| shows(tab, ctx))
+            .map(|tab| tab.id)
+        {
             // A pending close is what removes a worktree with its last tab.
-            if self.pending_close_tab.as_ref().is_some_and(|(id, _)| *id == tab_id) {
+            if self
+                .pending_close_tab
+                .as_ref()
+                .is_some_and(|(id, _)| *id == tab_id)
+            {
                 self.pending_close_tab = None;
             }
             self.handle_action(&WorkspaceAction::CloseTabConfirmed { tab_id }, ctx);
             return true;
         }
-        let Some((position, index)) = self.parked_workspace_tabs.iter().enumerate().find_map(|(position, surface)| {
-            surface
-                .panes
+        let Some((position, index)) =
+            self.parked_workspace_tabs
                 .iter()
-                .position(|tab| shows(tab, ctx))
-                .map(|index| (position, index))
-        }) else {
+                .enumerate()
+                .find_map(|(position, surface)| {
+                    surface
+                        .panes
+                        .iter()
+                        .position(|tab| shows(tab, ctx))
+                        .map(|index| (position, index))
+                })
+        else {
             return false;
         };
         let surface = &mut self.parked_workspace_tabs[position];
@@ -505,7 +597,8 @@ impl WorkspaceView {
                     }
                 }
             }
-            self.workspaces.retain(|workspace| !workspace.tab_ids.is_empty());
+            self.workspaces
+                .retain(|workspace| !workspace.tab_ids.is_empty());
         } else {
             if let Some(tree) = surface.split_tree.as_mut() {
                 tree.close_pane(tab.id);
@@ -527,7 +620,11 @@ impl WorkspaceView {
 
     /// `dragent workspaces delete`: what confirming the close dialog does
     /// (the command line already checked for unsaved work and agents).
-    pub(super) fn delete_workspace_for_cli(&mut self, path: &Path, ctx: &mut ViewContext<Self>) -> Response {
+    pub(super) fn delete_workspace_for_cli(
+        &mut self,
+        path: &Path,
+        ctx: &mut ViewContext<Self>,
+    ) -> Response {
         let Some(workspace_id) = self.workspace_for(path) else {
             return Response::failed(format!("{} isn't a workspace in Dragent.", path.display()));
         };
@@ -556,9 +653,14 @@ impl WorkspaceView {
     fn organisations_for_cli(&mut self, ctx: &mut ViewContext<Self>) -> Response {
         let store = crate::settings::OrgStore::as_ref(ctx);
         let Some(organisations) = store.organizations.clone() else {
-            return Response::failed("Dragent hasn't loaded your organisations yet. Try again in a moment.");
+            return Response::failed(
+                "Dragent hasn't loaded your organisations yet. Try again in a moment.",
+            );
         };
-        let active = store.active.as_ref().map(|organisation| organisation.id.clone());
+        let active = store
+            .active
+            .as_ref()
+            .map(|organisation| organisation.id.clone());
         Response::with_data(serde_json::Value::Array(
             organisations
                 .iter()
@@ -575,10 +677,16 @@ impl WorkspaceView {
         ))
     }
 
-    fn switch_organisation_for_cli(&mut self, wanted: &str, ctx: &mut ViewContext<Self>) -> Response {
+    fn switch_organisation_for_cli(
+        &mut self,
+        wanted: &str,
+        ctx: &mut ViewContext<Self>,
+    ) -> Response {
         let store = crate::settings::OrgStore::as_ref(ctx);
         let Some(organisations) = store.organizations.clone() else {
-            return Response::failed("Dragent hasn't loaded your organisations yet. Try again in a moment.");
+            return Response::failed(
+                "Dragent hasn't loaded your organisations yet. Try again in a moment.",
+            );
         };
         let matches: Vec<_> = organisations
             .iter()
@@ -590,10 +698,21 @@ impl WorkspaceView {
             .collect();
         let organisation = match matches.as_slice() {
             [one] => (*one).clone(),
-            [] => return Response::failed(format!("You aren't in an organisation called “{wanted}”.")),
-            _ => return Response::failed(format!("Several organisations are called “{wanted}”; use its id.")),
+            [] => {
+                return Response::failed(format!(
+                    "You aren't in an organisation called “{wanted}”."
+                ))
+            }
+            _ => {
+                return Response::failed(format!(
+                    "Several organisations are called “{wanted}”; use its id."
+                ))
+            }
         };
-        let already = store.active.as_ref().is_some_and(|active| active.id == organisation.id);
+        let already = store
+            .active
+            .as_ref()
+            .is_some_and(|active| active.id == organisation.id);
         if !already {
             self.handle_action(
                 &WorkspaceAction::SwitchOrganisation {
@@ -606,6 +725,9 @@ impl WorkspaceView {
     }
 
     fn whoami_for_cli(&mut self, ctx: &mut ViewContext<Self>) -> Response {
+        if crate::api::is_local_mode() {
+            return Response::with_data(crate::api::local_mode::identity_json());
+        }
         let auth = crate::auth::AuthManager::as_ref(ctx);
         if !auth.is_logged_in() {
             return Response::with_data(serde_json::json!({ "signed_in": false }));
@@ -628,7 +750,9 @@ impl WorkspaceView {
         let organisation = crate::settings::OrgStore::as_ref(ctx).active.clone();
         let user = data.user;
         let name = if user.display_name.is_empty() {
-            format!("{} {}", user.first_name, user.last_name).trim().to_string()
+            format!("{} {}", user.first_name, user.last_name)
+                .trim()
+                .to_string()
         } else {
             user.display_name.clone()
         };
@@ -645,7 +769,12 @@ impl WorkspaceView {
 
     /// `dragent settings set`: the Settings page's own action, so the
     /// change applies everywhere and is saved the usual way.
-    fn setting_for_cli(&mut self, key: &str, value: Option<&str>, ctx: &mut ViewContext<Self>) -> Response {
+    fn setting_for_cli(
+        &mut self,
+        key: &str,
+        value: Option<&str>,
+        ctx: &mut ViewContext<Self>,
+    ) -> Response {
         let editor = crate::console::editor_settings::EditorSettings::global();
         match crate::cli::settings::action_for(key, value, &editor) {
             Ok(Some(action)) => {
@@ -662,7 +791,10 @@ impl WorkspaceView {
     /// window; answered when the server replies.
     fn feedback_for_cli(&mut self, id: String, text: String, ctx: &mut ViewContext<Self>) {
         if !crate::auth::AuthManager::as_ref(ctx).is_logged_in() {
-            return CliInbox::respond(&id, &Response::failed("Sign in to Dragent to send feedback."));
+            return CliInbox::respond(
+                &id,
+                &Response::failed("Sign in to Dragent to send feedback."),
+            );
         }
         let account = crate::settings::AccountStore::as_ref(ctx)
             .data
@@ -688,10 +820,11 @@ impl WorkspaceView {
                 name: "content".into(),
                 value: content,
             }];
-            let response = match crate::api::API_CLIENT.post_multipart("/api/v1/feedback", &parts, 60) {
-                Ok(_) => Response::done(),
-                Err(error) => Response::failed(error.user_message()),
-            };
+            let response =
+                match crate::api::API_CLIENT.post_multipart("/api/v1/feedback", &parts, 60) {
+                    Ok(_) => Response::done(),
+                    Err(error) => Response::failed(error.user_message()),
+                };
             CliInbox::respond(&id, &response);
         });
     }
@@ -703,7 +836,12 @@ fn fetch_pull_request(repo: &Path, number: u32) -> Result<String, String> {
     use crate::process_ext::NoWindow;
     let target = format!("refs/remotes/origin/pr/{number}");
     let output = crate::git_cmd::GitCommand::new()
-        .args(["fetch", "--quiet", "origin", &format!("+pull/{number}/head:{target}")])
+        .args([
+            "fetch",
+            "--quiet",
+            "origin",
+            &format!("+pull/{number}/head:{target}"),
+        ])
         .current_dir(repo)
         .env("GIT_TERMINAL_PROMPT", "0")
         .no_window()
@@ -713,7 +851,11 @@ fn fetch_pull_request(repo: &Path, number: u32) -> Result<String, String> {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(format!(
             "Could not fetch pull request #{number} from origin{}",
-            if detail.is_empty() { String::new() } else { format!(": {detail}") }
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
         ));
     }
     Ok(format!("origin/pr/{number}"))
@@ -723,7 +865,6 @@ fn fetch_pull_request(repo: &Path, number: u32) -> Result<String, String> {
 fn is_commit_id(text: &str) -> bool {
     matches!(text.len(), 40 | 64) && text.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
-
 
 /// `dragent machines`: each saved machine as the app sees it now. Reads
 /// state only: it never connects, or reconnects one the person disconnected.
@@ -754,7 +895,6 @@ fn machines_for_cli(ctx: &mut ViewContext<WorkspaceView>) -> Response {
     });
     Response::with_data(serde_json::json!({ "machines": rows }))
 }
-
 
 /// Each named MCP server as the app runs it: configured, switched on,
 /// approved, connected, and how many tools it lists.

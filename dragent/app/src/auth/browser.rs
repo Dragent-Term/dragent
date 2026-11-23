@@ -1,7 +1,5 @@
 //! Browser sign-in URL builder.
 
-use super::deep_link::CUSTOM_SCHEME;
-
 /// There is one login page, `/login`; it handles the desktop hand-off when a
 /// `state` is present and finishes on the dashboard either way.
 ///
@@ -11,7 +9,8 @@ use super::deep_link::CUSTOM_SCHEME;
 /// `challenge` is the PKCE challenge (base64url, URL-safe as it is).
 pub fn browser_sign_in_url(state: &str, challenge: &str) -> String {
     let origin = crate::api::web_origin();
-    format!("{origin}/login?scheme={CUSTOM_SCHEME}&state={state}&challenge={challenge}")
+    let scheme = dragent_paths::url_scheme();
+    format!("{origin}/login?scheme={scheme}&state={state}&challenge={challenge}")
 }
 
 #[cfg(test)]
@@ -26,7 +25,10 @@ mod tests {
             !url.contains("/login/desktop"),
             "the desktop-only path is retired"
         );
-        assert!(url.contains("scheme=dragent")); // CUSTOM_SCHEME
+        assert!(
+            url.contains(&format!("scheme={}", dragent_paths::url_scheme())),
+            "sign-in must carry this edition's scheme: {url}"
+        );
         assert!(url.contains("state=csrf-test"));
         assert!(url.contains("challenge=chal"));
     }

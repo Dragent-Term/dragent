@@ -1579,10 +1579,12 @@ fn run(pane: Uuid, argv: Vec<String>) -> Result<i32, String> {
         }) {
             record.used = previous.used || prompted;
         }
-        save(&record)?;
+        // Indexed before the record is visible: a line submitted as soon as
+        // the record appears must find its pane (`note_submitted_input`).
         if !record.terminal_id.is_empty() {
             let _ = index_terminal(&record.terminal_id, pane);
         }
+        save(&record)?;
     }
     // User-level hooks find this monitor by process ancestry.
     let registered = matches!(

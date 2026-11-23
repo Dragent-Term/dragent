@@ -263,25 +263,29 @@ pub(crate) fn render_org_footer(
         )
     });
 
-    // Star on GitHub sits above the footer's border, outside it.
-    let star = crate::community::render_star_button(
-        theme,
-        ui,
-        crate::community::state(),
-        true,
-        mouse(states, "org-footer-star"),
-        move |ectx| ectx.dispatch_typed_action_for(workspace_id, WorkspaceAction::StarOnGitHub),
-    );
-
-    Flex::column()
-        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .with_child(
+    // Star on GitHub sits above the footer's border, outside it. Once the
+    // person has starred the repository it leaves the sidebar for good.
+    let star_state = crate::community::state();
+    let mut column = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+    if !sidebar_star_hidden(star_state) {
+        let star = crate::community::render_star_button(
+            theme,
+            ui,
+            star_state,
+            true,
+            mouse(states, "org-footer-star"),
+            move |ectx| ectx.dispatch_typed_action_for(workspace_id, WorkspaceAction::StarOnGitHub),
+        );
+        column = column.with_child(
             Container::new(star)
                 .with_padding_left(10.0)
                 .with_padding_right(10.0)
                 .with_padding_bottom(8.0)
                 .finish(),
-        )
+        );
+    }
+
+    column
         .with_child(
             Container::new(row.finish())
                 .with_border(Border::top(1.0).with_border_color(theme.border()))
@@ -292,6 +296,33 @@ pub(crate) fn render_org_footer(
                 .finish(),
         )
         .finish()
+}
+
+/// The sidebar's Star button goes away once the person's GitHub account has
+/// starred the repository (it stays while a star request is under way, so
+/// the click shows "Starring…" first).
+fn sidebar_star_hidden(state: crate::community::StarState) -> bool {
+    state.starred == Some(true) && !state.starring
+}
+
+#[cfg(test)]
+mod sidebar_star_tests {
+    use super::sidebar_star_hidden;
+    use crate::community::StarState;
+
+    #[test]
+    fn the_sidebar_star_leaves_once_starred() {
+        let starred = |starred, starring| StarState {
+            stars: Some(1),
+            starred,
+            starring,
+        };
+        assert!(sidebar_star_hidden(starred(Some(true), false)));
+        assert!(!sidebar_star_hidden(starred(Some(true), true)));
+        assert!(!sidebar_star_hidden(starred(Some(false), false)));
+        // Unknown (no gh): keep offering it, Star opens the repository.
+        assert!(!sidebar_star_hidden(starred(None, false)));
+    }
 }
 
 /// The footer with demo data, for the previews and README screenshots.

@@ -464,15 +464,18 @@ mod tests {
         std::env::set_var("DRAGENT_HOME", dir.path().join("app-home"));
         let root = dir.path().join("proj");
         std::fs::create_dir_all(&root).unwrap();
-        let prev_org = dragent_paths::organisation_id();
-        dragent_paths::select_organisation("test-org");
+        // Never switch the process's organisation here: the tests beside this
+        // one save and load snapshots owned by the selected organisation.
         let resolved = database_path_for_root(&root).unwrap();
-        dragent_paths::select_organisation(&prev_org);
         match previous {
             Some(value) => std::env::set_var(DB_PATH_OVERRIDE_ENV, value),
             None => std::env::remove_var(DB_PATH_OVERRIDE_ENV),
         }
-        assert_eq!(resolved, db_file_for_root(&root, "test-org"));
+        assert_eq!(
+            resolved,
+            db_file_for_root(&root, &dragent_paths::organisation_id())
+        );
+        assert_ne!(resolved, db_file_for_root(&root, "test-org"));
         assert!(dragent_paths::workspace(&root).is_dir());
         assert!(!root.join(".dragent").exists());
         match previous_home {

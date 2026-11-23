@@ -505,7 +505,8 @@ impl OrgStore {
     }
 
     pub fn fetch(&mut self, ctx: &mut ModelContext<Self>) {
-        if self.loading {
+        // Local mode: no server to load from; the pages say so themselves.
+        if self.loading || crate::api::is_local_mode() {
             return;
         }
         self.loading = true;

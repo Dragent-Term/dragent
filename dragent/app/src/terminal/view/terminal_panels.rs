@@ -143,7 +143,10 @@ impl TerminalView {
         );
         let settings = crate::settings::AppSettings::global();
         let has_byok = settings.has_any_user_credential();
-        if has_byok {
+        if crate::api::is_local_mode() {
+            // No server: only models the person's own keys can call.
+            models = crate::settings::local_models::local_mode_choices(&settings);
+        } else if has_byok {
             models.retain(|(id, _)| {
                 id == crate::settings::AUTO_MODEL_ID || settings.has_user_credential_for_model(id)
             });

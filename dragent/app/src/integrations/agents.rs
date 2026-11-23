@@ -115,8 +115,13 @@ fn entry(command: String, args: Vec<String>, home: &Path) -> Option<McpServerEnt
 }
 
 /// Rewrite the agents' MCP settings with the user's servers and the
-/// bridge, off the calling thread.
+/// bridge, off the calling thread. A Dev build never touches other apps'
+/// settings: it leaves the bridge (and their servers) alone.
 pub fn sync_in_background() {
+    if dragent_paths::is_dev() {
+        log::info!("[integrations] Dev build: leaving other apps' MCP settings alone");
+        return;
+    }
     std::thread::spawn(|| {
         let Some(entries) = user_servers() else {
             log::warn!(
@@ -177,5 +182,38 @@ mod tests {
         assert_eq!(entry.name, "dragent");
         assert_eq!(entry.sync_agents, ["claude", "codex"]);
         assert_eq!(entry.display_command(), "/home/a/.dragent/bin/dragent mcp");
+    }
+
+    #[test]
+    fn dev_builds_sync_no_bridge_into_other_agents() {
+        // Test builds are the Dev edition. With an agent present and a
+        // launcher that would build the bridge entry, the background sync
+        // must still write nothing into the home folder.
+        if !dragent_paths::is_dev() {
+            return;
+        } // only meaningful in the Dev edition
+        let home = tempfile::tempdir().unwrap();
+        let dev_home = tempfile::tempdir().unwrap();
+        std::fs::create_dir(home.path().join(".codex")).unwrap();
+        crate::test_env::with_vars(
+            &[
+                ("HOME", Some(home.path())),
+                (dragent_paths::DEV_HOME_ENV, Some(dev_home.path())),
+            ],
+            || {
+                std::fs::create_dir_all(crate::cli::user_bin_dir()).unwrap();
+                std::fs::write(crate::cli::user_bin_dir().join("dragent"), "#!/bin/sh\n").unwrap();
+                sync_in_background();
+                // No thread is spawned in Dev, so no write can be in flight;
+                // poll anyway so a removed guard fails instead of passing.
+                for _ in 0..20 {
+                    if home.path().join(".codex/config.toml").exists() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                assert!(!home.path().join(".codex/config.toml").exists());
+            },
+        );
     }
 }

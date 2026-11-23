@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn encodes_a_valid_rgba_bitmap() {
-        let qr = encode("https://app.dragent.dev/join?session=abc&secret=xyz").expect("encodes");
+        let qr = encode("https://app.example.test/join?session=abc&secret=xyz").expect("encodes");
         let size = qr.size as usize;
         assert!(size > 0);
         assert_eq!(

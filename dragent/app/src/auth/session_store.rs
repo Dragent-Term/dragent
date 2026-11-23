@@ -15,8 +15,9 @@
 //! detection, which revokes the whole token family. The owner-only credentials
 //! file is the de-facto standard used by gh, gcloud, and aws-cli for this.
 //!
-//! Migration: if the old ~/.dragent/token file exists it is migrated to the XDG
-//! path on first load, then deleted.
+//! Migration (Release edition only): if the old ~/.dragent/token file exists it
+//! is migrated to the platform path on first load, then deleted. A Dev build
+//! never touches it: it belongs to the installed app.
 
 use std::path::{Path, PathBuf};
 
@@ -48,7 +49,28 @@ fn legacy_token_path() -> Option<PathBuf> {
         return Some(test_credentials_dir().join("legacy-token"));
     }
     #[cfg(not(test))]
-    dirs::home_dir().map(|h| h.join(".dragent").join("token"))
+    legacy_token_path_for(dragent_paths::edition(), dirs::home_dir()?.as_path())
+}
+
+/// The legacy token file belongs to the installed (Release) app: a Dev build
+/// must never read, migrate or delete it.
+#[cfg_attr(test, allow(dead_code))]
+fn legacy_token_path_for(edition: dragent_paths::Edition, user_home: &Path) -> Option<PathBuf> {
+    match edition {
+        dragent_paths::Edition::Release => Some(user_home.join(".dragent").join("token")),
+        dragent_paths::Edition::Dev => None,
+    }
+}
+
+/// Where [`load_refresh_token`] found the token, for logs (never the token).
+pub fn refresh_token_source() -> String {
+    if std::env::var("DRAGENT_REFRESH_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+        return "DRAGENT_REFRESH_TOKEN".to_string();
+    }
+    match credentials_path() {
+        Some(path) => format!("credentials file {}", path.display()),
+        None => "credentials file".to_string(),
+    }
 }
 
 /// Where a test build keeps its credentials: never the person's.
@@ -317,10 +339,25 @@ mod tests {
     }
 
     #[test]
+    fn dev_edition_never_reads_the_release_legacy_token() {
+        let home = Path::new("/home/someone");
+        assert_eq!(
+            legacy_token_path_for(dragent_paths::Edition::Dev, home),
+            None
+        );
+        assert_eq!(
+            legacy_token_path_for(dragent_paths::Edition::Release, home),
+            Some(home.join(".dragent").join("token"))
+        );
+    }
+
+    #[test]
     fn a_test_build_never_uses_the_real_credentials_file() {
         let real = dragent_paths::platform_support().join("credentials");
         assert_ne!(credentials_path().as_deref(), Some(real.as_path()));
-        assert!(credentials_path().unwrap().starts_with(std::env::temp_dir()));
+        assert!(credentials_path()
+            .unwrap()
+            .starts_with(std::env::temp_dir()));
     }
 
     #[test]

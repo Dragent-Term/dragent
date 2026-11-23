@@ -222,11 +222,14 @@ impl WorkspaceView {
             WorkspaceAction::SignInFromHeader => {
                 // The prompt stays open showing the code to match in the
                 // browser; it closes once the sign-in completes.
-                self.login_prompt_open = true;
                 let auth = AuthManager::handle(ctx);
                 let url =
                     ctx.update_model(&auth, |auth, auth_ctx| auth.begin_browser_sign_in(auth_ctx));
-                ctx.open_url(&url);
+                // Empty in local mode: no sign-in exists, so no prompt either.
+                if !url.is_empty() {
+                    self.login_prompt_open = true;
+                    ctx.open_url(&url);
+                }
                 ctx.notify();
             }
             WorkspaceAction::CloseLoginPrompt => {

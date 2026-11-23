@@ -182,7 +182,7 @@ impl WorkspaceView {
         ctx.notify();
     }
 
-    /// Open the page on one automation (from a `dragent://automations/<id>`
+    /// Open the page on one automation (from a `<scheme>://automations/<id>`
     /// link).
     pub(crate) fn open_automation_link(&mut self, id: &str, ctx: &mut ViewContext<Self>) {
         self.open_automations(ctx);

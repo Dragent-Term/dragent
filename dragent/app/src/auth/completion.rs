@@ -13,7 +13,8 @@ pub enum AuthCompletion {
     RefreshTokenOnly(String),
 }
 
-/// Accepts `dragent://…`, `https://…/callback?…`, or a bare refresh token string.
+/// Accepts this edition's deep link (`dragent://…` / `dragent-dev://…`),
+/// `https://…/callback?…`, or a bare refresh token string.
 pub fn parse_auth_completion(raw: &str) -> Result<AuthCompletion> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -84,16 +85,32 @@ mod tests {
 
     #[test]
     fn parses_dragent_callback() {
-        let completion =
-            parse_auth_completion("dragent://auth/callback?refresh_token=rt_abc&state=csrf-1")
-                .unwrap();
+        let raw = format!(
+            "{}://auth/callback?refresh_token=rt_abc&state=csrf-1",
+            dragent_paths::url_scheme()
+        );
+        let completion = parse_auth_completion(&raw).unwrap();
         assert!(matches!(completion, AuthCompletion::Callback(_)));
+    }
+
+    #[test]
+    fn rejects_the_other_editions_callback() {
+        let other = if dragent_paths::url_scheme() == "dragent" {
+            "dragent-dev"
+        } else {
+            "dragent"
+        };
+        let raw = format!("{other}://auth/callback?refresh_token=rt_abc&state=csrf-1");
+        assert!(
+            parse_auth_completion(&raw).is_err(),
+            "must not accept the other edition's link: {raw}"
+        );
     }
 
     #[test]
     fn parses_https_callback() {
         let completion = parse_auth_completion(
-            "https://app.dragent.dev/auth/callback?refresh_token=rt_abc&state=csrf-1",
+            "https://app.example.test/auth/callback?refresh_token=rt_abc&state=csrf-1",
         )
         .unwrap();
         assert!(matches!(completion, AuthCompletion::Callback(_)));

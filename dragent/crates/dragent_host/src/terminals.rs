@@ -1206,6 +1206,39 @@ fn browser_entry(
     })
 }
 
+/// The shell statement that makes programs in this shell open pages in the
+/// system's own browser instead of Dragent's: `open` on macOS, `xdg-open`
+/// on Linux and other Unixes; on Windows `BROWSER` is removed, so programs
+/// use the default browser. For the pop-up terminal shown over a page
+/// (sign-ins, installers), whose shell keeps it for every later command.
+/// `os` is a [`std::env::consts::OS`] value. `None` for a shell Dragent
+/// can't write statements for.
+pub fn system_browser_entry(
+    shell_kind: dragent_shell_hooks::ShellKind,
+    os: &str,
+) -> Option<String> {
+    use dragent_shell_hooks::ShellKind;
+    if os == "windows" {
+        return Some(match shell_kind {
+            ShellKind::PowerShell => {
+                "Remove-Item Env:BROWSER -ErrorAction SilentlyContinue; ".into()
+            }
+            ShellKind::Nu => "hide-env -i BROWSER; ".into(),
+            ShellKind::Fish => "set -e BROWSER; ".into(),
+            ShellKind::Zsh | ShellKind::Bash => "unset BROWSER; ".into(),
+            ShellKind::Other => return None,
+        });
+    }
+    let opener = if os == "macos" { "open" } else { "xdg-open" };
+    Some(match shell_kind {
+        ShellKind::PowerShell => format!("$env:BROWSER = '{opener}'; "),
+        ShellKind::Nu => format!("$env.BROWSER = '{opener}'; "),
+        ShellKind::Fish => format!("set -gx BROWSER {opener}; "),
+        ShellKind::Zsh | ShellKind::Bash => format!("export BROWSER={opener}; "),
+        ShellKind::Other => return None,
+    })
+}
+
 /// Where the app wrote the launcher `name` for this shell, as the shell
 /// writes paths: its folder and the file. Windows shells that run `.cmd`
 /// files use `bin`; POSIX shells there (Git Bash) use `bin/posix`, where a
@@ -1238,6 +1271,31 @@ fn launcher(shell_kind: dragent_shell_hooks::ShellKind, name: &str) -> Option<(S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_browser_entry_names_the_platforms_opener_for_each_shell() {
+        use dragent_shell_hooks::ShellKind;
+        let entry = |kind, os| system_browser_entry(kind, os);
+        assert_eq!(entry(ShellKind::Zsh, "macos").as_deref(), Some("export BROWSER=open; "));
+        assert_eq!(entry(ShellKind::Bash, "linux").as_deref(), Some("export BROWSER=xdg-open; "));
+        assert_eq!(entry(ShellKind::Fish, "macos").as_deref(), Some("set -gx BROWSER open; "));
+        assert_eq!(entry(ShellKind::Nu, "linux").as_deref(), Some("$env.BROWSER = 'xdg-open'; "));
+        assert_eq!(entry(ShellKind::PowerShell, "macos").as_deref(), Some("$env:BROWSER = 'open'; "));
+        // Windows: no BROWSER, so programs open the default browser.
+        assert_eq!(
+            entry(ShellKind::PowerShell, "windows").as_deref(),
+            Some("Remove-Item Env:BROWSER -ErrorAction SilentlyContinue; ")
+        );
+        assert_eq!(entry(ShellKind::Bash, "windows").as_deref(), Some("unset BROWSER; "));
+        assert_eq!(entry(ShellKind::Nu, "windows").as_deref(), Some("hide-env -i BROWSER; "));
+        assert_eq!(entry(ShellKind::Other, "macos"), None);
+        // Never Dragent's own launcher.
+        for os in ["macos", "linux", "windows"] {
+            for kind in [ShellKind::Zsh, ShellKind::Bash, ShellKind::Fish, ShellKind::PowerShell, ShellKind::Nu] {
+                assert!(!entry(kind, os).unwrap().contains("dragent"));
+            }
+        }
+    }
 
 
     #[test]

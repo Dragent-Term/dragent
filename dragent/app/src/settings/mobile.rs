@@ -5,7 +5,8 @@
 //!
 //! With the `e2ee` feature the QR carries the v2 link (§6.2 step 3 of
 //! `docs/design/e2ee.md`):
-//! `dragent://pair?v=2&c=<code>&g=<gateway urlencoded>&d=<desktop id>&k=<b64url identity pub>&p=<b64url P>`.
+//! `<scheme>://pair?v=2&c=<code>&g=<gateway urlencoded>&d=<desktop id>&k=<b64url identity pub>&p=<b64url P>`,
+//! where `<scheme>` is this edition's `dragent_paths::url_scheme()`.
 //! `P` is generated and registered by the live companion host
 //! (`realtime::companion_host::e2ee_live::begin_pairing`), which holds it for
 //! the pairing handshake and wipes it when pairing commits, is cancelled or
@@ -14,8 +15,8 @@
 //! code lapses or is replaced), and the person pastes the full link when they
 //! have no camera — there is no bare-code entry. Removing a phone and
 //! resetting keys also go through the live host, so open channels close at
-//! once (§6.4, §6.6). Without the feature the QR carries the v1
-//! `dragent://pair?c=<code>&g=<gateway urlencoded>` link plus the code as text.
+//! once (§6.4, §6.6). Without the feature the QR carries this edition's v1
+//! `<scheme>://pair?c=<code>&g=<gateway urlencoded>` link plus the code as text.
 //!
 //! Every network call runs on a background thread via [`crate::bg::detach`] —
 //! the UI thread never blocks.
@@ -120,7 +121,8 @@ impl std::fmt::Debug for PairingSecret {
 }
 
 /// The v2 pairing link for the QR (§6.2 step 3):
-/// `dragent://pair?v=2&c=<code>&g=<gateway>&d=<desktop id>&k=<b64url identity pub>&p=<b64url P>`.
+/// `<scheme>://pair?v=2&c=<code>&g=<gateway>&d=<desktop id>&k=<b64url identity pub>&p=<b64url P>`,
+/// where `<scheme>` is this edition's `dragent_paths::url_scheme()`.
 /// `c`, `k` and `p` are already URL-safe; the gateway and desktop id are
 /// form-encoded.
 pub(crate) fn pairing_v2_link(
@@ -132,7 +134,8 @@ pub(crate) fn pairing_v2_link(
 ) -> String {
     let gateway: String = url::form_urlencoded::byte_serialize(gateway_url.as_bytes()).collect();
     let desktop: String = url::form_urlencoded::byte_serialize(desktop_id.as_bytes()).collect();
-    format!("dragent://pair?v=2&c={code}&g={gateway}&d={desktop}&k={key_b64}&p={secret_b64}")
+    let scheme = dragent_paths::url_scheme();
+    format!("{scheme}://pair?v=2&c={code}&g={gateway}&d={desktop}&k={key_b64}&p={secret_b64}")
 }
 
 #[cfg(all(feature = "e2ee", not(target_family = "wasm")))]
@@ -352,6 +355,7 @@ pub(crate) fn short_key_id(key_b64: &str) -> String {
 /// Friendly one-liner for a pairing/devices request failure.
 pub(crate) fn mobile_error_message(error: &ApiError) -> String {
     match error {
+        ApiError::LocalMode => crate::api::NEEDS_ACCOUNT.to_string(),
         ApiError::NotAuthenticated => "Sign in to pair a phone.".to_string(),
         ApiError::Network(_) => {
             "Couldn't reach Dragent. Check your connection and try again.".to_string()
@@ -773,13 +777,13 @@ impl SettingsView {
         #[cfg(all(feature = "e2ee", not(target_family = "wasm")))]
         let deep_link = pairing_v2_link(
             code,
-            "https://api.dragent.dev",
+            "https://api.example.test",
             "3fa85f64-5717-4562-b3fc-2c963f66afa6",
             &"A".repeat(43),
             &"B".repeat(43),
         );
         #[cfg(not(all(feature = "e2ee", not(target_family = "wasm"))))]
-        let deep_link = api::companion_pairing_deep_link(code, "https://api.dragent.dev");
+        let deep_link = api::companion_pairing_deep_link(code, "https://api.example.test");
         let expires_at_epoch = match state {
             "expired" => now - 1,
             _ => now + 582,
@@ -1026,12 +1030,13 @@ mod tests {
     fn v2_link_carries_every_param() {
         let link = pairing_v2_link(
             "K7MQ2XRB9TGH4VNC8WPD",
-            "https://api.dragent.dev",
+            "https://api.example.test",
             "3fa85f64-5717-4562-b3fc-2c963f66afa6",
             &"A".repeat(43),
             &"B".repeat(43),
         );
         let parsed = url::Url::parse(&link).expect("deep link must parse");
+        assert_eq!(parsed.scheme(), dragent_paths::url_scheme());
         let pairs: std::collections::HashMap<_, _> = parsed.query_pairs().collect();
         assert_eq!(pairs.get("v").map(|s| s.as_ref()), Some("2"));
         assert_eq!(
@@ -1040,7 +1045,7 @@ mod tests {
         );
         assert_eq!(
             pairs.get("g").map(|s| s.as_ref()),
-            Some("https://api.dragent.dev")
+            Some("https://api.example.test")
         );
         assert_eq!(
             pairs.get("d").map(|s| s.as_ref()),

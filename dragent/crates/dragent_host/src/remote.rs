@@ -79,7 +79,7 @@ impl SshHost {
         if secret.is_empty() {
             return Ok(());
         }
-        keyring::Entry::new("com.dragent.remote", &self.credential_account()?)
+        keyring::Entry::new(dragent_paths::remote_keychain_service(), &self.credential_account()?)
             .map_err(|e| e.to_string())?
             .set_password(secret)
             .map_err(|e| e.to_string())
@@ -310,7 +310,7 @@ impl SshHost {
         })
     }
     pub fn forget_credentials(&self) -> Result<(), String> {
-        let entry = keyring::Entry::new("com.dragent.remote", &self.credential_account()?)
+        let entry = keyring::Entry::new(dragent_paths::remote_keychain_service(), &self.credential_account()?)
             .map_err(|e| e.to_string())?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -322,7 +322,7 @@ impl SshHost {
             .filter(|s| !s.is_empty())
             .or_else(|| {
                 self.credential_account().ok().and_then(|a| {
-                    keyring::Entry::new("com.dragent.remote", &a)
+                    keyring::Entry::new(dragent_paths::remote_keychain_service(), &a)
                         .ok()?
                         .get_password()
                         .ok()
@@ -788,7 +788,7 @@ impl RemoteConnection {
         host.validate()?;
         let account = host.credential_account()?;
         let entry =
-            keyring::Entry::new("com.dragent.remote", &account).map_err(|e| e.to_string())?;
+            keyring::Entry::new(dragent_paths::remote_keychain_service(), &account).map_err(|e| e.to_string())?;
         let secret = supplied
             .filter(|s| !s.is_empty())
             .or_else(|| entry.get_password().ok())
@@ -988,7 +988,7 @@ impl RemoteConnection {
         > = OnceLock::new();
         let binding = host.credential_account()?;
         let entry =
-            keyring::Entry::new("com.dragent.remote", &binding).map_err(|e| e.to_string())?;
+            keyring::Entry::new(dragent_paths::remote_keychain_service(), &binding).map_err(|e| e.to_string())?;
         let secret = supplied
             .filter(|s| !s.is_empty())
             .or_else(|| entry.get_password().ok());

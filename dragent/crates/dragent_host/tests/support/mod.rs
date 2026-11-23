@@ -99,6 +99,13 @@ impl Harness {
                 std::env::set_var(name, path);
             }
         }
+        // Test builds are the Dev edition, which leaves user hook configs
+        // alone: these tests use a throwaway HOME (above), so let them through.
+        let hooks_env = dragent_host::agent_user_hooks::TEST_USER_HOOKS_ENV;
+        previous.push((hooks_env, std::env::var_os(hooks_env)));
+        unsafe {
+            std::env::set_var(hooks_env, "1");
+        }
         let client = HostClient::ensure_host_with(&helper()).unwrap();
         let root = dir.to_str().unwrap();
         let workspace = client.create_local_workspace(root).unwrap();

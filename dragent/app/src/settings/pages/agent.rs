@@ -480,6 +480,20 @@ pub fn render_agent_mcp(view: &SettingsView, theme: &Theme) -> Box<dyn Element> 
         .with_child(header)
         .with_child(search_bar);
 
+    // A Dev build never writes into other apps' settings, so the servers
+    // below stay inside this build.
+    if dragent_paths::is_dev() {
+        col = col.with_child(
+            Text::new(
+                "Dev builds don't change other apps' settings.".to_string(),
+                ui,
+                crate::theme::text_size(12.5),
+            )
+            .with_color(theme.sub_text())
+            .finish(),
+        );
+    }
+
     // ── MY SERVERS ────────────────────────────────────────────────────────────
     let installed: Vec<_> = servers
         .iter()

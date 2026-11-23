@@ -149,6 +149,17 @@ impl UiSettings {
         })
     }
 
+    /// Whether launch opens the onboarding flow instead of the workspace.
+    /// Local mode (a Dev build with no server) opens straight into the
+    /// workspace: its flow is mostly sign-in, which can't happen there.
+    /// `DRAGENT_SHOW_ONBOARDING` still shows it, for working on the flow.
+    pub fn shows_onboarding(&self) -> bool {
+        onboarding_needed(
+            self.onboarding_completed,
+            crate::api::is_local_mode() && !force_show_onboarding(),
+        )
+    }
+
     pub fn load() -> Self {
         let mut settings: UiSettings = settings_path()
             .and_then(|p| std::fs::read_to_string(p).ok())
@@ -182,6 +193,12 @@ fn settings_path() -> Option<PathBuf> {
 }
 
 /// Set `DRAGENT_SHOW_ONBOARDING=1` to show the wizard even when onboarding was completed.
+/// Onboarding shows on a launch that hasn't completed it, unless the build
+/// is in local mode. Pure, for tests.
+pub(crate) fn onboarding_needed(completed: bool, local_mode: bool) -> bool {
+    !completed && !local_mode
+}
+
 fn force_show_onboarding() -> bool {
     std::env::var_os("DRAGENT_SHOW_ONBOARDING").is_some_and(|v| {
         v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")

@@ -8,6 +8,7 @@ pub mod credentials;
 pub mod git_consumers;
 mod git_settings;
 pub mod integrations;
+pub mod local_models;
 pub(crate) mod logout_confirm;
 pub(crate) mod machines;
 pub(crate) mod machines_store;

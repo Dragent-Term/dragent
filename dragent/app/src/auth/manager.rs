@@ -131,7 +131,7 @@ impl AuthManager {
                         #[cfg(not(target_family = "wasm"))]
                         crate::desktop::open_new_window(mctx);
                         let _ = mctx.windows().activate_app();
-                    } else if msg.starts_with("dragent://") {
+                    } else if msg.starts_with(&format!("{}://", dragent_paths::url_scheme())) {
                         if crate::agent::mcp::is_mcp_oauth_callback(&msg) {
                             crate::agent::mcp::handle_mcp_oauth_callback(&msg);
                         } else {
@@ -149,6 +149,20 @@ impl AuthManager {
                 },
                 |_, _| {},
             );
+        }
+
+        // Local mode: signed in as the demo identity from the first frame.
+        // No Keychain read, no restore, no token anywhere.
+        if crate::api::is_local_mode() {
+            return Self {
+                status: AuthStatus::LoggedIn(AuthUser::local_demo()),
+                pending_state: None,
+                pending_verifier: None,
+                refresh_token: None,
+                access_token: None,
+                access_token_expires_at: None,
+                session_epoch: 0,
+            };
         }
 
         if let Some(token) = load_refresh_token() {
@@ -249,6 +263,12 @@ impl AuthManager {
         &self.status
     }
 
+    /// Signed in as the local demo identity (local mode): there is no
+    /// account to sign in to or out of.
+    pub fn is_local(&self) -> bool {
+        crate::api::is_local_mode()
+    }
+
     pub fn is_logged_in(&self) -> bool {
         matches!(self.status, AuthStatus::LoggedIn(_) | AuthStatus::Restoring)
     }
@@ -268,7 +288,14 @@ impl AuthManager {
 
     /// Start browser sign-in. Opens in the browser; completion can arrive via deep link,
     /// background polling, or manual paste — redirect is optional.
+    ///
+    /// Local mode has no sign-in: returns an empty URL (open nothing) and
+    /// reports why.
     pub fn begin_browser_sign_in(&mut self, ctx: &mut ModelContext<Self>) -> String {
+        if self.is_local() {
+            self.emit_failure(crate::api::NEEDS_ACCOUNT.to_string(), ctx);
+            return String::new();
+        }
         let state = uuid::Uuid::new_v4().to_string();
         let verifier = super::pkce::new_verifier();
         let challenge = super::pkce::challenge(&verifier);
@@ -310,6 +337,12 @@ impl AuthManager {
         source: CompletionSource,
         ctx: &mut ModelContext<Self>,
     ) {
+        // A pasted or linked sign-in can't apply to a build with no server;
+        // never store its token.
+        if self.is_local() {
+            self.emit_failure(crate::api::NEEDS_ACCOUNT.to_string(), ctx);
+            return;
+        }
         match completion {
             AuthCompletion::Callback(callback) => {
                 // A pasted link with a one-time code is redeemed like a
@@ -474,6 +507,10 @@ impl AuthManager {
     }
 
     pub fn log_out(&mut self, ctx: &mut ModelContext<Self>) {
+        // The local demo identity has nothing to sign out of.
+        if self.is_local() {
+            return;
+        }
         // End the session on the server too, so a copied token stops working.
         // In the background, and best effort: signing out here never waits
         // on the network.

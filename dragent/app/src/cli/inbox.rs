@@ -110,6 +110,14 @@ impl CliInbox {
 
     fn answer_identity(&self, ctx: &ModelContext<Self>) {
         use crate::auth::{AuthManager, AuthStatus};
+        // Local mode has no server organisation to wait for: answer as the
+        // demo identity in the `local` organisation.
+        if crate::api::is_local_mode() {
+            return Self::answer_identity_with(
+                &crate::api::local_mode::identity_json(),
+                &dragent_paths::local_organisation_id(),
+            );
+        }
         let AuthStatus::LoggedIn(user) = AuthManager::as_ref(ctx).status() else {
             // A signed-out development copy must not answer for another,
             // signed-in instance. Leave discovery to that instance.
@@ -117,8 +125,7 @@ impl CliInbox {
         };
         let organisation = crate::organisation_context::OrganisationContext::as_ref(ctx);
         let Some(active) = organisation.active().filter(|active| {
-            !organisation.is_switching()
-                && user.user_id.as_deref() == Some(active.user_id.as_str())
+            !organisation.is_switching() && user.user_id.as_deref() == Some(active.user_id.as_str())
         }) else {
             return;
         };
@@ -129,7 +136,14 @@ impl CliInbox {
             "organisation_id": active.organisation_id,
             "context": active.context,
         });
-        for folder in [requests::identity_folder(), requests::scoped_identity_folder(&active.context)] {
+        Self::answer_identity_with(&data, &active.context);
+    }
+
+    fn answer_identity_with(data: &serde_json::Value, context: &str) {
+        for folder in [
+            requests::identity_folder(),
+            requests::scoped_identity_folder(context),
+        ] {
             for (id, request) in requests::claim_all(&folder) {
                 let response = if matches!(request, Request::Whoami) {
                     Response::with_data(data.clone())

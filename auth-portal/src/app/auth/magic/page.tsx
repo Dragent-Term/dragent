@@ -4,7 +4,7 @@ import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ArrowRight } from "lucide-react";
 import { markSignedIn } from "@/lib/token";
-import { APP_SCHEME, appPart, stashHandoff } from "@/lib/desktopHandoff";
+import { appPart, schemeForState, stashHandoff } from "@/lib/desktopHandoff";
 
 function MagicVerificationContent() {
   const searchParams = useSearchParams();
@@ -17,8 +17,6 @@ function MagicVerificationContent() {
   useEffect(() => {
     const token = searchParams.get("token");
     const state = searchParams.get("state");
-    // The app's scheme is fixed; `?scheme=` is ignored (see APP_SCHEME).
-    const scheme = APP_SCHEME;
 
     if (!token || !state) {
       setError("Invalid link. Missing token or state verification parameters.");
@@ -56,8 +54,10 @@ function MagicVerificationContent() {
         // desktop app completes by polling this state, not by the deep link
         // (dragent/app/src/auth/mod.rs), so this is a convenience, not the
         // mechanism — and sessionStorage keeps it to this tab.
+        // The app that started this sign-in (Dragent or a Dev build), as the
+        // login page remembered it in this browser; `dragent` otherwise.
         stashHandoff({
-          scheme,
+          scheme: schemeForState(data.state || state),
           state: data.state || state,
           ...appPart(data),
           user_id: data.user_id ?? "",

@@ -967,6 +967,14 @@ impl TerminalView {
     }
 
     pub(crate) fn write_command(&self, command: &str, mode: TermMode) {
+        self.write_command_after(None, command, mode);
+    }
+
+    /// [`write_command`](Self::write_command), with a shell statement `setup`
+    /// on the same line before it (the pop-up terminal's system `BROWSER`).
+    /// It goes in front of the tracked command, so an agent launched this way
+    /// is still recognised.
+    pub(crate) fn write_command_after(&self, setup: Option<&str>, command: &str, mode: TermMode) {
         // Built-in agents are known to the launch helper; a custom agent pane
         // declares its recovery descriptor first so its conversation is tracked.
         #[cfg(not(target_family = "wasm"))]
@@ -998,6 +1006,14 @@ impl TerminalView {
         };
         #[cfg(not(target_family = "wasm"))]
         let command = tracked_command.as_str();
+        let with_setup;
+        let command = match setup {
+            Some(setup) => {
+                with_setup = format!("{setup}{command}");
+                with_setup.as_str()
+            }
+            None => command,
+        };
         let submit = SessionPlatform::detect().command_submit_bytes();
         // Assemble the full submission into one buffer (single PTY write).
         let mut buf: Vec<u8> = Vec::with_capacity(command.len() + 16);

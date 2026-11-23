@@ -104,6 +104,8 @@ fn json_or_null(resp: ureq::Response) -> Result<serde_json::Value, ApiError> {
 
 #[derive(Debug)]
 pub enum ApiError {
+    /// Local mode (a Dev build with no server): the call was not sent.
+    LocalMode,
     NotAuthenticated,
     Network(String),
     Server { status: u16, body: String },
@@ -111,11 +113,17 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    /// The call wasn't made because this build runs without a server.
+    pub fn is_local_mode(&self) -> bool {
+        matches!(self, Self::LocalMode)
+    }
+
     /// Text fit to show a user: the server's own `{"error": "..."}` message
     /// when it sent one (e.g. "only the owner can subscribe"), otherwise a
     /// short description instead of a raw status dump.
     pub fn user_message(&self) -> String {
         match self {
+            Self::LocalMode => super::NEEDS_ACCOUNT.to_string(),
             Self::NotAuthenticated => "Sign in to continue.".to_string(),
             Self::Network(_) => {
                 "Couldn't reach Dragent. Check your connection and try again.".to_string()
@@ -140,6 +148,7 @@ impl ApiError {
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::LocalMode => write!(f, "{}", super::NEEDS_ACCOUNT),
             Self::NotAuthenticated => write!(f, "sign in required"),
             Self::Network(e) => write!(f, "network error: {e}"),
             Self::Server { status, body } => write!(f, "server error {status}: {body}"),
@@ -188,10 +197,17 @@ pub struct ApiClient {
     /// exactly once even when several threads discover it at the same moment.
     /// Reset when new credentials arrive.
     expired_signalled: AtomicBool,
+    /// Local mode: every request answers [`ApiError::LocalMode`] before any
+    /// token lookup or network I/O.
+    local_mode: bool,
 }
 
 impl ApiClient {
     fn new(base_url: String) -> Self {
+        Self::with_mode(base_url, super::is_local_mode())
+    }
+
+    fn with_mode(base_url: String, local_mode: bool) -> Self {
         Self {
             base_url,
             token_state: RwLock::new(TokenState {
@@ -202,6 +218,7 @@ impl ApiClient {
             }),
             exchange_in_progress: Mutex::new(()),
             expired_signalled: AtomicBool::new(false),
+            local_mode,
         }
     }
 
@@ -247,7 +264,7 @@ impl ApiClient {
     }
 
     /// Declare the session permanently dead: wipe every credential (memory AND
-    /// the OS keychain) and tell the app to sign out. Called when the server
+    /// the saved credentials file) and tell the app to sign out. Called when the server
     /// says the refresh token is revoked/expired, or when it rejects an access
     /// token we minted seconds ago — neither is recoverable by retrying.
     ///
@@ -310,6 +327,11 @@ impl ApiClient {
     /// Returns a valid access token, exchanging the refresh token if necessary.
     /// Blocks during the network exchange — must be called off the UI thread.
     pub fn get_access_token(&self) -> Result<String, ApiError> {
+        // Every request asks for a token first, so this one check keeps a
+        // local-mode build off the network (and out of the Keychain).
+        if self.local_mode {
+            return Err(ApiError::LocalMode);
+        }
         // Fast path: valid cached token
         {
             let state = self.token_state.read();
@@ -340,7 +362,8 @@ impl ApiClient {
             }
         }
 
-        // Get refresh token: in-memory state first, then OS keychain
+        // Get refresh token: in-memory state first, then the saved session
+        // (DRAGENT_REFRESH_TOKEN or this edition's credentials file)
         let refresh_token = {
             let state = self.token_state.read();
             state.refresh_token.clone()
@@ -349,7 +372,10 @@ impl ApiClient {
             Some(rt) => rt,
             None => match crate::auth::load_refresh_token() {
                 Some(rt) => {
-                    log::info!("[auth] loaded refresh token from OS keychain");
+                    log::info!(
+                        "[auth] loaded refresh token from {}",
+                        crate::auth::refresh_token_source()
+                    );
                     self.token_state.write().refresh_token = Some(rt.clone());
                     rt
                 }
@@ -471,7 +497,11 @@ impl ApiClient {
         &self,
         timeout_secs: u64,
     ) -> Result<CompanionPairing, ApiError> {
-        let json = self.post("v1/companion/pairings", &serde_json::json!({}), timeout_secs)?;
+        let json = self.post(
+            "v1/companion/pairings",
+            &serde_json::json!({}),
+            timeout_secs,
+        )?;
         CompanionPairing::from_json(&json)
     }
 
@@ -898,7 +928,9 @@ impl CompanionDevice {
         } else if let Some(arr) = json.get("devices").and_then(|v| v.as_array()) {
             arr
         } else {
-            return Err(ApiError::Parse("devices response is not a list".to_string()));
+            return Err(ApiError::Parse(
+                "devices response is not a list".to_string(),
+            ));
         };
         arr.iter()
             .map(|item| {
@@ -946,10 +978,12 @@ fn parse_expires_at_epoch(value: &serde_json::Value) -> Option<i64> {
 }
 
 /// Deep link encoded in the pairing QR (the phone scans it or pastes the
-/// code shown beside it): `dragent://pair?c=<code>&g=<gateway urlencoded>`.
+/// code shown beside it): `<scheme>://pair?c=<code>&g=<gateway urlencoded>`
+/// where `<scheme>` is this edition's `dragent_paths::url_scheme()`.
 pub fn companion_pairing_deep_link(code: &str, gateway_url: &str) -> String {
     let encoded: String = url::form_urlencoded::byte_serialize(gateway_url.as_bytes()).collect();
-    format!("dragent://pair?c={code}&g={encoded}")
+    let scheme = dragent_paths::url_scheme();
+    format!("{scheme}://pair?c={code}&g={encoded}")
 }
 
 /// Seconds left before `expires_at_epoch`, never negative.
@@ -993,6 +1027,38 @@ fn is_token_revoked_error(msg: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Local mode answers every verb without opening a connection: a
+    /// listener standing in for the server must never see one.
+    #[test]
+    fn local_mode_client_never_touches_the_network() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let client = ApiClient::with_mode(base, true);
+        let body = serde_json::json!({});
+        let results = [
+            client.get("v1/me", 1).err(),
+            client.post("v1/x", &body, 1).err(),
+            client.patch("v1/x", &body, 1).err(),
+            client.put("v1/x", &body, 1).err(),
+            client.delete("v1/x", 1).err(),
+            client.graphql("{ me { id } }", body.clone(), 1).err(),
+            client.get_access_token().err(),
+            client.create_companion_pairing(1).err(),
+            client.post_multipart("v1/upload", &[], 1).err(),
+            client.post_stream_with_headers("v1/stream", &body, &[]).err(),
+        ];
+        for err in results {
+            let err = err.expect("local mode must not succeed");
+            assert!(err.is_local_mode(), "{err}");
+            assert_eq!(err.user_message(), "Needs a Dragent account");
+        }
+        assert!(
+            listener.accept().is_err(),
+            "local mode must not connect to the server"
+        );
+    }
 
     #[test]
     fn multipart_body_frames_fields_and_files() {
@@ -1071,9 +1137,14 @@ mod tests {
     #[test]
     fn pairing_deep_link_encodes_gateway() {
         let link = companion_pairing_deep_link("ABCDEFGH1234567890AB", "https://relay.example.com:443/x");
+        let scheme = dragent_paths::url_scheme();
         assert!(
-            link.starts_with("dragent://pair?c=ABCDEFGH1234567890AB&g="),
+            link.starts_with(&format!("{scheme}://pair?c=ABCDEFGH1234567890AB&g=")),
             "unexpected link: {link}"
+        );
+        assert_eq!(
+            url::Url::parse(&link).expect("deep link must parse").scheme(),
+            scheme
         );
         assert!(
             !link.contains("://relay"),
@@ -1082,7 +1153,10 @@ mod tests {
         // Round-trips through a URL parser back to the original gateway.
         let parsed = url::Url::parse(&link).expect("deep link must parse");
         let pairs: std::collections::HashMap<_, _> = parsed.query_pairs().collect();
-        assert_eq!(pairs.get("c").map(|s| s.as_ref()), Some("ABCDEFGH1234567890AB"));
+        assert_eq!(
+            pairs.get("c").map(|s| s.as_ref()),
+            Some("ABCDEFGH1234567890AB")
+        );
         assert_eq!(
             pairs.get("g").map(|s| s.as_ref()),
             Some("https://relay.example.com:443/x")
@@ -1151,11 +1225,16 @@ mod tests {
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].device_id, "d_1");
         assert_eq!(devices[0].name, "Pixel 9");
-        assert_eq!(devices[0].last_seen_at.as_deref(), Some("2026-01-02T00:00:00Z"));
+        assert_eq!(
+            devices[0].last_seen_at.as_deref(),
+            Some("2026-01-02T00:00:00Z")
+        );
 
         let envelope = serde_json::json!({"devices": [entry]});
         assert_eq!(
-            CompanionDevice::list_from_json(&envelope).expect("envelope parses").len(),
+            CompanionDevice::list_from_json(&envelope)
+                .expect("envelope parses")
+                .len(),
             1
         );
         assert!(CompanionDevice::list_from_json(&serde_json::json!({})).is_err());

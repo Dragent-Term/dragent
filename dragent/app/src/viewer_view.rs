@@ -1230,17 +1230,19 @@ fn url_param(name: &str) -> Option<String> {
     }
 }
 
-/// The desktop app's join deep link: `dragent://join?session=…&secret=…`.
+/// The desktop app's join deep link for this edition:
+/// `<scheme>://join?session=…&secret=…`.
 fn dragent_join_link(session: Option<&str>, secret: Option<&str>) -> String {
+    let scheme = dragent_paths::url_scheme();
     match (session, secret) {
         (Some(s), Some(sec)) => {
             let q = url::form_urlencoded::Serializer::new(String::new())
                 .append_pair("session", s)
                 .append_pair("secret", sec)
                 .finish();
-            format!("dragent://join?{q}")
+            format!("{scheme}://join?{q}")
         }
-        _ => "dragent://join".to_string(),
+        _ => format!("{scheme}://join"),
     }
 }
 

@@ -540,6 +540,10 @@ impl TypedActionView for OnboardingFlow {
                 let auth = AuthManager::handle(ctx);
                 let url =
                     ctx.update_model(&auth, |auth, auth_ctx| auth.begin_browser_sign_in(auth_ctx));
+                if url.is_empty() {
+                    // Local mode: no sign-in; the failure event explains why.
+                    return;
+                }
                 ctx.open_url(&url);
                 self.sign_in_url = Some(url);
                 self.browser_auth_active = true;

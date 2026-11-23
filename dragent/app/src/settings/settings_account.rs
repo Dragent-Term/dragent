@@ -18,7 +18,10 @@ impl SettingsView {
                 let auth = AuthManager::handle(ctx);
                 let url =
                     ctx.update_model(&auth, |auth, auth_ctx| auth.begin_browser_sign_in(auth_ctx));
-                ctx.open_url(&url);
+                // Empty in local mode: there is no sign-in page to open.
+                if !url.is_empty() {
+                    ctx.open_url(&url);
+                }
             }
             SettingsAction::SignOut => {
                 // Confirm first (with a shared-session warning), unless the user

@@ -21,19 +21,19 @@ pub fn render_about(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
             theme,
             ui_font,
             "About",
-            "Dragent — terminal workspace with an integrated AI agent.",
+            &format!("{} — terminal workspace with an integrated AI agent.", dragent_paths::app_name()),
         ))
         .with_child(setting_group(
             theme,
             ui_font,
-            "Dragent",
+            dragent_paths::app_name(),
             vec![settings_card(
                 theme,
                 Flex::column()
                     .with_cross_axis_alignment(warpui::elements::CrossAxisAlignment::Start)
                     .with_child(
                         warpui::elements::Text::new(
-                            "Dragent".to_string(),
+                            dragent_paths::app_name().to_string(),
                             ui_font,
                             crate::theme::text_size(22.0),
                         )
@@ -55,7 +55,7 @@ pub fn render_about(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
                     .with_child(
                         warpui::elements::Container::new(Box::new(
                             warpui::elements::Text::new(
-                                "Copyright 2026 Dragent".to_string(),
+                                format!("Copyright 2026 {}", dragent_paths::app_name()),
                                 ui_font,
                                 crate::theme::text_size(12.0),
                             )
@@ -78,8 +78,10 @@ pub fn render_about(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
                     .with_spacing(10.0)
                     .with_child(
                         warpui::elements::Text::new(
-                            "Dragent is open source (AGPL-3.0). A star helps other developers find it."
-                                .to_string(),
+                            format!(
+                                "{} is open source (AGPL-3.0). A star helps other developers find it.",
+                                dragent_paths::app_name()
+                            ),
                             ui_font,
                             crate::theme::text_size(13.0),
                         )

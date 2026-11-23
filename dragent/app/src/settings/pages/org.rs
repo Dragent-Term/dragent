@@ -78,6 +78,12 @@ fn org_page(
         .with_spacing(4.0)
         .with_child(page_header(theme, ui, title, caption));
 
+    if crate::api::is_local_mode() {
+        return col
+            .with_child(super::super::widgets::needs_account_state(theme, ui))
+            .finish();
+    }
+
     if !AuthManager::as_ref(app).is_logged_in() {
         return col
             .with_child(empty_state(

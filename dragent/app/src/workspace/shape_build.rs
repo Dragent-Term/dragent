@@ -386,7 +386,9 @@ pub(crate) fn shape_model_route_catalog(
     }
 
     let has_byok = settings.has_any_user_credential();
-    if has_byok {
+    if crate::api::is_local_mode() {
+        models = crate::settings::local_models::local_mode_models(&settings);
+    } else if has_byok {
         models.retain(|model| settings.has_user_credential_for_model(&model.id));
     }
     let locked = restricted_to_free && !has_byok;
@@ -452,7 +454,9 @@ pub(crate) fn shape_composer_model_options(
         ),
     );
     let has_byok = settings.has_any_user_credential();
-    if has_byok {
+    if crate::api::is_local_mode() {
+        models = crate::settings::local_models::local_mode_choices(&settings);
+    } else if has_byok {
         models.retain(|(id, _)| {
             id == crate::settings::AUTO_MODEL_ID || settings.has_user_credential_for_model(id)
         });

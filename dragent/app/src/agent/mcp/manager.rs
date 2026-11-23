@@ -681,7 +681,7 @@ pub(crate) async fn connect_server(
                 // Blocking: opens browser, binds a local TCP listener, waits for the
                 // redirect, exchanges the code, and stores the token — all in one call.
                 // This works in both dev and production without relying on the OS
-                // delivering a dragent:// deep-link (which only works in a signed .app bundle).
+                // delivering a deep-link (which only works in a signed .app bundle).
                 let token_json = super::oauth::run_pkce_flow(&cfg.name, &meta)
                     .await
                     .map_err(|e| anyhow::anyhow!("[mcp oauth] PKCE flow failed: {e}"))?;

@@ -55,8 +55,6 @@ pub fn account_for_custom(model_id: &str) -> String {
     format!("custom/{}", model_id.trim())
 }
 
-const SERVICE: &str = "com.dragent.app";
-
 // ── Keychain reads ───────────────────────────────────────────────────────────
 //
 // What this process has already read from the keychain, including items that
@@ -199,7 +197,7 @@ fn cache_only() -> bool {
 /// The blocking keychain read itself.
 #[cfg(not(target_family = "wasm"))]
 fn read_keychain_item(account: &str) -> Option<String> {
-    keyring::Entry::new(SERVICE, account)
+    keyring::Entry::new(dragent_paths::keychain_service(), account)
         .ok()?
         .get_password()
         .ok()
@@ -468,7 +466,7 @@ fn keychain_writer() -> &'static std::sync::mpsc::Sender<KeychainJob> {
 /// The blocking keychain call itself; runs only on the writer thread.
 #[cfg(not(target_family = "wasm"))]
 fn write_keychain_item(account: &str, value: Option<&str>) -> KeychainOutcome {
-    let entry = keyring::Entry::new(SERVICE, account).map_err(|e| {
+    let entry = keyring::Entry::new(dragent_paths::keychain_service(), account).map_err(|e| {
         log::warn!("[credentials] keychain unavailable for {account}: {e}");
         format!("The Keychain is unavailable ({e}). The key works until Dragent quits.")
     })?;

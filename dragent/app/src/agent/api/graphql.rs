@@ -23,6 +23,9 @@ impl GraphqlAgentApi {
 
 fn api_err(e: crate::api::ApiError) -> AgentError {
     match e {
+        crate::api::ApiError::LocalMode => {
+            AgentError::BackendUnavailable(crate::api::NEEDS_ACCOUNT.to_string())
+        }
         crate::api::ApiError::NotAuthenticated => AgentError::BackendUnavailable(
             "Sign in required to perform self-healing diagnostics".to_string(),
         ),

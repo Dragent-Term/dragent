@@ -3,7 +3,7 @@
 //! The command line writes `<id>.json` into the organisation's
 //! `cli-requests` folder; the app claims it by renaming it to
 //! `<id>.claimed`, does the work, and answers in `<id>.done.json`. Only
-//! processes of this user can write there, so (unlike a `dragent://` link,
+//! processes of this user can write there, so (unlike a deep link,
 //! which any web page can open) a request can't come from a web page.
 
 use std::path::{Path, PathBuf};

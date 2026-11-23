@@ -21,7 +21,11 @@ pub(super) fn org(args: &[String]) -> Result<String, String> {
                 |row| {
                     format!(
                         "{}{}\t{}\t{}",
-                        if row["active"].as_bool() == Some(true) { "* " } else { "  " },
+                        if row["active"].as_bool() == Some(true) {
+                            "* "
+                        } else {
+                            "  "
+                        },
                         text(row, "name"),
                         text(row, "role"),
                         text(row, "id")
@@ -50,7 +54,9 @@ pub(super) fn org(args: &[String]) -> Result<String, String> {
                 .unwrap_or_else(|| organisation.to_string());
             Ok(format!("Switched Dragent to {name}"))
         }
-        other => Err(format!("unknown org command “{other}” (use list or switch)")),
+        other => Err(format!(
+            "unknown org command “{other}” (use list or switch)"
+        )),
     }
 }
 
@@ -58,11 +64,15 @@ pub(super) fn org(args: &[String]) -> Result<String, String> {
 pub(super) fn whoami(args: &[String]) -> Result<String, String> {
     let flags = Flags::parse(args)?;
     let live = super::live_identity();
-    if live.as_ref().is_some_and(|data| data["signed_in"].as_bool() == Some(false)) {
+    if live
+        .as_ref()
+        .is_some_and(|data| data["signed_in"].as_bool() == Some(false))
+    {
         return Ok(if flags.json {
             pretty(serde_json::json!({ "signed_in": false }))
         } else {
-            "This terminal's organisation is not signed in. Open that organisation in Dragent.".into()
+            "This terminal's organisation is not signed in. Open that organisation in Dragent."
+                .into()
         });
     }
     let data = match ask_app(requests::Request::Whoami, false) {
@@ -70,18 +80,20 @@ pub(super) fn whoami(args: &[String]) -> Result<String, String> {
         // The app is closed: what it saved while signed in, only while a
         // sign-in is still saved (the same check as every other command).
         Err(_) if live.is_some() => live.unwrap(),
-        Err(error) => match crate::organisation_context::cached_active()
-            .filter(|_| super::signed_in())
-        {
-            Some(cached) => serde_json::json!({
-                "user_id": cached.user_id,
-                "organisation": cached.name,
-                "organisation_id": cached.organisation_id,
-                "offline": true,
-                "reason": error,
-            }),
-            None => serde_json::json!({ "signed_in": false }),
-        },
+        // Local mode with the app closed: the demo identity needs no app.
+        Err(_) if crate::api::is_local_mode() => crate::api::local_mode::identity_json(),
+        Err(error) => {
+            match crate::organisation_context::cached_active().filter(|_| super::signed_in()) {
+                Some(cached) => serde_json::json!({
+                    "user_id": cached.user_id,
+                    "organisation": cached.name,
+                    "organisation_id": cached.organisation_id,
+                    "offline": true,
+                    "reason": error,
+                }),
+                None => serde_json::json!({ "signed_in": false }),
+            }
+        }
     };
     if flags.json {
         return Ok(pretty(data));
@@ -117,9 +129,13 @@ pub(super) fn machines(args: &[String]) -> Result<String, String> {
     let wanted = match flags.subcommand() {
         "list" | "" => None,
         "show" => Some(flags.argument(0).ok_or_else(|| {
-            Failure::new(Status::InvalidInput, "missing_argument", "usage: dragent machines show ID")
-                .next("`dragent machines list` gives the ids.")
-                .encode()
+            Failure::new(
+                Status::InvalidInput,
+                "missing_argument",
+                "usage: dragent machines show ID",
+            )
+            .next("`dragent machines list` gives the ids.")
+            .encode()
         })?),
         other => {
             return Err(Failure::new(
@@ -241,7 +257,12 @@ pub(super) fn feedback(args: &[String]) -> Result<String, String> {
     if flags.on("draft") {
         is_draft = true;
     }
-    if flags.subcommand() == "help" || flags.positional.iter().any(|p| p == "help" && flags.positional.len() == 1) {
+    if flags.subcommand() == "help"
+        || flags
+            .positional
+            .iter()
+            .any(|p| p == "help" && flags.positional.len() == 1)
+    {
         return Ok(feedback_help());
     }
     let fields = collect_feedback_fields(&flags)?;
@@ -267,7 +288,12 @@ pub(super) fn feedback(args: &[String]) -> Result<String, String> {
         }
         return Ok(draft);
     }
-    match ask_app(requests::Request::Feedback { text: draft.clone() }, false) {
+    match ask_app(
+        requests::Request::Feedback {
+            text: draft.clone(),
+        },
+        false,
+    ) {
         Ok(_) => {
             if flags.json {
                 return Ok(pretty(serde_json::json!({
@@ -276,7 +302,10 @@ pub(super) fn feedback(args: &[String]) -> Result<String, String> {
                     "kind": fields.kind,
                 })));
             }
-            Ok("Thanks, your feedback was sent to the Dragent team (private; not published).".into())
+            Ok(
+                "Thanks, your feedback was sent to the Dragent team (private; not published)."
+                    .into(),
+            )
         }
         Err(error) => {
             let failure = Failure::from_error(&error);
@@ -449,8 +478,12 @@ fn save_feedback_draft(draft: &str) -> Result<std::path::PathBuf, String> {
     save_feedback_draft_to(&dragent_paths::home().join("feedback-drafts"), draft)
 }
 
-fn save_feedback_draft_to(dir: &std::path::Path, draft: &str) -> Result<std::path::PathBuf, String> {
-    std::fs::create_dir_all(dir).map_err(|error| format!("couldn't create {}: {error}", dir.display()))?;
+fn save_feedback_draft_to(
+    dir: &std::path::Path,
+    draft: &str,
+) -> Result<std::path::PathBuf, String> {
+    std::fs::create_dir_all(dir)
+        .map_err(|error| format!("couldn't create {}: {error}", dir.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -461,7 +494,8 @@ fn save_feedback_draft_to(dir: &std::path::Path, draft: &str) -> Result<std::pat
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let path = dir.join(format!("feedback-{stamp}-{}.md", uuid::Uuid::new_v4()));
-    std::fs::write(&path, draft).map_err(|error| format!("couldn't write {}: {error}", path.display()))?;
+    std::fs::write(&path, draft)
+        .map_err(|error| format!("couldn't write {}: {error}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -503,13 +537,18 @@ mod feedback_tests {
             "App version: 0.2.3",
             "OS: macos aarch64",
         ] {
-            assert!(draft.contains(expected), "draft misses {expected:?}\n{draft}");
+            assert!(
+                draft.contains(expected),
+                "draft misses {expected:?}\n{draft}"
+            );
         }
         // Observations and suspected causes stay in separate sections.
         let observed_at = draft.find("Observed (what happened)").unwrap();
         let cause_at = draft.find("Suspected cause").unwrap();
         assert!(observed_at < cause_at);
-        assert!(draft.find("watcher timeout").unwrap() != draft.find("I think the watcher").unwrap());
+        assert!(
+            draft.find("watcher timeout").unwrap() != draft.find("I think the watcher").unwrap()
+        );
     }
 
     #[test]
@@ -540,7 +579,10 @@ mod feedback_tests {
         assert!(out.contains("OS:"), "{out}");
         // A local screenshot path is never described as uploaded.
         assert!(!out.to_lowercase().contains("uploaded screenshot"), "{out}");
-        assert!(out.contains("NOT uploaded") || out.contains("not uploaded"), "{out}");
+        assert!(
+            out.contains("NOT uploaded") || out.contains("not uploaded"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -564,7 +606,10 @@ mod feedback_tests {
     fn bad_kind_is_invalid_input() {
         let error = feedback(&args(&["--draft", "--kind", "urgent"])).unwrap_err();
         let failure = Failure::from_error(&error);
-        assert_eq!((failure.status, failure.code.as_str()), (Status::InvalidInput, "feedback_kind"));
+        assert_eq!(
+            (failure.status, failure.code.as_str()),
+            (Status::InvalidInput, "feedback_kind")
+        );
     }
 
     #[test]
@@ -583,9 +628,16 @@ mod feedback_tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), draft);
         // The same shape `feedback` returns when `ask_app` fails: the
         // original status/code, with the draft location in `next`.
-        let original = Failure::new(Status::Unavailable, "app_not_open", "Dragent isn't open. Open it, then run this again.");
+        let original = Failure::new(
+            Status::Unavailable,
+            "app_not_open",
+            "Dragent isn't open. Open it, then run this again.",
+        );
         let encoded = Failure::new(original.status, &original.code, original.message.clone())
-            .next(format!("Draft kept at {}. Review it and retry.", path.display()))
+            .next(format!(
+                "Draft kept at {}. Review it and retry.",
+                path.display()
+            ))
             .encode();
         let decoded = Failure::from_error(&encoded);
         assert_eq!(decoded.status, Status::Unavailable);

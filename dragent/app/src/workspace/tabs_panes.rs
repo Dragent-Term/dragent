@@ -321,6 +321,9 @@ impl WorkspaceView {
             .map(|tab| self.window_title_for_tab(tab, ctx))
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_SESSION_TITLE.to_string());
+        // Dev windows carry the edition name so the Dock and Window menu
+        // distinguish them from the installed app; Release is unchanged.
+        let title = super::title::window_title(&title);
         let window_id = ctx.window_id();
         ctx.windows().set_window_title(window_id, &title);
     }

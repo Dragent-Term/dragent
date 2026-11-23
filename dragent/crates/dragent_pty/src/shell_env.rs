@@ -289,6 +289,11 @@ fn apply_shell_environment(cmd: &mut CommandBuilder, shell: &str) {
     for key in INHERITED_COLOR_SWITCHES {
         cmd.env_remove(key);
     }
+    // A hand-off successor daemon carries its predecessor's listener, token
+    // and snapshot path in its environment; shells must not inherit them.
+    for key in dragent_paths::PTY_HANDOFF_VARS {
+        cmd.env_remove(key);
+    }
     cmd.env("TERM", "xterm-256color");
     // We paint 24-bit colour. Without this, apps round their colours to the
     // 256-colour table: Claude Code's #f8f8f2 text arrives as pure white.

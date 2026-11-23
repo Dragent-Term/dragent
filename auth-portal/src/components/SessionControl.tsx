@@ -53,7 +53,7 @@ export default function SessionControl({ session, scheme, state }: SessionContro
 
   // The link that hands the sign-in to the app: a one-time code the app
   // redeems with its own secret, or (older builds) the refresh token.
-  const deepLinkUrl = appDeepLink({ state, code: session.code, refresh_token: refreshToken, user_id: userId });
+  const deepLinkUrl = appDeepLink({ scheme, state, code: session.code, refresh_token: refreshToken, user_id: userId });
 
   // Open the app on its own shortly after sign-in; the button below does it again.
   useEffect(() => {

@@ -1,13 +1,21 @@
-//! Custom URL scheme registration for `dragent://` auth callbacks.
+//! Custom URL scheme registration for auth callbacks (`dragent://` in the
+//! Release edition, `dragent-dev://` in Dev; see `dragent_paths::url_scheme`).
 //!
 //! Sign-in works on every platform without deep links (background polling + paste).
 //! Deep links are optional accelerators:
 //! - **macOS:** `CFBundleURLTypes` in `Dragent-Info.plist`
-//! - **Linux:** `MimeType=x-scheme-handler/dragent` in `dragent.desktop` (and user
+//! - **Linux:** `MimeType=x-scheme-handler/<scheme>` in the `.desktop` file (and user
 //!   `~/.local/share/applications/` at startup for dev/portable builds)
-//! - **Windows:** registry entry under `HKCU\Software\Classes\dragent` (registered at startup)
+//! - **Windows:** registry entry under `HKCU\Software\Classes\<scheme>` (registered at startup)
+//!
+//! A Dev build registers only its own `dragent-dev` scheme, so its links never
+//! reach the installed app — and it never claims the installed app's `dragent`
+//! links.
 
-pub const CUSTOM_SCHEME: &str = "dragent";
+/// This build's custom URL scheme (`dragent_paths::url_scheme()`).
+pub fn custom_scheme() -> &'static str {
+    dragent_paths::url_scheme()
+}
 
 static DEEP_LINK_RECEIVER: once_cell::sync::OnceCell<async_channel::Receiver<String>> =
     once_cell::sync::OnceCell::new();
@@ -21,7 +29,14 @@ pub fn get_deep_link_receiver() -> Option<async_channel::Receiver<String>> {
 }
 
 /// Register the custom scheme handler where the OS expects runtime registration.
+///
+/// A Dev build never touches handler registration: the registry entry,
+/// application menu and default handler are left alone.
 pub fn register_scheme_handler() {
+    if dragent_paths::is_dev() {
+        log::info!("[auth] Dev build: leaving the link handler registration alone");
+        return;
+    }
     #[cfg(windows)]
     register_windows();
     #[cfg(target_os = "linux")]
@@ -34,14 +49,16 @@ fn register_windows() {
 
     use windows_registry::{CURRENT_USER, HSTRING};
 
+    let scheme = custom_scheme();
+    let app_name = dragent_paths::app_name();
     let Ok(classes_key) = CURRENT_USER.open("Software\\Classes") else {
         log::error!("Failed to open HKCU\\Software\\Classes for URI registration");
         return;
     };
 
-    match classes_key.create(CUSTOM_SCHEME) {
+    match classes_key.create(scheme) {
         Ok(parent_key) => {
-            if let Err(err) = parent_key.set_string("", "Dragent") {
+            if let Err(err) = parent_key.set_string("", app_name) {
                 log::error!("Could not set URI scheme display name: {err:?}");
                 return;
             }
@@ -84,14 +101,19 @@ fn register_windows() {
     }
 }
 
-/// Dev / portable Linux: register `dragent://` in the user's application menu.
+/// Dev / portable Linux: register this edition's scheme in the user's application menu.
 #[cfg(target_os = "linux")]
 fn register_linux() {
     use std::fs;
     use std::path::PathBuf;
 
+    let scheme = custom_scheme();
+    let app_name = dragent_paths::app_name();
+    let desktop_file = format!("{scheme}-url-handler.desktop");
+    let mime = format!("x-scheme-handler/{scheme}");
+
     let Some(home) = dirs::home_dir() else {
-        log::warn!("cannot register dragent:// handler: home directory unavailable");
+        log::warn!("cannot register {scheme}:// handler: home directory unavailable");
         return;
     };
 
@@ -112,20 +134,20 @@ fn register_linux() {
     let desktop = format!(
         r#"[Desktop Entry]
 Type=Application
-Name=Dragent
+Name={app_name}
 GenericName=Terminal
-Comment=Dragent auth callback handler
-Exec="{}" %u
+Comment={app_name} auth callback handler
+Exec="{exe}" %u
 Icon=dragent
 StartupWMClass=dragent
 Terminal=false
-MimeType=x-scheme-handler/dragent;
+MimeType={mime};
 NoDisplay=true
 "#,
-        exe.display()
+        exe = exe.display()
     );
 
-    let desktop_path = apps_dir.join("dragent-url-handler.desktop");
+    let desktop_path = apps_dir.join(&desktop_file);
     if let Err(err) = fs::write(&desktop_path, desktop) {
         log::warn!("failed to write {}: {err}", desktop_path.display());
         return;
@@ -136,10 +158,31 @@ NoDisplay=true
         .arg(&apps_dir)
         .status();
     let _ = std::process::Command::new("xdg-mime")
-        .args([
-            "default",
-            "dragent-url-handler.desktop",
-            "x-scheme-handler/dragent",
-        ])
+        .args(["default", &desktop_file, &mime])
         .status();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_builds_leave_the_link_handler_registration_alone() {
+        // Registering must write nothing into the user's application menu,
+        // whatever this edition's desktop file would be called.
+        if !dragent_paths::is_dev() {
+            return;
+        } // only meaningful in the Dev edition
+        let home = tempfile::tempdir().unwrap();
+        crate::test_env::with_vars(&[("HOME", Some(home.path()))], || {
+            register_scheme_handler();
+            assert!(!home
+                .path()
+                .join(format!(
+                    ".local/share/applications/{}-url-handler.desktop",
+                    custom_scheme()
+                ))
+                .exists());
+        });
+    }
 }

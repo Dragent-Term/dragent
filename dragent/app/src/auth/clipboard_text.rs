@@ -77,7 +77,9 @@ fn extract_href(html: &str) -> Option<String> {
 }
 
 fn extract_embedded_url(text: &str) -> Option<String> {
-    for scheme in ["dragent://", "https://", "http://"] {
+    // Both editions' schemes, longest first so `dragent-dev://` is not
+    // shadowed; parsing (not extraction) decides which edition accepts it.
+    for scheme in ["dragent-dev://", "dragent://", "https://", "http://"] {
         let Some(start) = text.find(scheme) else {
             continue;
         };
@@ -98,32 +100,52 @@ mod tests {
     use super::*;
     use warpui_core::clipboard::ClipboardContent;
 
+    fn callback_link() -> String {
+        format!(
+            "{}://auth/callback?refresh_token=rt&state=s1",
+            dragent_paths::url_scheme()
+        )
+    }
+
     #[test]
     fn finds_url_on_second_line() {
-        let content = ClipboardContent::plain_text(
-            "Copy this link:\ndragent://auth/callback?refresh_token=rt&state=s1".to_string(),
-        );
+        let content = ClipboardContent::plain_text(format!(
+            "Copy this link:\n{}",
+            callback_link()
+        ));
         let found = extract_auth_paste(&content).unwrap();
-        assert!(found.starts_with("dragent://"));
+        assert!(found.starts_with(&format!("{}://", dragent_paths::url_scheme())));
     }
 
     #[test]
     fn extracts_href_from_html_clipboard() {
         let mut content = ClipboardContent::plain_text(String::new());
-        content.html = Some(
-            r#"<a href="dragent://auth/callback?refresh_token=rt&state=s1">Sign in</a>"#
-                .to_string(),
-        );
+        content.html = Some(format!(
+            r#"<a href="{}">Sign in</a>"#,
+            callback_link()
+        ));
         let found = extract_auth_paste(&content).unwrap();
         assert!(found.contains("refresh_token=rt"));
     }
 
     #[test]
     fn extracts_url_from_labeled_clipboard_line() {
-        let content = ClipboardContent::plain_text(
-            "Success! dragent://auth/callback?refresh_token=rt&state=s1".to_string(),
-        );
+        let content =
+            ClipboardContent::plain_text(format!("Success! {}", callback_link()));
         let found = extract_auth_paste(&content).unwrap();
-        assert!(found.starts_with("dragent://"));
+        assert!(found.starts_with(&format!("{}://", dragent_paths::url_scheme())));
+    }
+
+    #[test]
+    fn finds_the_other_editions_scheme_too() {
+        // Extraction finds either scheme; the parser decides which edition
+        // accepts it (see `callback::tests::rejects_the_other_editions_scheme`).
+        for scheme in ["dragent://", "dragent-dev://"] {
+            let content = ClipboardContent::plain_text(format!(
+                "Copy this link:\n{scheme}auth/callback?refresh_token=rt&state=s1"
+            ));
+            let found = extract_auth_paste(&content).unwrap();
+            assert!(found.starts_with(scheme), "{found}");
+        }
     }
 }

@@ -124,8 +124,13 @@ pub fn enabled() -> bool {
     load(&record_path()).enabled
 }
 
-/// Bring the folders in line with the setting (at startup).
+/// Bring the folders in line with the setting (at startup). A Dev build
+/// never writes into the shared skill folders other agents read.
 pub fn sync() -> Outcome {
+    if dragent_paths::is_dev() {
+        log::info!("[cli] Dev build: leaving shared skill folders alone");
+        return Outcome::default();
+    }
     let Some(home) = dirs::home_dir() else {
         return Outcome::default();
     };
@@ -142,14 +147,20 @@ pub fn sync() -> Outcome {
     outcome
 }
 
-/// The user turned it on or off.
+/// The user turned it on or off. A Dev build records the choice in its own
+/// home but never writes into the shared skill folders.
 pub fn set_enabled(enabled: bool) -> Outcome {
-    let Some(home) = dirs::home_dir() else {
-        return Outcome::default();
-    };
     let path = record_path();
     let mut record = load(&path);
     record.enabled = enabled;
+    if dragent_paths::is_dev() {
+        log::info!("[cli] Dev build: leaving shared skill folders alone");
+        save(&path, &record);
+        return Outcome::default();
+    }
+    let Some(home) = dirs::home_dir() else {
+        return Outcome::default();
+    };
     let outcome = apply_suite(&mut record, &home, true);
     save(&path, &record);
     outcome
@@ -432,12 +443,17 @@ pub(crate) fn computer_enabled() -> bool {
 }
 
 pub(crate) fn set_computer_enabled(enabled: bool) -> Outcome {
-    let Some(home) = dirs::home_dir() else {
-        return Outcome::default();
-    };
     let path = dragent_paths::home().join(COMPUTER_RECORD_FILE);
     let mut record = load(&path);
     record.enabled = enabled;
+    if dragent_paths::is_dev() {
+        log::info!("[cli] Dev build: leaving shared skill folders alone");
+        save(&path, &record);
+        return Outcome::default();
+    }
+    let Some(home) = dirs::home_dir() else {
+        return Outcome::default();
+    };
     let outcome = apply_computer(&mut record, &home, true);
     save(&path, &record);
     outcome
@@ -636,5 +652,34 @@ mod tests {
         let mut computer = Record::default();
         apply_computer(&mut computer, home, true);
         assert!(home.join(".agents/skills/dragent-computer/SKILL.md").is_file());
+    }
+
+    #[test]
+    fn dev_builds_write_nothing_into_shared_skill_folders() {
+        // Test builds are the Dev edition. Toggling the teaching on and the
+        // startup sync must both write nothing into the shared folders,
+        // while the choice itself is still recorded in the Dev home.
+        if !dragent_paths::is_dev() {
+            return;
+        } // only meaningful in the Dev edition
+        let home = tempfile::tempdir().unwrap();
+        let dev_home = tempfile::tempdir().unwrap();
+        crate::test_env::with_vars(
+            &[
+                ("HOME", Some(home.path())),
+                (dragent_paths::DEV_HOME_ENV, Some(dev_home.path())),
+            ],
+            || {
+                let outcome = set_enabled(true);
+                assert!(outcome.written.is_empty() && outcome.removed.is_empty());
+                assert!(enabled());
+                let outcome = set_computer_enabled(true);
+                assert!(outcome.written.is_empty() && outcome.removed.is_empty());
+                let outcome = sync();
+                assert!(outcome.written.is_empty() && outcome.removed.is_empty());
+                assert!(!home.path().join(".agents/skills").exists());
+                assert!(!home.path().join(".qwen").exists());
+            },
+        );
     }
 }

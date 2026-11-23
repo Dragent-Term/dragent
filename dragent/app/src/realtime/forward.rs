@@ -516,14 +516,14 @@ mod tests {
                 ("Sec-WebSocket-Protocol".into(), "vite-hmr".into()),
                 (
                     "Forwarded".into(),
-                    "host=public.dragent.dev;proto=https".into(),
+                    "host=public.example.test;proto=https".into(),
                 ),
-                ("X-Forwarded-Host".into(), "public.dragent.dev".into()),
+                ("X-Forwarded-Host".into(), "public.example.test".into()),
                 ("X-Real-IP".into(), "203.0.113.1".into()),
-                ("Origin".into(), "https://public.dragent.dev".into()),
+                ("Origin".into(), "https://public.example.test".into()),
                 (
                     "Referer".into(),
-                    "https://public.dragent.dev/dashboard".into(),
+                    "https://public.example.test/dashboard".into(),
                 ),
             ],
             &[],
@@ -570,7 +570,7 @@ mod tests {
             "/src/main.tsx",
             &[
                 ("Connection".into(), "keep-alive".into()),
-                ("X-Forwarded-Host".into(), "public.dragent.dev".into()),
+                ("X-Forwarded-Host".into(), "public.example.test".into()),
             ],
             &[],
         )

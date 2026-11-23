@@ -83,7 +83,9 @@ fn dragent_choices(agent: PromptAgent, app: &AppContext) -> Vec<(String, String)
                 .map(|m| (m.model_id.clone(), m.name.clone())),
         );
         entries.push((crate::settings::AUTO_MODEL_ID.into(), "Auto".into()));
-        if settings.has_any_user_credential() {
+        if crate::api::is_local_mode() {
+            entries = crate::settings::local_models::local_mode_choices(&settings);
+        } else if settings.has_any_user_credential() {
             entries.retain(|(id, _)| {
                 id == crate::settings::AUTO_MODEL_ID || settings.has_user_credential_for_model(id)
             });

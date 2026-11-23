@@ -89,6 +89,23 @@ fn skills_root() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".agents").join("skills")
 }
 
+/// Place a plugin's skills where agents find them. A Dev build never writes
+/// into the shared skills folders other apps read: the plugin is still
+/// recorded, but its skills stay out.
+fn provision_shared_skills(
+    root: &Path,
+    package: &Path,
+    manifest: &Manifest,
+    previous: &Owned,
+    reserved: &dyn Fn(&str) -> bool,
+) -> (Owned, dragent_plugins::skills::Report) {
+    if dragent_paths::is_dev() {
+        log::info!("[plugins] Dev build: leaving the shared skills folders alone");
+        return (previous.clone(), Default::default());
+    }
+    skills::provision(root, package, manifest, previous, reserved)
+}
+
 fn load() -> Result<Record, String> {
     Record::load(&store())
 }
@@ -398,7 +415,7 @@ fn install(flags: &Flags) -> Result<Value, String> {
     let accounts = vec!["default".to_string()];
     refuse_taken(&names_taken(&servers::plan(&manifest, &fetched.dir, &accounts)))?;
     let path = package::copy_into(&store(), &fetched.dir, &manifest)?;
-    let (owned, skill_report) = skills::provision(
+    let (owned, skill_report) = provision_shared_skills(
         &skills_root(),
         &path,
         &manifest,
@@ -672,7 +689,13 @@ fn update(flags: &Flags) -> Result<Value, String> {
     }
     let path = package::copy_into(&store(), &fetched.dir, &manifest)?;
     let (owned, skill_report) = if before.enabled {
-        skills::provision(&skills_root(), &path, &manifest, &before.skills, &reserved(&record, &id))
+        provision_shared_skills(
+            &skills_root(),
+            &path,
+            &manifest,
+            &before.skills,
+            &reserved(&record, &id),
+        )
     } else {
         (before.skills.clone(), Default::default())
     };
@@ -726,8 +749,13 @@ fn switch(flags: &Flags, on: bool) -> Result<Value, String> {
     let mut plugin = installed(&record, &id)?.clone();
     let manifest = Manifest::read(&plugin.path)?;
     let report = if on {
-        let (owned, report) =
-            skills::provision(&skills_root(), &plugin.path, &manifest, &plugin.skills, &reserved(&record, &id));
+        let (owned, report) = provision_shared_skills(
+            &skills_root(),
+            &plugin.path,
+            &manifest,
+            &plugin.skills,
+            &reserved(&record, &id),
+        );
         plugin.skills = owned;
         report
     } else {
@@ -870,8 +898,13 @@ fn sync() -> Result<Value, String> {
             // Asked to put back what's missing: files gone from the skills
             // folder come back (edited ones stay as they are).
             let previous = skills::forget_missing(&skills_root(), &plugin.skills);
-            let (owned, report) =
-                skills::provision(&skills_root(), &plugin.path, &manifest, &previous, &reserved(&record, &plugin.id));
+            let (owned, report) = provision_shared_skills(
+                &skills_root(),
+                &plugin.path,
+                &manifest,
+                &previous,
+                &reserved(&record, &plugin.id),
+            );
             plugin.skills = owned;
             Some(report)
         } else {
@@ -982,5 +1015,37 @@ mod tests {
         assert!(is_repository("git@github.com:acme/tickets-plugin.git"));
         assert!(!is_repository("./plugins/acme"));
         assert!(!is_repository("/Users/me/acme"));
+    }
+
+    #[test]
+    fn dev_builds_keep_plugin_skills_out_of_shared_folders() {
+        // Test builds are the Dev edition: provisioning records nothing and
+        // writes nothing into the shared root.
+        if !dragent_paths::is_dev() {
+            return;
+        } // only meaningful in the Dev edition
+        let root = tempfile::tempdir().unwrap();
+        let package = root.path().join("package");
+        std::fs::create_dir_all(package.join("demo")).unwrap();
+        std::fs::write(package.join("demo/SKILL.md"), "demo").unwrap();
+        let manifest = Manifest {
+            schema: 1,
+            id: "demo".into(),
+            name: "Demo".into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            publisher: None,
+            skills: vec!["demo".into()],
+            servers: Default::default(),
+            requires: Default::default(),
+        };
+        let shared = root.path().join("shared");
+        let (owned, report) =
+            provision_shared_skills(&shared, &package, &manifest, &Owned::new(), &|_: &str| {
+                false
+            });
+        assert!(owned.is_empty());
+        assert!(report.written.is_empty());
+        assert!(!shared.exists());
     }
 }

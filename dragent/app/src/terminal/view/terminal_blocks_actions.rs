@@ -162,11 +162,7 @@ impl TerminalView {
                 self.open_link_menu = None;
                 self.link_menu_anchor = None;
                 if url.starts_with("http://") || url.starts_with("https://") {
-                    // The workspace opens it like every link (Dragent's
-                    // browser unless the user turned that off).
-                    ctx.dispatch_typed_action_deferred(
-                        crate::workspace::WorkspaceAction::OpenExternalUrl { url: url.clone() },
-                    );
+                    self.open_web_link(url.clone(), ctx);
                 } else {
                     self.open_terminal_path_link(*block_id, url, ctx);
                 }

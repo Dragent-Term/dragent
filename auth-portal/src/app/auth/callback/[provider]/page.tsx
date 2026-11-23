@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { markSignedIn } from "@/lib/token";
-import { appPart, stashHandoff } from "@/lib/desktopHandoff";
+import { appPart, schemeForState, stashHandoff } from "@/lib/desktopHandoff";
 import { 
   CheckCircle2, 
   XCircle, 
@@ -73,8 +73,10 @@ function OAuthCallbackContent() {
         // Not a popup (the provider took over the whole tab, or popups were
         // blocked): finish on the dashboard, which offers the hand-off to the
         // app (open it, or approve it with the code it shows).
+        // The app that started this sign-in (Dragent or a Dev build), as the
+        // login page remembered it in this browser; `dragent` otherwise.
         stashHandoff({
-          scheme: "dragent",
+          scheme: schemeForState(data.state),
           state: data.state,
           ...appPart(data),
           user_id: data.user_id ?? "",

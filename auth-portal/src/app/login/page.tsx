@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Loader2, Mail, ShieldAlert, ShieldCheck } from "lucide-react";
 import SessionControl from "@/components/SessionControl";
 import { SIGNED_IN_KEY, markSignedIn } from "@/lib/token";
-import { APP_SCHEME, appPart, stashHandoff } from "@/lib/desktopHandoff";
+import { appPart, appScheme, rememberScheme, stashHandoff } from "@/lib/desktopHandoff";
 
 // Custom Google SVG icon
 const GoogleIcon = () => (
@@ -30,7 +30,9 @@ function LoginDesktopContent() {
   
   // URL Parameters
   const router = useRouter();
-  const scheme = APP_SCHEME;
+  // Which app to hand the sign-in to: `dragent`, or `dragent-dev` for a Dev
+  // build. Allow-listed; anything else is `dragent` (see appScheme).
+  const scheme = appScheme(searchParams.get("scheme"));
   const [state, setState] = useState("");
   const isDesktopFlow = Boolean(searchParams.get("state"));
   // The desktop's PKCE challenge: passed on so the app's half of the sign-in
@@ -59,12 +61,13 @@ function LoginDesktopContent() {
   
   // Load and check URL parameters
   useEffect(() => {
-    // `scheme` in the URL is ignored: the app's scheme is fixed (APP_SCHEME).
     const urlState = searchParams.get("state");
     
     if (urlState) {
       // Opened BY the desktop app: it owns the state and is waiting on it, so
-      // finishing here also completes the app's linking.
+      // finishing here also completes the app's linking. Remember which app
+      // (Dragent or a Dev build) for the round trips that leave this page.
+      rememberScheme(urlState, scheme);
       setState(urlState);
     } else {
       // Opened directly in a browser. This is the single login page now, so a
@@ -78,7 +81,7 @@ function LoginDesktopContent() {
           : `web-${Date.now()}-${Math.random().toString(36).slice(2)}`
       );
     }
-  }, [searchParams]);
+  }, [searchParams, scheme]);
 
   // Polling loop for session status check. It only resolves once a sign-in
   // finished elsewhere (a magic link opened on another device) has been

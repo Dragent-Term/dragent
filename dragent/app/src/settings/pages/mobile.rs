@@ -187,6 +187,14 @@ pub fn render_mobile(view: &SettingsView, theme: &Theme, app: &AppContext) -> Bo
             "Reach your terminals and agents from your phone.",
         ));
 
+    // Phone pairing needs the relay; a Dev build's pairing links wouldn't
+    // open the phone app either.
+    if crate::api::is_local_mode() {
+        return page
+            .with_child(super::super::widgets::needs_account_state(theme, ui))
+            .finish();
+    }
+
     if !is_logged_in(app) {
         return page.with_child(render_signed_out(view, theme, ui)).finish();
     }

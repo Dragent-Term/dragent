@@ -437,11 +437,7 @@ impl TerminalView {
         };
 
         match found.kind {
-            TerminalLinkKind::Url(url) => {
-                ctx.dispatch_typed_action_deferred(
-                    crate::workspace::WorkspaceAction::OpenExternalUrl { url },
-                );
-            }
+            TerminalLinkKind::Url(url) => self.open_web_link(url, ctx),
             TerminalLinkKind::FilePath { raw, line, column } => {
                 let (raw_path, _, _) =
                     crate::terminal::render::block_output::split_path_suffix(&raw);

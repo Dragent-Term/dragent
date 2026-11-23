@@ -11,7 +11,7 @@
 //!   see `e2e_store::desktop`). Private keys are wiped on drop and are never
 //!   logged: the `Debug` impls print public halves only.
 //!
-//! Keychain layout (service [`KEYCHAIN_SERVICE`]):
+//! Keychain layout (service [`dragent_paths::keychain_service`]):
 //!
 //! | account | value |
 //! |---|---|
@@ -32,9 +32,6 @@ use dragent_e2ee::noise::{PublicKey, StaticKeypair};
 use dragent_e2ee::seal::at_rest::SymmetricKey;
 use dragent_e2ee::zeroize::Zeroizing;
 use dragent_e2ee::Id;
-
-/// The keychain service every Dragent secret lives under.
-pub const KEYCHAIN_SERVICE: &str = "com.dragent.app";
 
 /// The keychain could not be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +67,7 @@ pub struct OsKeychain;
 #[cfg(not(target_family = "wasm"))]
 impl SecretStore for OsKeychain {
     fn get(&self, account: &str) -> Result<Option<Zeroizing<String>>, SecretStoreError> {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, account)
+        let entry = keyring::Entry::new(dragent_paths::keychain_service(), account)
             .map_err(|e| SecretStoreError::Unavailable(keyring_error_class(&e)))?;
         match entry.get_password() {
             Ok(v) => Ok(Some(Zeroizing::new(v))),
@@ -80,13 +77,13 @@ impl SecretStore for OsKeychain {
     }
 
     fn set(&self, account: &str, value: &str) -> Result<(), SecretStoreError> {
-        keyring::Entry::new(KEYCHAIN_SERVICE, account)
+        keyring::Entry::new(dragent_paths::keychain_service(), account)
             .and_then(|e| e.set_password(value))
             .map_err(|e| SecretStoreError::Unavailable(keyring_error_class(&e)))
     }
 
     fn delete(&self, account: &str) -> Result<(), SecretStoreError> {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, account)
+        let entry = keyring::Entry::new(dragent_paths::keychain_service(), account)
             .map_err(|e| SecretStoreError::Unavailable(keyring_error_class(&e)))?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),

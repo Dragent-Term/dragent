@@ -170,11 +170,13 @@ pub async fn discover_oauth_meta(server_url: &str, www_auth: &str) -> anyhow::Re
 /// Non-blocking OAuth start: registers the client, builds the auth URL, opens the
 /// browser, and stores the PKCE session in the global pending registry.
 ///
-/// The token exchange completes later when the OS delivers the deep-link callback
-/// `dragent://anysphere.dragent-mcp/oauth/callback?code=…&state=…`.
+/// The token exchange completes later when the OS delivers this edition's
+/// deep-link callback
+/// (`<scheme>://anysphere.dragent-mcp/oauth/callback?code=…&state=…`).
 pub async fn begin_mcp_oauth_flow(server_name: &str, meta: &OAuthMeta) -> anyhow::Result<()> {
-    use super::oauth_pending::{McpPkceSession, MCP_REDIRECT_URI};
+    use super::oauth_pending::{mcp_redirect_uri, McpPkceSession};
 
+    let redirect_uri = mcp_redirect_uri();
     let verifier = pkce_verifier();
     let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(Sha256::digest(verifier.as_bytes()));
@@ -189,7 +191,7 @@ pub async fn begin_mcp_oauth_flow(server_name: &str, meta: &OAuthMeta) -> anyhow
         static_client.client_id.to_string()
     // 2. Dynamic Client Registration (RFC 7591): servers that support open registration.
     } else if let Some(reg_ep) = &meta.registration_endpoint {
-        match register_client(reg_ep, MCP_REDIRECT_URI).await {
+        match register_client(reg_ep, &redirect_uri).await {
             Ok(id) => {
                 log::info!("[mcp oauth] dynamic registration succeeded: client_id={id}");
                 id
@@ -226,7 +228,7 @@ pub async fn begin_mcp_oauth_flow(server_name: &str, meta: &OAuthMeta) -> anyhow
         "{}?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}{}",
         meta.authorization_endpoint,
         pct_encode(&client_id),
-        pct_encode(MCP_REDIRECT_URI),
+        pct_encode(&redirect_uri),
         challenge,
         pct_encode(&state),
         scope_param,
@@ -238,7 +240,7 @@ pub async fn begin_mcp_oauth_flow(server_name: &str, meta: &OAuthMeta) -> anyhow
             server_name: server_name.to_string(),
             verifier,
             client_id,
-            redirect_uri: MCP_REDIRECT_URI.to_string(),
+            redirect_uri,
             token_endpoint: meta.token_endpoint.clone(),
         },
     );

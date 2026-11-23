@@ -8,6 +8,19 @@ pub struct AuthUser {
     pub avatar_url: Option<String>,
 }
 
+impl AuthUser {
+    /// The local-mode identity (a Dev build with no server). It has no user
+    /// id: nothing it signs in to exists on any server.
+    pub fn local_demo() -> Self {
+        Self {
+            user_id: None,
+            first_name: Some(crate::api::local_mode::DEMO_FIRST_NAME.to_string()),
+            last_name: Some(crate::api::local_mode::DEMO_LAST_NAME.to_string()),
+            avatar_url: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthStatus {
     LoggedOut,

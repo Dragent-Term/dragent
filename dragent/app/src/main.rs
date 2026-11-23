@@ -6,6 +6,15 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() -> anyhow::Result<()> {
+    // Started from a Dragent terminal, this process inherits that terminal's
+    // daemon hand-off variables. Only the PTY daemon, which its predecessor
+    // or supervisor starts with them, may act on them; anyone else would
+    // adopt another daemon's listener (and hand it on to the services it
+    // starts). Runs first: nothing else may run while the environment changes.
+    #[cfg(not(target_family = "wasm"))]
+    if !std::env::args().any(|a| a == dragent_host::protocol::PTY_SERVICE_ARG) {
+        dragent_paths::strip_inherited_vars(&[&dragent_paths::PTY_HANDOFF_VARS]);
+    }
     dragent_host::capture_build_identity();
     // Services spawned by the app name their organisation explicitly; the
     // desktop app itself selects one from the signed-in user's record.
@@ -32,7 +41,19 @@ fn main() -> anyhow::Result<()> {
     if let Some(code) = dragent::cli::run_if_requested() {
         std::process::exit(code);
     }
+    // What remains is the app itself and its background services. The
+    // terminal identity above was for the `dragent` command and agent
+    // wrappers; carried on, it would tag everything the app or its services
+    // start with a terminal of whichever app launched this one. Still before
+    // any thread: the arms above that start threads never return here.
+    #[cfg(not(target_family = "wasm"))]
+    dragent_paths::strip_inherited_vars(&[&dragent_paths::HOST_TERMINAL_VARS]);
     runtime_metrics::init();
+    // Dev edition: copy the person's preferences from the release folder once,
+    // before settings are first read. Release builds run none of this. Legacy
+    // migration below is already a no-op in Dev builds.
+    #[cfg(not(target_family = "wasm"))]
+    dragent::dev_settings_copy::maybe_copy_release_settings();
     #[cfg(not(target_family = "wasm"))]
     dragent_paths::migrate_legacy_storage()?;
     #[cfg(all(not(target_family = "wasm"), feature = "local-index"))]

@@ -187,6 +187,9 @@ fn signed_in() -> Result<String, String> {
     if !in_app() {
         return Err("Only the Dragent app talks to Dragent's server.".into());
     }
+    if crate::api::is_local_mode() {
+        return Err(crate::api::NEEDS_ACCOUNT.into());
+    }
     organisation()
         .ok_or_else(|| "Sign in to Dragent to keep connections on your account.".to_string())
 }

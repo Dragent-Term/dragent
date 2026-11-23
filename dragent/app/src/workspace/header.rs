@@ -97,6 +97,12 @@ pub fn render_center_segment(
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_main_axis_size(MainAxisSize::Max)
         .with_spacing(6.0);
+    // Dev edition marker: visible on every header (including the minimal
+    // empty-screen row) so a dev build never looks like the installed app.
+    // Never rendered in the Release edition.
+    if let Some(badge) = render_dev_badge(ui_font, theme) {
+        row = row.with_child(badge);
+    }
     if !minimal {
         if !left_panel_visible {
             // The left segment is gone with the panel, so its toggle moves here —
@@ -569,6 +575,40 @@ fn review_count_badge(
     .finish()
 }
 
+/// Whether the DEV badge shows for an edition. Pure so both editions are
+/// unit-testable: test builds are always Dev (see dragent_paths), so the
+/// Release arm can only be checked through this function.
+pub(crate) fn dev_badge_visible_for_edition(edition: dragent_paths::Edition) -> bool {
+    edition == dragent_paths::Edition::Dev
+}
+
+/// Dev-edition marker: a small "DEV" pill at the start of the header so a
+/// dev build never looks like the installed app. Never rendered in Release:
+/// gated on the compile-time edition, not a runtime flag.
+pub(crate) fn render_dev_badge(ui_font: FamilyId, theme: &Theme) -> Option<Box<dyn Element>> {
+    if !dev_badge_visible_for_edition(dragent_paths::edition()) {
+        return None;
+    }
+    Some(
+        Container::new(
+            Text::new(
+                "DEV".to_string(),
+                ui_font,
+                crate::theme::text_size(10.0),
+            )
+            .with_color(theme.accent)
+            .finish(),
+        )
+        .with_border(Border::all(1.0).with_border_color(theme.accent))
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(5.0)))
+        .with_padding_left(6.0)
+        .with_padding_right(6.0)
+        .with_padding_top(2.0)
+        .with_padding_bottom(2.0)
+        .finish(),
+    )
+}
+
 /// Full-navbar-height vertical hairline joining split-button segments.
 fn divider(theme: &Theme) -> Box<dyn Element> {
     Container::new(
@@ -902,4 +942,21 @@ fn icon_chip(icon: AppIcon, color: ColorU) -> Box<dyn Element> {
         .with_padding_top(HEADER_ICON_PADDING)
         .with_padding_bottom(HEADER_ICON_PADDING)
         .finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_badge_shows_only_in_the_dev_edition() {
+        // Test builds are always the Dev edition (see dragent_paths).
+        assert!(dragent_paths::is_dev());
+        assert!(dev_badge_visible_for_edition(dragent_paths::Edition::Dev));
+        // The Release gate is compile-time, not a runtime flag: the badge
+        // must never render there.
+        assert!(!dev_badge_visible_for_edition(
+            dragent_paths::Edition::Release
+        ));
+    }
 }

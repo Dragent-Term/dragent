@@ -204,6 +204,17 @@ pub fn empty_state(theme: &Theme, ui_font: FamilyId, title: &str, body: &str) ->
     )
 }
 
+/// Calm placeholder where a feature needs the Dragent server and this build
+/// runs without one (local mode). Not an error: nothing failed.
+pub fn needs_account_state(theme: &Theme, ui_font: FamilyId) -> Box<dyn Element> {
+    empty_state(
+        theme,
+        ui_font,
+        crate::api::NEEDS_ACCOUNT,
+        crate::api::NEEDS_ACCOUNT_DETAIL,
+    )
+}
+
 pub fn status_badge(
     theme: &Theme,
     ui_font: FamilyId,

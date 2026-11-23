@@ -921,6 +921,8 @@ impl TerminalView {
             // A shared-session mirror starts view-only; the host grants control
             // explicitly. A local terminal is never read-only.
             remote_read_only: is_remote,
+            links_open_in_system_browser: false,
+            pending_shell_setup: None,
             remote_ai_tool: None,
             remote_is_host_account: false,
             remote_rich_input_closed: false,

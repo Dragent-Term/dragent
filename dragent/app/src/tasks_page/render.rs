@@ -53,6 +53,12 @@ impl DropTargetData for ColumnTarget {
 
 pub(super) fn page(view: &TasksView, _app: &AppContext) -> Box<dyn Element> {
     let theme = &view.theme;
+    // Org tasks live on the server; a local-mode build has none.
+    if crate::api::is_local_mode() {
+        return Container::new(centered(view, crate::api::NEEDS_ACCOUNT, theme.sub_text()))
+            .with_background_color(theme.background)
+            .finish();
+    }
     if view.org.is_none() {
         return Container::new(centered(view, "Sign in to see your organisation's tasks.", theme.sub_text()))
             .with_background_color(theme.background)

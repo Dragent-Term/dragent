@@ -364,6 +364,19 @@ static NSView *embeddedViewAtEvent(NSWindow *window, NSEvent *event) {
     return hit;
 }
 
+// The view an edit chord acts on for a click inside an embedded view: `view` or its nearest
+// ancestor (below the app's content) that takes the keyboard and handles `action`. Clicks land
+// on a web view's inner views, which do neither.
+static NSView *embeddedEditTarget(NSView *view, NSView *content, SEL action) {
+    for (NSView *candidate = view; candidate != nil && candidate != content;
+         candidate = [candidate superview]) {
+        if ([candidate acceptsFirstResponder] && [candidate respondsToSelector:action]) {
+            return candidate;
+        }
+    }
+    return nil;
+}
+
 // The standard editing action for an edit chord (Cmd+C, Cmd+V, …), or NULL. Embedded web views
 // decline key equivalents, so the window sends these actions to them directly.
 static SEL embeddedEditAction(NSEvent *event) {
@@ -592,9 +605,18 @@ static SEL embeddedEditAction(NSEvent *event) {
         // in a pane the person isn't working in.
         SEL editAction = embeddedEditAction(event);
         NSView *clicked = editAction != NULL ? [self liveEmbeddedClick] : nil;
-        if (clicked != nil && [self makeFirstResponder:clicked] &&
-            [NSApp sendAction:editAction to:nil from:self]) {
-            return YES;
+        if (clicked != nil) {
+            // A click usually lands on one of the page's inner views, which can't take the
+            // keyboard: act on the nearest view up from it that handles the edit (the web view).
+            NSView *target = embeddedEditTarget(clicked, self.contentView, editAction);
+            if (target != nil) {
+                [self makeFirstResponder:target];
+                if ([NSApp sendAction:editAction to:target from:self]) {
+                    return YES;
+                }
+            }
+            // Never fall through to the app's own paste: that lands in another pane.
+            return [super performKeyEquivalent:event];
         }
 
         NSApplication *application = [NSApplication sharedApplication];

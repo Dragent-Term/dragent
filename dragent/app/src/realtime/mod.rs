@@ -164,6 +164,16 @@ impl RealtimeConfig {
 pub fn start(config: RealtimeConfig, tx: async_channel::Sender<RealtimeEvent>) -> RealtimeHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
+    // Local mode has no gateway: say so once and stop, never dial or retry.
+    if crate::api::is_local_mode() {
+        let _ = tx.try_send(RealtimeEvent::Error(crate::api::NEEDS_ACCOUNT.to_string()));
+        let _ = tx.try_send(RealtimeEvent::Disconnected { will_retry: false });
+        stop.store(true, Ordering::Relaxed);
+        return RealtimeHandle {
+            outbound: outbound_tx,
+            stop,
+        };
+    }
     let stop_thread = stop.clone();
     let _ = std::thread::Builder::new()
         .name("realtime-ws".into())
@@ -476,8 +486,8 @@ fn sleep_interruptible(dur: Duration, stop: &AtomicBool) {
 /// The gateway WebSocket URL.
 ///
 /// Native derives it from the configured backend origin. The **web viewer** is
-/// served from a different origin than the backend (e.g. page `beta.dragent.dev`,
-/// backend `beta.api.dragent.dev`), and the backend origin is an *env* value the
+/// served from a different origin than the backend (e.g. page `app.example.test`,
+/// backend `api.example.test`), and the backend origin is an *env* value the
 /// browser can't read — so the host page injects the fully-resolved gateway
 /// (`window.__DRAGENT_GATEWAY__`, from its `/api/session/config`). A `?gateway=`
 /// query param overrides it for local testing.

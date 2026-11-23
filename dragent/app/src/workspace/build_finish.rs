@@ -580,9 +580,10 @@ impl WorkspaceView {
                                 ),
                                 id
                             );
-                            ws.open_new_workspace_tab(
-                                Some("Agent account sign-in"),
-                                Some(&command),
+                            ws.open_page_command_terminal(
+                                "Agent account sign-in",
+                                None,
+                                &command,
                                 ctx,
                             );
                         }
@@ -594,7 +595,10 @@ impl WorkspaceView {
                     title,
                     command,
                 } => match machine_id {
-                    None => ws.open_new_workspace_tab(Some(title), Some(command), ctx),
+                    // Settings never routes to a terminal tab: local
+                    // sign-in runs in the embedded terminal over Settings,
+                    // like the remote one below.
+                    None => ws.open_page_command_terminal(title, None, command, ctx),
                     Some(id) => ws.open_account_sign_in_terminal(id, title, command, ctx),
                 },
                 SettingsEvent::Project(action) => ws.handle_projects_settings(action, ctx),

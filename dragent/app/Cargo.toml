@@ -1,6 +1,6 @@
 [package]
 name = "dragent"
-version = "0.2.9-rc.1"
+version = "0.2.9-rc.3"
 edition = "2021"
 description = "Dragent — self-healing terminal application"
 license.workspace = true
@@ -194,18 +194,6 @@ windows-registry = { workspace = true }
 embed-resource = "3.0"
 ico = "0.4"
 image = { workspace = true, default-features = false, features = ["png"] }
-
-[package.metadata.bundle.bin.dragent]
-name = "Dragent"
-identifier = "com.dragent.app"
-icon = [
-  "assets/resources/mac/Dragent.icns",
-  "assets/resources/windows/dragent.ico",
-]
-category = "public.app-category.developer-tools"
-copyright = "© Dragent Contributors"
-short_description = "Self-healing developer terminal"
-osx_url_schemes = ["dragent"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

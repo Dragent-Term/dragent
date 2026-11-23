@@ -240,11 +240,11 @@ pub fn reinit_server(name: &str, on_done: Option<Box<dyn FnOnce() + Send + 'stat
     });
 }
 
-/// Returns true if `url` is a MCP OAuth deep-link callback delivered by the OS.
+/// Returns true if `url` is this edition's MCP OAuth deep-link callback.
 pub fn is_mcp_oauth_callback(url: &str) -> bool {
     use oauth_pending::{MCP_OAUTH_CALLBACK_HOST, MCP_OAUTH_CALLBACK_PATH};
     if let Ok(parsed) = url::Url::parse(url) {
-        return parsed.scheme() == "dragent"
+        return parsed.scheme() == dragent_paths::url_scheme()
             && parsed.host_str() == Some(MCP_OAUTH_CALLBACK_HOST)
             && parsed.path() == MCP_OAUTH_CALLBACK_PATH;
     }
@@ -593,5 +593,40 @@ pub fn resources_for(server_name: &str) -> Vec<String> {
     match &*guard {
         Some(mgr) => mgr.resources_for(server_name),
         None => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mcp_oauth_callback_matches_only_this_editions_scheme() {
+        let scheme = dragent_paths::url_scheme();
+        let own = format!(
+            "{scheme}://anysphere.dragent-mcp/oauth/callback?code=c&state=s"
+        );
+        assert!(is_mcp_oauth_callback(&own), "{own}");
+        let other = if scheme == "dragent" {
+            "dragent-dev://anysphere.dragent-mcp/oauth/callback?code=c&state=s"
+        } else {
+            "dragent://anysphere.dragent-mcp/oauth/callback?code=c&state=s"
+        };
+        assert!(!is_mcp_oauth_callback(other), "must reject {other}");
+        assert!(!is_mcp_oauth_callback(
+            "https://example.com/oauth/callback?code=c&state=s"
+        ));
+    }
+
+    #[test]
+    fn mcp_redirect_uri_uses_this_editions_scheme() {
+        let uri = oauth_pending::mcp_redirect_uri();
+        let scheme = dragent_paths::url_scheme();
+        assert!(
+            uri.starts_with(&format!("{scheme}://")),
+            "unexpected redirect URI: {uri}"
+        );
+        assert!(uri.ends_with("/oauth/callback"), "{uri}");
+        assert!(is_mcp_oauth_callback(&format!("{uri}?code=c&state=s")));
     }
 }

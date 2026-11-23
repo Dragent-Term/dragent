@@ -268,24 +268,33 @@ fn command_line_card(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
     let bin = crate::cli::user_bin_dir();
     let setup = crate::cli::shell_setup::Setup::current();
     let installed = setup.as_ref().is_some_and(|setup| setup.installed(&bin));
-    let description = match (&view.cli_setup_error, &setup) {
-        (Some(error), _) => error.clone(),
-        (None, Some(setup)) if installed => format!(
-            "Available in Dragent's terminals, and in other terminals through {}. New terminal windows pick it up.",
-            setup.place()
-        ),
-        (None, Some(setup)) => format!(
-            "Available in Dragent's terminals. Add it to {} to use it in other terminals too.",
-            setup.place()
-        ),
-        (None, None) => format!(
-            "Available in Dragent's terminals. To use it elsewhere, add {} to your PATH.",
-            bin.display()
-        ),
+    // A Dev build never edits shell profiles or the user PATH, and never
+    // writes into shared skill folders, so both rows below explain that
+    // instead of offering the setup.
+    let dev = dragent_paths::is_dev();
+    let description = if dev {
+        "Available in Dragent's terminals. Dev builds don't change other apps' settings."
+            .to_string()
+    } else {
+        match (&view.cli_setup_error, &setup) {
+            (Some(error), _) => error.clone(),
+            (None, Some(setup)) if installed => format!(
+                "Available in Dragent's terminals, and in other terminals through {}. New terminal windows pick it up.",
+                setup.place()
+            ),
+            (None, Some(setup)) => format!(
+                "Available in Dragent's terminals. Add it to {} to use it in other terminals too.",
+                setup.place()
+            ),
+            (None, None) => format!(
+                "Available in Dragent's terminals. To use it elsewhere, add {} to your PATH.",
+                bin.display()
+            ),
+        }
     };
     let label = if cfg!(windows) { "Add to PATH" } else { "Add to shell" };
     let control: Box<dyn Element> = match &setup {
-        Some(_) if !installed => secondary_button(
+        Some(_) if !installed && !dev => secondary_button(
             theme,
             ui_font,
             view.view_id,
@@ -293,13 +302,19 @@ fn command_line_card(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
             label,
             SettingsAction::InstallCliInShell,
         ),
-        Some(_) => Text::new("Added".to_string(), ui_font, crate::theme::text_size(12.5))
-            .with_color(theme.sub_text())
-            .finish(),
-        None => warpui::elements::Empty::new().finish(),
+        Some(_) if installed => {
+            Text::new("Added".to_string(), ui_font, crate::theme::text_size(12.5))
+                .with_color(theme.sub_text())
+                .finish()
+        }
+        _ => warpui::elements::Empty::new().finish(),
     };
     let skill_description = view.agent_skill_note.clone().unwrap_or_else(|| {
-        "Installs Dragent’s focused skills for browser use, panes, teams, automations and connected services in shared agent folders. User-edited files are preserved. Agents that are already running need a restart to see changes. Claude Code sessions launched by Dragent and Dragent’s own agent include the pack. Desktop guidance has its own control in Computer use.".into()
+        if dev {
+            "Dev builds don't change other apps' settings.".to_string()
+        } else {
+            "Installs Dragent’s focused skills for browser use, panes, teams, automations and connected services in shared agent folders. User-edited files are preserved. Agents that are already running need a restart to see changes. Claude Code sessions launched by Dragent and Dragent’s own agent include the pack. Desktop guidance has its own control in Computer use.".into()
+        }
     });
     card_rows(
         theme,

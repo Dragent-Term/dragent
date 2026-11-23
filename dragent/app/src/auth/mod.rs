@@ -26,11 +26,12 @@ pub use clipboard_text::extract_auth_paste;
 pub use code::sign_in_code;
 pub use completion::{parse_auth_completion, AuthCompletion};
 pub use deep_link::{
-    get_deep_link_receiver, register_scheme_handler, set_deep_link_receiver, CUSTOM_SCHEME,
+    custom_scheme, get_deep_link_receiver, register_scheme_handler, set_deep_link_receiver,
 };
 pub use manager::{handle_open_url, handle_pasted_auth, AuthManager};
 pub use poll::{auth_polling_enabled, poll_session_url};
 pub use session_store::{
-    clear_refresh_token, has_saved_session, load_refresh_token, save_refresh_token,
+    clear_refresh_token, has_saved_session, load_refresh_token, refresh_token_source,
+    save_refresh_token,
 };
 pub use types::{AuthManagerEvent, AuthStatus, AuthUser};

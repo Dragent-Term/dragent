@@ -51,7 +51,10 @@ pub fn render_agent_models(
 
     let settings = &view.app_settings;
     let has_byok = settings.has_any_user_credential();
-    if has_byok {
+    if crate::api::is_local_mode() {
+        // No server: only models the person's own keys can call.
+        db_models = crate::settings::local_models::local_mode_models(settings);
+    } else if has_byok {
         db_models.retain(|model| {
             model.id == AUTO_MODEL_ID || settings.has_user_credential_for_model(&model.id)
         });

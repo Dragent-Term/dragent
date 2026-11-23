@@ -2,7 +2,7 @@
 //!
 //! The desktop keeps a secret verifier and sends only its SHA-256 (the
 //! challenge) when it opens the browser. The server then puts a one-time
-//! code in the `dragent://` link instead of a refresh token, and the code is
+//! code in the edition's deep link instead of a refresh token, and the code is
 //! only redeemable with the verifier. Another app that registers the scheme
 //! and reads the link gets nothing it can use.
 

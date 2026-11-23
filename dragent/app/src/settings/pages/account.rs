@@ -64,7 +64,10 @@ pub fn render_account(view: &SettingsView, theme: &Theme, app: &AppContext) -> B
         .collect::<String>()
         .to_uppercase();
 
-    let sub_text = if logged_in {
+    let local = crate::api::is_local_mode();
+    let sub_text = if local {
+        crate::api::local_mode::DEMO_EMAIL.to_string()
+    } else if logged_in {
         account_data
             .as_ref()
             .map(|d| d.user.email.clone())
@@ -86,6 +89,7 @@ pub fn render_account(view: &SettingsView, theme: &Theme, app: &AppContext) -> B
         .unwrap_or("free")
         .to_string();
     let tier_label = match tier.as_str() {
+        _ if local => "Local",
         "pro" => "Pro Plan",
         "ultra" => "Ultra Plan",
         "mega" => "Mega Plan",
@@ -413,7 +417,7 @@ pub fn render_account(view: &SettingsView, theme: &Theme, app: &AppContext) -> B
     .with_padding_bottom(4.0)
     .finish();
 
-    let mut col = Flex::column()
+    let col = Flex::column()
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
         .with_main_axis_size(MainAxisSize::Min)
         .with_spacing(4.0)
@@ -423,7 +427,17 @@ pub fn render_account(view: &SettingsView, theme: &Theme, app: &AppContext) -> B
             "Account",
             "Manage your Dragent profile, plan, and usage.",
         ))
-        .with_child(profile_card)
+        .with_child(profile_card);
+
+    // Local mode: the demo identity has no plan, usage or session on a server.
+    if local {
+        return col
+            .with_child(group_label(theme, ui, "Plan & usage"))
+            .with_child(super::super::widgets::needs_account_state(theme, ui))
+            .finish();
+    }
+
+    let mut col = col
         .with_child(usage_header)
         .with_child(usage_card)
         .with_child(group_label(theme, ui, "Session"))

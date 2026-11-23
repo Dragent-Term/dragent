@@ -24,6 +24,18 @@ fn onboarding_shown_once() {
     );
 }
 
+/// A fresh local-mode start (Dev build, no server) opens the workspace: no
+/// onboarding, no sign-in screen. Every other fresh start still shows it.
+#[test]
+fn local_mode_fresh_start_skips_onboarding() {
+    use super::settings::onboarding_needed;
+    let fresh = UiSettings::default();
+    assert!(!onboarding_needed(fresh.onboarding_completed, true));
+    assert!(onboarding_needed(fresh.onboarding_completed, false));
+    assert!(!onboarding_needed(true, false));
+    assert!(!onboarding_needed(true, true));
+}
+
 /// GitHub and GitLab are alternatives, not two mandatory provider connections.
 #[test]
 fn checklist_structure() {

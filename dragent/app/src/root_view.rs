@@ -80,7 +80,7 @@ impl RootView {
 
         let settings = UiSettings::load();
 
-        if settings.onboarding_completed {
+        if !settings.shows_onboarding() {
             // "Sync with OS": resolve the persisted theme against the live
             // OS mode at startup so a system change while away applies.
             let os_dark = matches!(ctx.system_theme(), warpui_core::platform::SystemTheme::Dark);

@@ -78,6 +78,10 @@ enum Scene {
     NewTabMenu {
         dark: bool,
     },
+    /// The Dev edition's header marker: the DEV badge beside a window title.
+    DevBadge {
+        dark: bool,
+    },
     Teams {
         dark: bool,
     },
@@ -256,6 +260,8 @@ const SCENES: &[(&str, Scene)] = &[
     ("prompt_linear_results", Scene::Results),
     ("header_new_tab_dark", Scene::NewTabMenu { dark: true }),
     ("header_new_tab_light", Scene::NewTabMenu { dark: false }),
+    ("dev_badge_dark", Scene::DevBadge { dark: true }),
+    ("dev_badge_light", Scene::DevBadge { dark: false }),
     (
         "tasks_list_dark",
         Scene::Tasks {
@@ -1477,6 +1483,7 @@ impl View for Preview {
             Scene::ComputerAsk { dark: false }
             | Scene::Page { dark: false }
             | Scene::NewTabMenu { dark: false }
+            | Scene::DevBadge { dark: false }
             | Scene::PhoneCover { dark: false, .. }
             | Scene::Teams { dark: false }
             | Scene::Demo(demo::DemoScene::SettingsAfter(SettingsSection::Mobile, "live_light")) => {
@@ -1962,6 +1969,31 @@ impl View for Preview {
                     false,
                 );
                 Container::new(Align::new(menu).top_left().finish())
+                    .with_padding_left(60.0)
+                    .with_padding_top(60.0)
+                    .finish()
+            }
+            Scene::DevBadge { .. } => {
+                // Preview builds are the Dev edition, so the badge renders
+                // here exactly as it does in the workspace header; in a
+                // Release build this row would show only the title.
+                use warpui::elements::{CrossAxisAlignment, Flex};
+                let mut row = Flex::row()
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_spacing(8.0);
+                if let Some(badge) = crate::workspace::render_dev_badge(self.ui, &theme) {
+                    row = row.with_child(badge);
+                }
+                row = row.with_child(
+                    warpui::elements::Text::new(
+                        crate::workspace::window_title("acme"),
+                        self.ui,
+                        crate::theme::text_size(13.0),
+                    )
+                    .with_color(theme.main_text())
+                    .finish(),
+                );
+                Container::new(Align::new(row.finish()).top_left().finish())
                     .with_padding_left(60.0)
                     .with_padding_top(60.0)
                     .finish()

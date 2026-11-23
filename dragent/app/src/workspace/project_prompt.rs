@@ -2481,7 +2481,7 @@ pub(crate) fn render_embedded_terminal_modal(
     }
     body = body.with_child(Box::new(controls));
 
-    Container::new(
+    let sheet = Container::new(
         ConstrainedBox::new(body.finish())
             .with_width(720.0)
             .finish(),
@@ -2490,7 +2490,14 @@ pub(crate) fn render_embedded_terminal_modal(
     .with_border(Border::all(1.0).with_border_color(theme.outline()))
     .with_corner_radius(CornerRadius::with_all(Radius::Pixels(14.0)))
     .with_uniform_padding(20.0)
-    .finish()
+    .finish();
+    // A click in the sheet stays in the sheet. The terminal focuses itself on
+    // a click and lets it go on; past the sheet it reached the workspace's
+    // "click on nothing" handler, which took the keyboard back from the
+    // terminal, so typing and pasting went nowhere.
+    EventHandler::new(sheet)
+        .on_left_mouse_down(|_, _, _| DispatchEventResult::StopPropagation)
+        .finish()
 }
 
 /// The glyph for linked work of `kind` in one colour (attachment chips):

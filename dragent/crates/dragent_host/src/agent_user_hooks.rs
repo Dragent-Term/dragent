@@ -115,8 +115,17 @@ pub fn merge_hook(
         .map_err(|e| e.to_string())
 }
 
+/// Lets the integration tests (Dev builds, with a throwaway `HOME`) exercise
+/// the real hook merge. Set only by the test harness: with it set, the config
+/// written is the one under the process's `HOME`.
+pub const TEST_USER_HOOKS_ENV: &str = "DRAGENT_TEST_USER_HOOKS";
+
 /// Make sure the agent's user config reports to Dragent. Idempotent; the
 /// file is rewritten only when the entry is missing.
+///
+/// A Dev build never touches other apps' settings: it still writes the shim
+/// (which lives in the Dev edition's own home) but leaves the user's config
+/// alone.
 pub fn ensure_installed(
     file: &str,
     xdg: bool,
@@ -125,6 +134,10 @@ pub fn ensure_installed(
     helper: &Path,
 ) -> Result<(), String> {
     let shim = write_shim(helper)?;
+    if dragent_paths::is_dev() && std::env::var_os(TEST_USER_HOOKS_ENV).is_none() {
+        log::info!("[agent-hooks] Dev build: leaving user hook configs alone");
+        return Ok(());
+    }
     let command = shim_command(&shim);
     let path = config_path(file, xdg).ok_or("no home directory")?;
     let existing = match fs::read_to_string(&path) {
@@ -387,5 +400,51 @@ mod tests {
         assert_eq!(nearest_ancestor(&table, 200, owner), Some(100));
         assert_eq!(nearest_ancestor(&table, 100, owner), None);
         assert_eq!(nearest_ancestor(&table, 999, owner), None);
+    }
+
+    #[test]
+    fn dev_builds_leave_user_hook_configs_alone_but_write_the_shim() {
+        // Test builds are the Dev edition. The merge into the user's config
+        // must not happen; the shim inside the Dev home still may be written.
+        if !dragent_paths::is_dev() {
+            return;
+        } // only meaningful in the Dev edition
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _held = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let home = std::env::temp_dir().join(format!("dragent-dev-hooks-home-{tag}"));
+        let dev_home = std::env::temp_dir().join(format!("dragent-dev-hooks-devhome-{tag}"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&dev_home).unwrap();
+        let names = ["HOME", "XDG_CONFIG_HOME", dragent_paths::DEV_HOME_ENV];
+        let saved: Vec<(&str, Option<std::ffi::OsString>)> = names
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect();
+        unsafe {
+            std::env::set_var("HOME", &home);
+            std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+            std::env::set_var(dragent_paths::DEV_HOME_ENV, &dev_home);
+        }
+        let result = ensure_installed(
+            "dragent-dev-test-hooks.json",
+            false,
+            None,
+            None,
+            Path::new("/bin/echo"),
+        );
+        for (name, value) in saved {
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+        result.unwrap();
+        assert!(!home.join("dragent-dev-test-hooks.json").exists());
+        assert!(dev_home.join("bin").join(SHIM).is_file());
+        std::fs::remove_dir_all(&home).ok();
+        std::fs::remove_dir_all(&dev_home).ok();
     }
 }

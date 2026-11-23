@@ -1450,6 +1450,9 @@ fn team_table(
     automations: &[&TeamAutomation],
 ) -> Box<dyn Element> {
     let state = runtime.team();
+    if crate::api::is_local_mode() {
+        return team_message(view, theme, crate::api::NEEDS_ACCOUNT, None);
+    }
     if runtime.account().user_id.is_none() {
         return team_message(view, theme, "Sign in to see your team's automations.", None);
     }

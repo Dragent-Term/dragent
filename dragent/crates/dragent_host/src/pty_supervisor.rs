@@ -578,7 +578,13 @@ impl PtySupervisor {
         let token = dead
             .map(|manifest| manifest.token)
             .unwrap_or_else(generate_token);
-        let mut child = Command::new(&self.exe)
+        let mut command = Command::new(&self.exe);
+        // A fresh daemon, never a hand-off successor, whatever this process
+        // inherited.
+        for name in dragent_paths::PTY_HANDOFF_VARS {
+            command.env_remove(name);
+        }
+        let mut child = command
             .arg(PTY_SERVICE_ARG)
             .arg(dragent_paths::organisation_arg())
             .env(PTY_TOKEN_ENV, &token)

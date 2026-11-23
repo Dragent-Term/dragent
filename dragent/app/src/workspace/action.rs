@@ -1651,7 +1651,7 @@ pub enum WorkspaceAction {
     },
     /// Everything automations came back with: the page's inbox.
     OpenAutomationInbox,
-    /// Open one automation (a `dragent://automations/<id>` link).
+    /// Open one automation (a `<scheme>://automations/<id>` link).
     OpenAutomationLink(String),
     /// Show one automation run (a clicked run alert).
     OpenAutomationRun(String),

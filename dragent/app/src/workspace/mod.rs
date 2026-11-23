@@ -66,6 +66,7 @@ mod header_usage;
 #[cfg(not(target_family = "wasm"))]
 mod past_sessions;
 pub(crate) use header_menus::{attention_menu_overlay, render_attention_bell, AutomationNotice};
+pub(crate) use header::render_dev_badge;
 pub(crate) mod host_mirror;
 mod host_tabs;
 mod ide_chrome;
@@ -164,6 +165,7 @@ mod tabs_git;
 mod tabs_panes;
 pub(crate) mod task_detail;
 mod title;
+pub(crate) use title::{window_title, window_title_for};
 mod trust_prompt;
 pub(crate) mod trust_store;
 mod view;

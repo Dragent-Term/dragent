@@ -17,7 +17,9 @@
 ; branding images (installer-images\*).
 ; ─────────────────────────────────────────────────────────────────────────────
 
-#define AppName      "Dragent"
+#ifndef AppName
+  #define AppName "Dragent"
+#endif
 #define AppPublisher "Dragent"
 #define AppUrl       "https://dragent.dev"
 #define AppExeName   "dragent.exe"
@@ -25,7 +27,21 @@
 ; The AppId uniquely identifies this application to Windows. KEEP IT CONSTANT
 ; across releases — installers with the same AppId are treated as upgrades.
 ; Generate your own once (Inno Setup IDE: Tools ▸ Generate GUID) and paste here.
+; Dev builds use {E0000677-10F0-44DA-8BAD-6CE519085F47} (passed as /DAppId).
+#ifndef AppId
 #define AppId "{{B7E4C9A2-3D51-4F86-9A0C-1E2D3F4A5B60}"
+#endif
+; Custom URL protocol this install claims (Release: "dragent",
+; Dev: "dragent-dev"). The app also registers it at startup; the installer
+; entry covers launch-before-first-run and repair flows.
+#ifndef UrlScheme
+  #define UrlScheme "dragent"
+#endif
+; Taskbar grouping id. Dev uses "dev.dragent.app.dev" so its windows never
+; group with the installed app's.
+#ifndef AppUserModelId
+  #define AppUserModelId "dev.dragent.app"
+#endif
 
 ; These may be overridden from the command line (package-windows.ps1 does this):
 ;   ISCC.exe /DAppVersion=1.2.3 /DReleaseDir=<staged files> /DOutDir=<output> ...
@@ -78,7 +94,7 @@ ArchitecturesInstallIn64BitMode={#ArchAllowed}
 
 ; Output.
 OutputDir={#OutDir}
-OutputBaseFilename=Dragent-{#AppVersion}-windows-{#Arch}-setup
+OutputBaseFilename={#AppName}-{#AppVersion}-windows-{#Arch}-setup
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -110,13 +126,22 @@ Source: "{#ReleaseDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsour
 ; Built-in agent skills (skill discovery reads {app}\skills), if staged.
 Source: "{#ReleaseDir}\skills\*"; DestDir: "{app}\skills"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
+[Registry]
+; Custom URL protocol handler (Release: dragent://, Dev: dragent-dev://).
+; The app also registers its edition's scheme at startup; the installer
+; entry covers link delivery before the first run and repair flows.
+Root: HKCU; Subkey: "Software\Classes\{#UrlScheme}"; ValueType: string; ValueName: ""; ValueData: "{#AppName} URL"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\{#UrlScheme}"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\{#UrlScheme}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\{#UrlScheme}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Flags: uninsdeletekey
+
 [Icons]
 ; Shortcuts use the icon embedded in dragent.exe (attached via winres at build
 ; time), so no separate .ico is needed here. AppUserModelID keeps all of the
 ; app's windows grouped under one taskbar button (and is the anchor a future
 ; taskbar "jump list" would hang off — the Windows analogue of the macOS dock menu).
-Name: "{group}\{#AppName}";       Filename: "{app}\{#AppExeName}"; AppUserModelID: "dev.dragent.app"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; AppUserModelID: "dev.dragent.app"; Tasks: desktopicon
+Name: "{group}\{#AppName}";       Filename: "{app}\{#AppExeName}"; AppUserModelID: "{#AppUserModelId}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; AppUserModelID: "{#AppUserModelId}"; Tasks: desktopicon
 
 [Run]
 ; "Launch Dragent" checkbox on the final wizard page.

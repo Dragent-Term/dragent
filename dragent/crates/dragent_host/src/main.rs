@@ -6,6 +6,11 @@ use dragent_host::{
 };
 
 fn main() {
+    // Inherited daemon hand-off variables are only for the PTY daemon its
+    // predecessor or supervisor starts (see the app's `main`).
+    if !std::env::args().any(|a| a == PTY_SERVICE_ARG) {
+        dragent_paths::strip_inherited_vars(&[&dragent_paths::PTY_HANDOFF_VARS]);
+    }
     dragent_host::capture_build_identity();
     dragent_paths::select_organisation_from_process_args();
     if dragent_host::remote::run_askpass() { return; }
@@ -24,6 +29,8 @@ fn main() {
         std::process::exit(code);
     }
     if let Some(code) = dragent_host::team_runtime::run_if_requested() { std::process::exit(code); }
+    // Services from here on: a terminal's identity is for commands run in it.
+    dragent_paths::strip_inherited_vars(&[&dragent_paths::HOST_TERMINAL_VARS]);
     let _ = env_logger::try_init();
     let args: Vec<String> = std::env::args().collect();
     // PTY daemon branch comes first: the supervised child runs the same

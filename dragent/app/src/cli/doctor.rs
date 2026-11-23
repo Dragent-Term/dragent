@@ -25,7 +25,10 @@ use sha2::{Digest, Sha256};
 
 use dragent_host::outcome::{Failure, Status};
 
-const HELP: &str = "\
+/// Help text template: `{launcher_dir}` is this edition's launcher folder
+/// (`~/.dragent/bin` for Release, `~/.dragent-dev/bin` for Dev); see
+/// [`help_text`].
+const HELP_TEMPLATE: &str = "\
 Diagnose Dragent layer by layer, for agents and people.
 
 Usage: dragent doctor [options]
@@ -38,7 +41,7 @@ Usage: dragent doctor [options]
 
 Checks (each independent; one failing never stops the others):
 
-  launcher      The `dragent` on PATH / in ~/.dragent/bin exists, points at
+  launcher      The `dragent` on PATH / in {launcher_dir} exists, points at
                 this build, and isn't stale
   app           The app is open and answering requests; CLI/app version match
   signin        Signed in, which organisation is active, whether this terminal
@@ -55,6 +58,39 @@ Checks (each independent; one failing never stops the others):
 The report's `status` is `ok`, or `partial` with the failing checks listed.
 Read-only: changes nothing, starts nothing, writes no files or databases.
 ";
+
+/// Help text with this edition's launcher folder filled in, so a Dev build
+/// never points at the installed app's `~/.dragent/bin`.
+fn help_text() -> String {
+    HELP_TEMPLATE
+        .replace(
+            "{launcher_dir}",
+            &shorten(&super::user_bin_dir().display().to_string()),
+        )
+        .trim_end()
+        .to_string()
+}
+
+/// This platform's launcher file name.
+fn launcher_file_name() -> &'static str {
+    if cfg!(windows) {
+        "dragent.cmd"
+    } else {
+        "dragent"
+    }
+}
+
+/// This edition's launcher in its own bin folder, shortened for hints, so a
+/// Dev build points at `~/.dragent-dev/bin/dragent` and never the installed
+/// app's launcher.
+fn edition_launcher_hint() -> String {
+    shorten(
+        &super::user_bin_dir()
+            .join(launcher_file_name())
+            .display()
+            .to_string(),
+    )
+}
 
 /// Every check doctor knows, as (id, what it covers). `--check` validates
 /// against this list.
@@ -555,11 +591,7 @@ fn quoted(text: &str) -> Vec<String> {
 }
 
 fn launcher_paths() -> Vec<PathBuf> {
-    let name = if cfg!(windows) {
-        "dragent.cmd"
-    } else {
-        "dragent"
-    };
+    let name = launcher_file_name();
     let mut paths = vec![
         super::user_bin_dir().join(name),
         dragent_paths::organisation_dir().join("bin").join(name),
@@ -690,7 +722,10 @@ fn check_launcher() -> Check {
             "launcher_shadowed",
             "A launcher points at this build, but another copy shadows it somewhere.".into(),
             evidence,
-            "Run `dragent` with its full path (`~/.dragent/bin/dragent`) or remove the shadowing copy; rerun `dragent doctor --check launcher`.",
+            &format!(
+                "Run `dragent` with its full path (`{}`) or remove the shadowing copy; rerun `dragent doctor --check launcher`.",
+                edition_launcher_hint()
+            ),
         )
     } else if seen
         .iter()
@@ -710,7 +745,10 @@ fn check_launcher() -> Check {
             "launcher_missing",
             "No dragent launcher is installed.".into(),
             evidence,
-            "Open the Dragent app once so it writes its launchers (`~/.dragent/bin/dragent`), then rerun `dragent doctor --check launcher`.",
+            &format!(
+                "Open the Dragent app once so it writes its launchers (`{}`), then rerun `dragent doctor --check launcher`.",
+                edition_launcher_hint()
+            ),
         )
     }
 }
@@ -1471,7 +1509,7 @@ fn overall(checks: &[Check]) -> &'static str {
 pub fn run(args: &[String]) -> Result<String, String> {
     let opts = parse(args)?;
     if opts.help {
-        return Ok(HELP.trim_end().to_string());
+        return Ok(help_text());
     }
     // JSON for agents unless the caller asked for text; `--quiet` prints ids.
     let json = opts.json || (!opts.text && !opts.quiet && agent_environment());
@@ -1709,6 +1747,21 @@ mod tests {
         let report = build_report(&[check], &Opts::default());
         assert_eq!(report["status"], "ok");
         assert!(report["failing"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn help_and_launcher_hints_point_at_this_editions_bin() {
+        let dir = shorten(&crate::cli::user_bin_dir().display().to_string());
+        let launcher = edition_launcher_hint();
+        assert!(launcher.starts_with(&dir), "{launcher} vs {dir}");
+        assert!(help_text().contains(&dir), "{}", help_text());
+        // Never point at the other edition's folder.
+        for other in ["~/.dragent/bin", "~/.dragent-dev/bin"] {
+            if other != dir {
+                assert!(!help_text().contains(other), "{}", help_text());
+                assert!(!launcher.contains(other), "{launcher}");
+            }
+        }
     }
 
     #[test]

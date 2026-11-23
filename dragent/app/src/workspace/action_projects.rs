@@ -2094,6 +2094,7 @@ impl WorkspaceView {
                 .or_else(|| std::env::current_dir().ok())
                 .unwrap_or_else(std::env::temp_dir)
         });
+        let remote = crate::remote_fs::resolve(&cwd).is_some();
         #[cfg(not(test))]
         let terminal = match self.create_host_auxiliary_pane(cwd, ctx) {
             super::pane::WorkspacePane::Terminal(terminal) => terminal,
@@ -2108,6 +2109,12 @@ impl WorkspaceView {
         let theme = self.theme;
         ctx.update_view(&terminal, |view, terminal_ctx| {
             view.set_theme(theme, terminal_ctx);
+            // Whatever this terminal opens goes to the system browser.
+            let shell = view
+                .launch_shell
+                .clone()
+                .unwrap_or_else(|| dragent_pty::resolve_shell(None));
+            view.use_system_browser(popup_shell_setup(&shell, remote));
             view.submit_shell_command(command, terminal_ctx);
         });
         (terminal, generation)
@@ -2456,5 +2463,48 @@ impl WorkspaceView {
             Err(message) => self.prompt_notice = Some(message),
         }
         ctx.notify();
+    }
+}
+
+/// The shell statement giving the pop-up terminal over a page the system
+/// browser as `BROWSER`, for a terminal running `shell`. A terminal on a
+/// remote machine keeps that machine's own: its system browser isn't the
+/// person's (links it shows still open in theirs).
+fn popup_shell_setup(shell: &str, remote: bool) -> Option<String> {
+    if remote {
+        return None;
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        dragent_host::terminals::system_browser_entry(
+            dragent_shell_hooks::ShellKind::from_program(shell),
+            std::env::consts::OS,
+        )
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = shell;
+        None
+    }
+}
+
+#[cfg(test)]
+mod popup_terminal_tests {
+    use super::popup_shell_setup;
+
+    #[test]
+    fn the_popup_terminal_opens_pages_in_the_system_browser() {
+        let setup = popup_shell_setup("/bin/zsh", false).expect("zsh gets a statement");
+        assert!(!setup.contains("dragent"), "{setup}");
+        if cfg!(target_os = "macos") {
+            assert_eq!(setup, "export BROWSER=open; ");
+        } else if cfg!(windows) {
+            assert_eq!(setup, "unset BROWSER; ");
+        } else {
+            assert_eq!(setup, "export BROWSER=xdg-open; ");
+        }
+        assert!(popup_shell_setup("pwsh", false).is_some());
+        // A remote machine keeps its own BROWSER.
+        assert_eq!(popup_shell_setup("/bin/zsh", true), None);
     }
 }

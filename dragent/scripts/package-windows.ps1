@@ -1,7 +1,7 @@
 # Package Dragent for Windows (portable folder layout; basis for .msi).
 #
-# Layout:
-#   dist\windows-dragent\
+# Layout (Release; Dev uses dist\windows-dragent-dev\ instead):
+#   dist\windows-dragent[ -dev]\
 #     dragent.exe
 #     dragent-host.exe
 #
@@ -31,7 +31,17 @@ $Built = Join-Path $Root "target\$RustTarget\$Profile\dragent.exe"
 if (($Arch -eq "x64") -and -not (Test-Path $Built)) {
     $Built = Join-Path $Root "target\$Profile\dragent.exe"
 }
-$Stage = Join-Path $Root "dist\windows-dragent"
+# Edition split: the release workflow sets DRAGENT_RELEASE_EDITION=1 and gets
+# the long-standing Release layout (AppName "Dragent", AppId
+# {B7E4C9A2-...}, URL protocol "dragent"). Every other build is the Dev
+# edition ("Dragent Dev", its own AppId, URL protocol "dragent-dev"), so it
+# installs beside the Release app instead of upgrading it. Cargo inherits the
+# same environment, so the binary's edition (see dragent_paths) always matches
+# the installer it ships in.
+$IsRelease = $env:DRAGENT_RELEASE_EDITION -eq "1"
+$AppName = if ($IsRelease) { "Dragent" } else { "Dragent Dev" }
+$StageDir = if ($IsRelease) { "windows-dragent" } else { "windows-dragent-dev" }
+$Stage = Join-Path $Root "dist\$StageDir"
 $Version = (Select-String -Path (Join-Path $Root "app\Cargo.toml") -Pattern '^version = ' | Select-Object -First 1).Line -replace '^version = "([^"]+)".*','$1'
 
 if ($Build) {
@@ -83,7 +93,7 @@ foreach ($Legal in @("THIRD_PARTY_NOTICES.md", "NOTICE", "LICENSE")) {
 Write-Host "Bundled legal notices (THIRD_PARTY_NOTICES.md, NOTICE, LICENSE)"
 
 $DistDir = Join-Path $Root "dist"
-$Zip = Join-Path $DistDir "Dragent-$Version-windows-$Arch.zip"
+$Zip = Join-Path $DistDir "$AppName-$Version-windows-$Arch.zip"
 if (Test-Path $Zip) { Remove-Item $Zip }
 Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $Zip
 
@@ -103,9 +113,15 @@ if (-not $NoInstaller) {
     }
     if ($Iscc) {
         Write-Host "Building installer with Inno Setup ..."
-        & $Iscc "/DAppVersion=$Version" "/DReleaseDir=$Stage" "/DOutDir=$DistDir" "/DArch=$Arch" $Iss
+        if ($IsRelease) {
+            & $Iscc "/DAppVersion=$Version" "/DReleaseDir=$Stage" "/DOutDir=$DistDir" "/DArch=$Arch" $Iss
+        } else {
+            # Dev GUID generated once for this project (see windows-installer.iss):
+            # it must stay constant across Dev installs so they upgrade each other.
+            & $Iscc "/DAppVersion=$Version" "/DReleaseDir=$Stage" "/DOutDir=$DistDir" "/DArch=$Arch" '/DAppName=Dragent Dev' '/DAppId={{E0000677-10F0-44DA-8BAD-6CE519085F47}}' '/DUrlScheme=dragent-dev' '/DAppUserModelId=dev.dragent.app.dev' $Iss
+        }
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed (exit $LASTEXITCODE)" }
-        $Setup = Join-Path $DistDir "Dragent-$Version-windows-$Arch-setup.exe"
+        $Setup = Join-Path $DistDir "$AppName-$Version-windows-$Arch-setup.exe"
     } else {
         Write-Warning "Inno Setup (ISCC.exe) not found - skipping installer. Install from https://jrsoftware.org/isdl.php (or pass -NoInstaller to silence this)."
     }

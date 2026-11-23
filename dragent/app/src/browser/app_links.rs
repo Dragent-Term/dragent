@@ -3,11 +3,13 @@
 //! passes the link to the system.
 
 /// Schemes that are never handed to another app: the engine's own pages,
-/// script, local files, and other browsers' internal pages.
+/// script, local files, other browsers' internal pages, and our own
+/// deep-link schemes (both editions: a page must not fire the other
+/// install's links at the OS).
 const NEVER: &[&str] = &[
     "http", "https", "about", "data", "blob", "javascript", "vbscript", "file", "filesystem",
     "view-source", "chrome", "chrome-extension", "edge", "brave", "opera", "safari", "webkit",
-    "moz-extension", "resource", "ws", "wss", "dragent",
+    "moz-extension", "resource", "ws", "wss", "dragent", "dragent-dev",
 ];
 
 /// The scheme of a link meant for another app, lowercased, or `None` when
@@ -44,6 +46,11 @@ mod tests {
             "https://example.com", "javascript:alert(1)", "file:///etc/passwd",
             "chrome://settings", "data:text/html,x", "about:blank", "mailto:", "relative/path",
             "1bad:scheme", "",
+            // Our own deep links (both editions) never leave the app this way.
+            "dragent://join?session=a&secret=b",
+            "dragent-dev://join?session=a&secret=b",
+            "dragent://auth/callback?refresh_token=rt&state=s",
+            "dragent-dev://auth/callback?refresh_token=rt&state=s",
         ] {
             assert_eq!(scheme(never), None, "{never}");
         }

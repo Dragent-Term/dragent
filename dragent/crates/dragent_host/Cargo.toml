@@ -1,6 +1,6 @@
 [package]
 name = "dragent_host"
-version = "0.2.9-rc.1"
+version = "0.2.9-rc.3"
 edition = "2024"
 authors.workspace = true
 license.workspace = true

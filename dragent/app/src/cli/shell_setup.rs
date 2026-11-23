@@ -120,7 +120,13 @@ impl Setup {
         }
     }
 
+    /// A Dev build never edits shell profiles or the user PATH: the Dev
+    /// app's own terminals already have its launcher on PATH.
     pub fn install(&self, bin: &Path) -> Result<(), String> {
+        if dragent_paths::is_dev() {
+            log::info!("[cli] Dev build: leaving the shell setup alone");
+            return Err("Dev builds don't change other apps' settings.".into());
+        }
         match self {
             Self::Profile(profile) => profile.install(bin),
             #[cfg(windows)]
@@ -346,5 +352,23 @@ mod tests {
             .unwrap();
         let path = String::from_utf8(output.stdout).unwrap();
         assert!(path.starts_with(&format!("{}:", bin.display())), "{path}");
+    }
+
+    #[test]
+    fn dev_builds_leave_profiles_and_the_user_path_alone() {
+        // Test builds are the Dev edition: installing the shell setup must
+        // refuse and write nothing, while the profile itself still installs
+        // (the Dev app's own terminals are set up per terminal, not here).
+        if !dragent_paths::is_dev() {
+            return;
+        } // only meaningful in the Dev edition
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::Profile(Profile {
+            path: dir.path().join(".zshrc"),
+            syntax: Syntax::Posix,
+        });
+        let error = setup.install(Path::new("/opt/dragent/bin")).unwrap_err();
+        assert_eq!(error, "Dev builds don't change other apps' settings.");
+        assert!(!dir.path().join(".zshrc").exists());
     }
 }

@@ -92,13 +92,18 @@ mod big_alloc_trace {
 #[global_allocator]
 static GLOBAL: big_alloc_trace::TracingAlloc = big_alloc_trace::TracingAlloc;
 
-/// Parse a shared-session join link into `(session, secret)`. Accepts both the
-/// `dragent://join?session=…&secret=…` deep link and a `…/join?…` web URL.
+/// Parse a shared-session join link into `(session, secret)`. Accepts this
+/// edition's `<scheme>://join?session=…&secret=…` deep link and a `…/join?…`
+/// web URL. Links for the other edition's scheme are rejected: they belong
+/// to the other app install.
 fn parse_join_url(url: &str) -> Option<(String, String)> {
     let parsed = url::Url::parse(url).ok()?;
-    let is_join = parsed.host_str() == Some("join") // dragent://join?…
-        || parsed.path().trim_end_matches('/').ends_with("/join"); // https://…/join?…
-    if !is_join {
+    let scheme = parsed.scheme();
+    let is_deep_link =
+        parsed.host_str() == Some("join") && scheme == dragent_paths::url_scheme();
+    let is_web =
+        (scheme == "https" || scheme == "http") && parsed.path().trim_end_matches('/').ends_with("/join");
+    if !(is_deep_link || is_web) {
         return None;
     }
     let mut session = None;
@@ -367,7 +372,8 @@ pub fn run() -> Result<()> {
                     }
                 });
                 let args: Vec<String> = std::env::args().collect();
-                if args.len() > 1 && args[1].starts_with("dragent://") {
+                let deep_link_prefix = format!("{}://", dragent_paths::url_scheme());
+                if args.len() > 1 && args[1].starts_with(&deep_link_prefix) {
                     is_deeplink_launch = true;
                     let _ = url_tx.send_blocking(args[1].clone());
                 }
@@ -377,7 +383,8 @@ pub fn run() -> Result<()> {
                 let args: Vec<String> = std::env::args().collect();
                 if let Ok(mut stream) = std::net::TcpStream::connect(instance_address) {
                     use std::io::Write;
-                    let msg = if args.len() > 1 && args[1].starts_with("dragent://") {
+                    let deep_link_prefix = format!("{}://", dragent_paths::url_scheme());
+                    let msg = if args.len() > 1 && args[1].starts_with(&deep_link_prefix) {
                         // Deep link: the running instance is (or is about to be)
                         // mid-auth-flow. Focus it rather than spawning a second
                         // window that would race it for the same one-time code.
@@ -477,8 +484,9 @@ pub fn run() -> Result<()> {
     let mut callbacks = AppCallbacks::default();
     callbacks.on_open_urls = Some(Box::new(|urls, ctx| {
         for url in urls {
+            let automation_prefix = format!("{}://automations/", dragent_paths::url_scheme());
             if let Some(id) = url
-                .strip_prefix("dragent://automations/")
+                .strip_prefix(&automation_prefix)
                 .map(|id| id.trim_end_matches('/').to_string())
                 .filter(|id| !id.is_empty())
             {
@@ -653,4 +661,40 @@ pub fn run() -> Result<()> {
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn join_links_parse_per_edition_but_web_links_parse_for_both() {
+        let scheme = dragent_paths::url_scheme();
+        let own =
+            format!("{scheme}://join?session=abc&secret=xyz");
+        assert_eq!(
+            parse_join_url(&own),
+            Some(("abc".to_string(), "xyz".to_string()))
+        );
+        // The other edition's deep link belongs to the other install.
+        let other = if scheme == "dragent" {
+            "dragent-dev://join?session=abc&secret=xyz"
+        } else {
+            "dragent://join?session=abc&secret=xyz"
+        };
+        assert_eq!(parse_join_url(other), None, "must reject {other}");
+        // Web join URLs work for both editions.
+        for web in [
+            "https://app.example.test/join?session=abc&secret=xyz",
+            "http://localhost:3000/join/?session=abc&secret=xyz",
+        ] {
+            assert_eq!(
+                parse_join_url(web),
+                Some(("abc".to_string(), "xyz".to_string())),
+                "{web}"
+            );
+        }
+        // Non-join links are not join links.
+        assert_eq!(parse_join_url(&format!("{scheme}://pair?c=x")), None);
+    }
 }

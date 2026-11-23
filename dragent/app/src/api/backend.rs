@@ -28,7 +28,7 @@ use std::sync::OnceLock;
 /// Reject anything we could never successfully dial. Deliberately narrow: an
 /// http(s) scheme and an ASCII host with no spaces. Non-ASCII in a host is the
 /// signature of a mangled paste (ellipsis, smart quotes, zero-width space).
-fn is_dialable(url: &str) -> bool {
+pub(super) fn is_dialable(url: &str) -> bool {
     let Some(rest) = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
@@ -94,10 +94,18 @@ fn resolve(runtime_env: &str, baked: Option<&str>) -> String {
 }
 
 /// Base URL of the Dragent backend, without a trailing slash.
+///
+/// A Dev edition build ignores the release variables: it uses the server named
+/// by `DRAGENT_DEV_SERVER`, or none at all (local mode: empty, never a
+/// localhost fallback), so it can't reach a server by inheriting the installed
+/// app's environment.
 pub fn backend_url() -> String {
     static RESOLVED: OnceLock<String> = OnceLock::new();
     RESOLVED
         .get_or_init(|| {
+            if let Some(dev) = dev_choice() {
+                return dev.map(|s| s.backend.clone()).unwrap_or_default();
+            }
             resolve(
                 "DRAGENT_BACKEND_URL",
                 option_env!("DRAGENT_BACKEND_URL_DEFAULT"),
@@ -115,6 +123,9 @@ pub fn web_origin() -> String {
     static RESOLVED: OnceLock<String> = OnceLock::new();
     RESOLVED
         .get_or_init(|| {
+            if let Some(dev) = dev_choice() {
+                return dev.map(|s| s.web.clone()).unwrap_or_default();
+            }
             resolve(
                 "DRAGENT_WEB_ORIGIN",
                 option_env!("DRAGENT_WEB_ORIGIN_DEFAULT"),
@@ -123,16 +134,73 @@ pub fn web_origin() -> String {
         .clone()
 }
 
+/// The Dragent service this build was compiled for, as `(backend, web
+/// origin)`: the addresses release CI bakes in (`DRAGENT_BACKEND_URL_DEFAULT`,
+/// `DRAGENT_WEB_ORIGIN_DEFAULT`). `None` for a build without them (any local
+/// build). Runtime variables never change it: `dragent service-address`
+/// prints it so a Dev build can sign in to the same service as the installed
+/// Dragent without the address being written in the source.
+pub fn compiled_service_address() -> Option<(String, String)> {
+    compiled_service_address_from(
+        option_env!("DRAGENT_BACKEND_URL_DEFAULT"),
+        option_env!("DRAGENT_WEB_ORIGIN_DEFAULT"),
+    )
+}
+
+/// [`compiled_service_address`] with the baked values passed in, for tests.
+pub(crate) fn compiled_service_address_from(
+    backend: Option<&str>,
+    web: Option<&str>,
+) -> Option<(String, String)> {
+    let clean = |v: Option<&str>| {
+        v.map(|v| v.trim().trim_end_matches('/').to_string())
+            .filter(|v| is_dialable(v))
+    };
+    Some((clean(backend)?, clean(web)?))
+}
+
+/// `Some(server or none)` for a native Dev edition build, `None` when the
+/// release resolution applies (Release edition, or the web viewer).
+fn dev_choice() -> Option<Option<&'static super::local_mode::DevServer>> {
+    if cfg!(target_family = "wasm") || !dragent_paths::is_dev() {
+        return None;
+    }
+    Some(super::local_mode::dev_server())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compiled_service_address_needs_both_dialable_values() {
+        assert_eq!(compiled_service_address_from(None, None), None);
+        assert_eq!(
+            compiled_service_address_from(Some("https://api.example.test"), None),
+            None
+        );
+        assert_eq!(
+            compiled_service_address_from(Some("api.example.test"), Some("https://example.test")),
+            None
+        );
+        assert_eq!(
+            compiled_service_address_from(
+                Some("https://api.example.test/"),
+                Some(" https://example.test ")
+            ),
+            Some((
+                "https://api.example.test".to_string(),
+                "https://example.test".to_string()
+            ))
+        );
+    }
 
     #[test]
     fn accepts_normal_urls() {
         // The fallback constant itself must always be dialable — resolve()
         // trusts it as the last resort.
         assert!(is_dialable("http://localhost:8080"));
-        assert!(is_dialable("https://api.dragent.dev/v1"));
+        assert!(is_dialable("https://api.example.test/v1"));
         // Scheme-less hosts stay rejected — that's the whole guard.
         assert!(!is_dialable("localhost:8080"));
     }

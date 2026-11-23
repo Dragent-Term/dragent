@@ -623,24 +623,23 @@ trait Secrets: Send + Sync {
 /// The OS keychain, beside the model provider keys.
 struct Keychain;
 
-const KEYCHAIN_SERVICE: &str = "com.dragent.app";
 
 impl Secrets for Keychain {
     fn load(&self, account: &str) -> Option<String> {
-        keyring::Entry::new(KEYCHAIN_SERVICE, account)
+        keyring::Entry::new(dragent_paths::keychain_service(), account)
             .ok()?
             .get_password()
             .ok()
     }
 
     fn save(&self, account: &str, value: &str) -> Result<(), String> {
-        keyring::Entry::new(KEYCHAIN_SERVICE, account)
+        keyring::Entry::new(dragent_paths::keychain_service(), account)
             .and_then(|entry| entry.set_password(value))
             .map_err(|error| format!("Couldn't save to the keychain: {error}"))
     }
 
     fn delete(&self, account: &str) {
-        if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, account) {
+        if let Ok(entry) = keyring::Entry::new(dragent_paths::keychain_service(), account) {
             match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => {}
                 Err(error) => log::warn!("[integrations] keychain delete for {account}: {error}"),

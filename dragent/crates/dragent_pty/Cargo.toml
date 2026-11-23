@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 description = "Cross-platform PTY manager for Dragent "
+publish = false
 
 # Wasm-safe deps (all targets). The web viewer links this crate for its type
 # signatures only (it renders remote output into a headless emulator and never
@@ -11,6 +12,7 @@ description = "Cross-platform PTY manager for Dragent "
 [dependencies]
 anyhow = { workspace = true }
 async-channel = { workspace = true }
+dragent_paths = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
 

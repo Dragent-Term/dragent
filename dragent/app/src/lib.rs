@@ -19,6 +19,7 @@ pub mod cli;
 pub mod community;
 pub mod confirm;
 pub mod console;
+pub mod dev_settings_copy;
 pub mod diagnostics;
 mod error_notice;
 pub mod fonts;
@@ -52,6 +53,8 @@ pub mod shared_input;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod team_source;
 pub mod terminal;
+#[cfg(test)]
+pub(crate) mod test_env;
 pub mod viewer_view;
 pub mod voice;
 pub mod workspace;

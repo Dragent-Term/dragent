@@ -287,7 +287,7 @@ pub(crate) fn exchange_oauth_code(
 // ── MCP token storage ─────────────────────────────────────────────────────────
 // Mirrors the session_store pattern:
 //   Primary   — platform app data/dragent/mcp-tokens/<name>.json  (0o600 on Unix)
-//   Secondary — OS Keychain, service "com.dragent.app", account "mcp_token:<name>"
+//   Secondary — OS Keychain, service `dragent_paths::keychain_service()`, account "mcp_token:<name>"
 //               (best-effort; silently skipped when unavailable)
 
 pub(crate) fn mcp_safe_name(server_name: &str) -> String {
@@ -348,7 +348,10 @@ pub(crate) fn mcp_file_save(path: &std::path::Path, json: &str) -> Result<(), St
 // native-only, so on wasm these are unreachable no-ops kept only for type-checking.
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn mcp_keychain_save(server_name: &str, json: &str) {
-    if let Ok(entry) = keyring::Entry::new("com.dragent.app", &format!("mcp_token:{server_name}")) {
+    if let Ok(entry) = keyring::Entry::new(
+        dragent_paths::keychain_service(),
+        &format!("mcp_token:{server_name}"),
+    ) {
         if let Err(e) = entry.set_password(json) {
             log::debug!("[mcp_auth] keychain save skipped for {server_name}: {e}");
         }
@@ -357,10 +360,13 @@ pub(crate) fn mcp_keychain_save(server_name: &str, json: &str) {
 
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn mcp_keychain_load(server_name: &str) -> Option<serde_json::Value> {
-    let json = keyring::Entry::new("com.dragent.app", &format!("mcp_token:{server_name}"))
-        .ok()?
-        .get_password()
-        .ok()?;
+    let json = keyring::Entry::new(
+        dragent_paths::keychain_service(),
+        &format!("mcp_token:{server_name}"),
+    )
+    .ok()?
+    .get_password()
+    .ok()?;
     serde_json::from_str(&json).ok()
 }
 
@@ -399,7 +405,10 @@ pub fn clear_mcp_token(server_name: &str) {
         let _ = std::fs::remove_file(path);
     }
     #[cfg(not(target_family = "wasm"))]
-    if let Ok(entry) = keyring::Entry::new("com.dragent.app", &format!("mcp_token:{server_name}")) {
+    if let Ok(entry) = keyring::Entry::new(
+        dragent_paths::keychain_service(),
+        &format!("mcp_token:{server_name}"),
+    ) {
         let _ = entry.delete_credential();
     }
 }

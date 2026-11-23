@@ -1,9 +1,7 @@
-//! Parse `dragent://auth/callback` deep links.
+//! Parse auth-callback deep links for this edition's scheme.
 
 use anyhow::{anyhow, Context, Result};
 use url::Url;
-
-use super::deep_link::CUSTOM_SCHEME;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthCallback {
@@ -24,7 +22,8 @@ pub fn is_auth_callback_url(raw: &str) -> bool {
 
 pub fn parse_auth_callback(raw: &str) -> Result<AuthCallback> {
     let url = Url::parse(raw.trim()).context("invalid callback URL")?;
-    if url.scheme() != CUSTOM_SCHEME {
+    let expected = dragent_paths::url_scheme();
+    if url.scheme() != expected {
         anyhow::bail!("unexpected URL scheme: {}", url.scheme());
     }
     if !is_auth_callback_path(&url) {
@@ -79,12 +78,26 @@ fn optional_query_param(url: &Url, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::deep_link::custom_scheme;
+
+    fn callback_url(path_and_query: &str) -> String {
+        format!("{}://{path_and_query}", custom_scheme())
+    }
+
+    fn other_scheme_url(path_and_query: &str) -> String {
+        let other = if custom_scheme() == "dragent" {
+            "dragent-dev"
+        } else {
+            "dragent"
+        };
+        format!("{other}://{path_and_query}")
+    }
 
     #[test]
     fn parses_valid_callback() {
-        let cb = parse_auth_callback(
-            "dragent://auth/callback?refresh_token=rt_abc&state=csrf-1&user_id=u1",
-        )
+        let cb = parse_auth_callback(&callback_url(
+            "auth/callback?refresh_token=rt_abc&state=csrf-1&user_id=u1",
+        ))
         .unwrap();
         assert_eq!(cb.refresh_token, "rt_abc");
         assert_eq!(cb.state, "csrf-1");
@@ -93,9 +106,10 @@ mod tests {
 
     #[test]
     fn rejects_missing_state() {
-        assert!(parse_auth_callback("dragent://auth/callback?refresh_token=rt").is_err());
+        assert!(parse_auth_callback(&callback_url("auth/callback?refresh_token=rt")).is_err());
         let coded =
-            parse_auth_callback("dragent://auth/callback?code=c1&state=s1&user_id=u1").unwrap();
+            parse_auth_callback(&callback_url("auth/callback?code=c1&state=s1&user_id=u1"))
+                .unwrap();
         assert_eq!(coded.code.as_deref(), Some("c1"));
         assert!(coded.refresh_token.is_empty());
     }
@@ -105,6 +119,19 @@ mod tests {
         assert!(
             parse_auth_callback("https://example.com/auth/callback?refresh_token=rt&state=s")
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_the_other_editions_scheme() {
+        // A Dev build must not accept the installed app's `dragent://` links
+        // (and vice versa): they belong to the other edition.
+        assert!(
+            parse_auth_callback(&other_scheme_url(
+                "auth/callback?refresh_token=rt_abc&state=csrf-1"
+            ))
+            .is_err(),
+            "must reject the other edition's scheme"
         );
     }
 }
