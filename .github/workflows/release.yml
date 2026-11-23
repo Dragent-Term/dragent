@@ -46,6 +46,9 @@ concurrency:
 
 env:
   # Compile-time bakes (option_env!) picked up by cargo builds in the scripts.
+  # The Release edition. Without it every build is "Dragent Dev" (its own data
+  # folder, name and link scheme). Containers don't inherit it: pass it with -e.
+  DRAGENT_RELEASE_EDITION: "1"
   # A tag with a "-" (v0.3.0-rc.1) is a release candidate: staging servers.
   DRAGENT_BACKEND_URL_DEFAULT: ${{ contains(github.ref_name, '-') && secrets.STAGING_BACKEND_URL || secrets.RELEASE_BACKEND_URL }}
   # Web frontend origin: browser sign-in page + desktop session polling.
@@ -264,7 +267,7 @@ jobs:
       - name: Build the headless runtime (Linux, Debian 11)
         if: runner.os == 'Linux'
         run: |
-          docker run --rm -v "$PWD:/src" -w /src/dragent rust:1-bullseye \
+          docker run --rm -e DRAGENT_RELEASE_EDITION -v "$PWD:/src" -w /src/dragent rust:1-bullseye \
             cargo build --locked --release -p dragent_host --bin dragent-host
           sudo chown -R "$(id -u):$(id -g)" dragent/target
           if ldd dragent/target/release/dragent-host | grep -E 'libdbus|libsqlite3|not found'; then
