@@ -17,7 +17,9 @@
 #   latest.json            → the signed update manifest the desktop app polls
 #
 # Baked-in config (compile-time env, see api/backend.rs + autoupdate/):
-#   DRAGENT_BACKEND_URL_DEFAULT         ← repo var RELEASE_BACKEND_URL (fallback: staging)
+#   DRAGENT_BACKEND_URL_DEFAULT         ← secret RELEASE_BACKEND_URL (candidates: STAGING_BACKEND_URL)
+#   DRAGENT_WEB_ORIGIN_DEFAULT          ← secret RELEASE_WEB_ORIGIN (candidates: STAGING_WEB_ORIGIN)
+#   The service addresses are secrets, never written here and masked in logs.
 #   DRAGENT_UPDATE_MANIFEST_URL_DEFAULT ← releases/latest/download/latest.json
 #   DRAGENT_UPDATE_PUBLIC_KEYS          ← repo var RELEASE_MANIFEST_PUBLIC_KEYS
 #
@@ -45,9 +47,9 @@ concurrency:
 env:
   # Compile-time bakes (option_env!) picked up by cargo builds in the scripts.
   # A tag with a "-" (v0.3.0-rc.1) is a release candidate: staging servers.
-  DRAGENT_BACKEND_URL_DEFAULT: ${{ contains(github.ref_name, '-') && (vars.STAGING_BACKEND_URL || 'https://beta.api.dragent.dev') || vars.RELEASE_BACKEND_URL }}
+  DRAGENT_BACKEND_URL_DEFAULT: ${{ contains(github.ref_name, '-') && secrets.STAGING_BACKEND_URL || secrets.RELEASE_BACKEND_URL }}
   # Web frontend origin: browser sign-in page + desktop session polling.
-  DRAGENT_WEB_ORIGIN_DEFAULT: ${{ contains(github.ref_name, '-') && (vars.STAGING_WEB_ORIGIN || 'https://beta.dragent.dev') || vars.RELEASE_WEB_ORIGIN }}
+  DRAGENT_WEB_ORIGIN_DEFAULT: ${{ contains(github.ref_name, '-') && secrets.STAGING_WEB_ORIGIN || secrets.RELEASE_WEB_ORIGIN }}
   # Candidates update from the rolling rc-latest manifest, releases from Latest.
   DRAGENT_UPDATE_MANIFEST_URL_DEFAULT: ${{ contains(github.ref_name, '-') && format('https://github.com/{0}/releases/download/rc-latest/latest.json', github.repository) || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
   DRAGENT_UPDATE_PUBLIC_KEYS: ${{ vars.RELEASE_MANIFEST_PUBLIC_KEYS }}
@@ -77,34 +79,44 @@ jobs:
             exit 1
           fi
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
+      # A candidate ("-rc.N") is built for staging: its addresses must be set.
+      - name: Check a candidate has its staging addresses
+        if: ${{ contains(github.ref_name, '-') }}
+        env:
+          BACKEND: ${{ secrets.STAGING_BACKEND_URL }}
+          WEB: ${{ secrets.STAGING_WEB_ORIGIN }}
+        run: |
+          [ -n "$BACKEND" ] || { echo "::error::Secret STAGING_BACKEND_URL is unset"; exit 1; }
+          [ -n "$WEB" ] || { echo "::error::Secret STAGING_WEB_ORIGIN is unset"; exit 1; }
+          echo "Candidate addresses are set."
       # A release (no "-rc.N") is for production: refuse one that would be
       # built without production addresses or with a staging one.
       - name: Check a release is built for production
         if: ${{ !contains(github.ref_name, '-') }}
         env:
-          BACKEND: ${{ vars.RELEASE_BACKEND_URL }}
-          WEB: ${{ vars.RELEASE_WEB_ORIGIN }}
-          STAGING_BACKEND: ${{ vars.STAGING_BACKEND_URL || 'https://beta.api.dragent.dev' }}
-          STAGING_WEB: ${{ vars.STAGING_WEB_ORIGIN || 'https://beta.dragent.dev' }}
+          BACKEND: ${{ secrets.RELEASE_BACKEND_URL }}
+          WEB: ${{ secrets.RELEASE_WEB_ORIGIN }}
+          STAGING_BACKEND: ${{ secrets.STAGING_BACKEND_URL }}
+          STAGING_WEB: ${{ secrets.STAGING_WEB_ORIGIN }}
         run: |
           norm() { printf '%s' "$1" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' | sed 's#/*$##'; }
           fail() { echo "::error::A release ($GITHUB_REF_NAME) is built for production: $1. Tag a release candidate (v<version>-rc.N) for staging."; exit 1; }
           backend=$(norm "$BACKEND"); web=$(norm "$WEB")
-          [ -n "$backend" ] || fail "RELEASE_BACKEND_URL is unset"
-          [ -n "$web" ] || fail "RELEASE_WEB_ORIGIN is unset"
+          [ -n "$backend" ] || fail "secret RELEASE_BACKEND_URL is unset"
+          [ -n "$web" ] || fail "secret RELEASE_WEB_ORIGIN is unset"
           for value in "$backend" "$web"; do
             case "$value" in
               https://*) ;;
-              *) fail "$value is not an https:// address" ;;
+              *) fail "an address is not https://" ;;
             esac
             if [ "$value" = "$(norm "$STAGING_BACKEND")" ] || [ "$value" = "$(norm "$STAGING_WEB")" ]; then
-              fail "$value is a staging address"
+              fail "a production address equals a staging one"
             fi
             case "$value" in
-              *://beta.*|*://staging.*|*.beta.*|*.staging.*) fail "$value looks like a staging address" ;;
+              *://beta.*|*://staging.*|*.beta.*|*.staging.*) fail "a production address looks like a staging one" ;;
             esac
           done
-          echo "Release built for $backend and $web"
+          echo "Release addresses checked (production, https)."
       # Every build bakes this list; one malformed entry would make those
       # apps refuse all updates. Empty entries are ignored by the app.
       - name: Check the update public keys
