@@ -1,5 +1,6 @@
 # License note
 
+
 This repository's own code is licensed under the **GNU Affero General Public
 License, version 3 only** (SPDX: `AGPL-3.0-only`) — free for any use,
 including commercial use, modification, and distribution, under copyleft
