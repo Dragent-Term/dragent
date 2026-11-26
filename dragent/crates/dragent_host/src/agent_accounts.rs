@@ -1049,10 +1049,12 @@ fn probe(mut command: Command) -> Result<(bool, Vec<u8>), String> {
     }
 }
 fn native_command(binding: &Binding, executable: &Path) -> Result<Command, String> {
-    // npm installs agents as `.cmd` shims on Windows, which a bare name misses.
-    let mut command = Command::new(crate::agent_sessions::program(
-        &executable.to_string_lossy(),
-    ));
+    // npm installs agents as `.cmd` shims on Windows, which a bare name
+    // misses. An app opened from the Finder has only the system folders on
+    // its PATH: `host_tools::command` finds the agent where the person's
+    // shell does (and the copy chosen on this machine), as sessions do.
+    let program = crate::agent_sessions::program(&executable.to_string_lossy());
+    let mut command = crate::host_tools::command(&program.to_string_lossy());
     configure(&mut command, binding)?;
     Ok(command)
 }

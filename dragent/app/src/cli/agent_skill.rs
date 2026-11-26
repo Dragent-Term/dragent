@@ -1,9 +1,13 @@
-//! Dragent’s focused skill packages in other agents’ shared folders,
-//! teaching the `dragent` command: `~/.agents/skills` (Codex, OpenCode,
-//! Cursor, Gemini) and `~/.qwen/skills` (Qwen, once it's set up). Claude Code
-//! and Dragent's own agent get the same packages without any of this.
+//! Dragent’s skill packages in other agents’ own skill folders, one skill
+//! at a time and only when the person installs it (Settings → Skills):
+//! Claude Code `~/.claude/skills`, Cursor `~/.cursor/skills`, Qwen
+//! `~/.qwen/skills`, and the shared `~/.agents/skills` that Codex, OpenCode
+//! and Gemini read. Agents started from Dragent get every skill for that
+//! launch without any of this. Earlier builds installed the whole set into
+//! the shared folders unasked; a sync takes out whatever the person didn't
+//! install (only files still exactly as Dragent wrote them).
 //!
-//! On unless the user turns it off. Ownership is recorded per file, with the
+//! Ownership is recorded per file, with the
 //! hash of what Dragent wrote, so:
 //! - a file Dragent wrote and nobody changed updates with a newer Dragent;
 //! - a file the user edited or created is never overwritten or removed;
@@ -17,7 +21,9 @@
 //! first and moved into place with SKILL.md last, so agents never read one
 //! build's instructions beside another's scripts.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::agent::mcp_agent_sync::SyncAgent;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -32,10 +38,17 @@ const STAGING_DIR: &str = ".dragent-staging";
 struct Record {
     #[serde(default = "on")]
     enabled: bool,
+    /// The person turned this on or off themselves. Earlier builds wrote
+    /// `enabled` without asking; without this, the files are taken out.
+    #[serde(default)]
+    chosen: bool,
     /// Every file Dragent wrote, with the hash of what it wrote. Kept under
     /// its original key, which earlier builds read.
     #[serde(default, rename = "written")]
     files: BTreeMap<PathBuf, String>,
+    /// Each skill the person installed, with the skill folders it went into.
+    #[serde(default)]
+    installed: BTreeMap<String, BTreeSet<PathBuf>>,
 }
 
 fn on() -> bool {
@@ -46,9 +59,34 @@ impl Default for Record {
     fn default() -> Self {
         Self {
             enabled: true,
+            chosen: false,
             files: BTreeMap::new(),
+            installed: BTreeMap::new(),
         }
     }
+}
+
+/// Where a note about what Dragent took back out of other agents waits to
+/// be shown once.
+pub(crate) fn cleanup_note_path() -> PathBuf {
+    dragent_paths::home().join("other-agents-cleanup.txt")
+}
+
+/// Add a line to that note.
+pub(crate) fn add_cleanup_note(line: &str) {
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(cleanup_note_path()) {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// The note, once: reading it removes it.
+pub(crate) fn take_cleanup_note() -> Option<String> {
+    let path = cleanup_note_path();
+    let text = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let text = text.trim().to_string();
+    (!text.is_empty()).then_some(text)
 }
 
 /// What a sync did, for Settings to report.
@@ -111,21 +149,147 @@ fn save(path: &Path, record: &Record) {
     }
 }
 
-/// The shared skill folders other agents read, for this home folder.
-fn roots(home: &Path) -> Vec<PathBuf> {
-    let mut roots = vec![home.join(".agents/skills")];
-    if home.join(".qwen").is_dir() {
-        roots.push(home.join(".qwen/skills"));
+/// The skill folder `agent` reads in this home folder.
+pub fn agent_root(agent: SyncAgent, home: &Path) -> PathBuf {
+    match agent {
+        SyncAgent::ClaudeCode => home.join(".claude/skills"),
+        SyncAgent::Cursor => home.join(".cursor/skills"),
+        SyncAgent::Qwen => home.join(".qwen/skills"),
+        SyncAgent::Codex | SyncAgent::OpenCode | SyncAgent::Gemini => home.join(".agents/skills"),
     }
+}
+
+/// Every folder a skill may have gone into, by an install or an earlier build.
+fn all_roots(home: &Path) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = SyncAgent::ALL.into_iter().map(|agent| agent_root(agent, home)).collect();
+    roots.sort();
+    roots.dedup();
     roots
 }
 
-pub fn enabled() -> bool {
-    load(&record_path()).enabled
+/// Dragent's skills that can be installed one by one (desktop guidance has
+/// its own control in Computer use).
+fn installable() -> impl Iterator<Item = &'static dragent_host::agent_skills::BundledSkill> {
+    dragent_host::agent_skills::BUNDLED_SKILLS
+        .iter()
+        .filter(|skill| skill.name != dragent_host::agent_skills::COMPUTER_SKILL_NAME)
 }
 
-/// Bring the folders in line with the setting (at startup). A Dev build
-/// never writes into the shared skill folders other agents read.
+/// A skill's `description:` line.
+fn description(content: &str) -> String {
+    content
+        .lines()
+        .find_map(|line| line.strip_prefix("description:"))
+        .map(|text| text.trim().trim_matches('"').to_string())
+        .unwrap_or_default()
+}
+
+/// One agent's copy of a skill.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Copy {
+    Installed,
+    NotInstalled,
+    /// A skill of the person's own under the same name: never touched.
+    Theirs,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentCopy {
+    pub agent: SyncAgent,
+    pub root: PathBuf,
+    pub copy: Copy,
+}
+
+#[derive(Clone, Debug)]
+pub struct SkillRow {
+    pub name: &'static str,
+    pub description: String,
+    /// The agents found on this computer.
+    pub agents: Vec<AgentCopy>,
+}
+
+/// Dragent's skills and where each is installed, for Settings.
+pub fn skill_rows() -> Vec<SkillRow> {
+    match dirs::home_dir() {
+        Some(home) => rows_in(&load(&record_path()), &home),
+        None => Vec::new(),
+    }
+}
+
+fn rows_in(record: &Record, home: &Path) -> Vec<SkillRow> {
+    let present: Vec<SyncAgent> = SyncAgent::ALL.into_iter().filter(|agent| agent.is_present(home)).collect();
+    installable()
+        .map(|skill| SkillRow {
+            name: skill.name,
+            description: description(skill.content),
+            agents: present
+                .iter()
+                .map(|&agent| {
+                    let root = agent_root(agent, home);
+                    let skill_md = root.join(skill.name).join(SKILL_FILE);
+                    let chosen = record.installed.get(skill.name).is_some_and(|roots| roots.contains(&root));
+                    let copy = match state(record, &skill_md, Some(skill.content.as_bytes()), &root) {
+                        FileState::Theirs => Copy::Theirs,
+                        FileState::Current | FileState::Stale if chosen => Copy::Installed,
+                        _ => Copy::NotInstalled,
+                    };
+                    AgentCopy { agent, root, copy }
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// What installing one skill would change, without changing anything.
+#[derive(Debug, Default, PartialEq)]
+pub struct Preview {
+    /// The agents it would go to.
+    pub agents: Vec<SyncAgent>,
+    /// Skill folders Dragent would write.
+    pub writes: Vec<PathBuf>,
+    /// The person's own skills under the same name, which stay as they are.
+    pub kept: Vec<PathBuf>,
+}
+
+pub fn preview_install(name: &str) -> Preview {
+    match dirs::home_dir() {
+        Some(home) => preview_in(&load(&record_path()), &home, name),
+        None => Preview::default(),
+    }
+}
+
+fn preview_in(record: &Record, home: &Path, name: &str) -> Preview {
+    let mut preview = Preview::default();
+    let Some(row) = rows_in(record, home).into_iter().find(|row| row.name == name) else {
+        return preview;
+    };
+    for agent in row.agents {
+        let dir = agent.root.join(name);
+        match agent.copy {
+            Copy::Installed => {}
+            Copy::Theirs => {
+                if !preview.kept.contains(&dir) {
+                    preview.kept.push(dir);
+                }
+            }
+            Copy::NotInstalled => {
+                preview.agents.push(agent.agent);
+                if !preview.writes.contains(&dir) {
+                    preview.writes.push(dir);
+                }
+            }
+        }
+    }
+    preview
+}
+
+/// Whether any of Dragent's skills is installed for other agents.
+pub fn enabled() -> bool {
+    load(&record_path()).installed.values().any(|roots| !roots.is_empty())
+}
+
+/// Bring the folders in line with what the person installed (at startup).
+/// A Dev build never writes into other agents' skill folders.
 pub fn sync() -> Outcome {
     if dragent_paths::is_dev() {
         log::info!("[cli] Dev build: leaving shared skill folders alone");
@@ -136,7 +300,7 @@ pub fn sync() -> Outcome {
     };
     let path = record_path();
     let mut record = load(&path);
-    let outcome = apply_suite(&mut record, &home, false);
+    let outcome = sync_skills(&mut record, &home);
     let computer_path = dragent_paths::home().join(COMPUTER_RECORD_FILE);
     if computer_path.is_file() {
         let mut computer = load(&computer_path);
@@ -147,35 +311,85 @@ pub fn sync() -> Outcome {
     outcome
 }
 
-/// The user turned it on or off. A Dev build records the choice in its own
-/// home but never writes into the shared skill folders.
-pub fn set_enabled(enabled: bool) -> Outcome {
+/// Installed skills update; any other copy Dragent wrote comes out.
+fn sync_skills(record: &mut Record, home: &Path) -> Outcome {
+    let mut outcome = Outcome::default();
+    for skill in installable() {
+        let package = Package::bundled(skill);
+        for root in all_roots(home) {
+            let dir = root.join(skill.name);
+            if record.installed.get(skill.name).is_some_and(|roots| roots.contains(&root)) {
+                install(record, &dir, &package, false, &mut outcome);
+            } else if record.files.keys().any(|path| path.starts_with(&dir)) {
+                uninstall(record, &dir, &package, &mut outcome);
+            }
+        }
+    }
+    outcome
+}
+
+/// Install one skill for every agent found here that doesn't have it.
+pub fn install_skill(name: &str) -> Outcome {
+    change(name, true)
+}
+
+/// Take one skill back out of every agent it was installed for.
+pub fn remove_skill(name: &str) -> Outcome {
+    change(name, false)
+}
+
+fn change(name: &str, on: bool) -> Outcome {
     let path = record_path();
     let mut record = load(&path);
-    record.enabled = enabled;
-    if dragent_paths::is_dev() {
-        log::info!("[cli] Dev build: leaving shared skill folders alone");
-        save(&path, &record);
-        return Outcome::default();
-    }
     let Some(home) = dirs::home_dir() else {
         return Outcome::default();
     };
-    let outcome = apply_suite(&mut record, &home, true);
+    if dragent_paths::is_dev() {
+        log::info!("[cli] Dev build: leaving other agents' skill folders alone");
+        return Outcome::default();
+    }
+    let outcome = change_in(&mut record, &home, name, on);
     save(&path, &record);
     outcome
 }
 
-/// Desktop guidance keeps its separate opt-in record and Settings control.
-fn apply_suite(record: &mut Record, home: &Path, asked: bool) -> Outcome {
+fn change_in(record: &mut Record, home: &Path, name: &str, on: bool) -> Outcome {
     let mut outcome = Outcome::default();
-    for skill in dragent_host::agent_skills::BUNDLED_SKILLS {
-        if skill.name == dragent_host::agent_skills::COMPUTER_SKILL_NAME {
-            continue;
+    let Some(skill) = installable().find(|skill| skill.name == name) else {
+        return outcome;
+    };
+    let package = Package::bundled(skill);
+    if on {
+        let preview = preview_in(record, home, name);
+        let roots: BTreeSet<PathBuf> = preview.agents.iter().map(|&agent| agent_root(agent, home)).collect();
+        for root in &roots {
+            install(record, &root.join(name), &package, true, &mut outcome);
         }
-        outcome.extend(apply_package(record, home, &Package::bundled(skill), asked));
+        record.installed.entry(name.to_string()).or_default().extend(roots);
+    } else {
+        for root in record.installed.remove(name).unwrap_or_default() {
+            uninstall(record, &root.join(name), &package, &mut outcome);
+        }
     }
     outcome
+}
+
+/// Every skill on or off at once (`dragent settings`).
+pub fn set_enabled(enabled: bool) -> Outcome {
+    let mut outcome = Outcome::default();
+    for skill in installable() {
+        outcome.extend(change(skill.name, enabled));
+    }
+    outcome
+}
+
+/// The shared skill folders desktop guidance goes into.
+fn roots(home: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![home.join(".agents/skills")];
+    if home.join(".qwen").is_dir() {
+        roots.push(home.join(".qwen/skills"));
+    }
+    roots
 }
 
 fn apply_computer(record: &mut Record, home: &Path, asked: bool) -> Outcome {
@@ -446,6 +660,7 @@ pub(crate) fn set_computer_enabled(enabled: bool) -> Outcome {
     let path = dragent_paths::home().join(COMPUTER_RECORD_FILE);
     let mut record = load(&path);
     record.enabled = enabled;
+    record.chosen = true;
     if dragent_paths::is_dev() {
         log::info!("[cli] Dev build: leaving shared skill folders alone");
         save(&path, &record);
@@ -462,6 +677,86 @@ pub(crate) fn set_computer_enabled(enabled: bool) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn browser() -> &'static dragent_host::agent_skills::BundledSkill {
+        dragent_host::agent_skills::bundled("dragent-browser").unwrap()
+    }
+
+    #[test]
+    fn one_skill_installs_into_each_found_agents_own_folder_after_a_preview() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        for dir in [".claude", ".codex", ".cursor"] {
+            std::fs::create_dir(home.join(dir)).unwrap();
+        }
+        std::fs::write(home.join(".claude.json"), "{}").unwrap();
+        let mut record = Record::default();
+        let preview = preview_in(&record, home, "dragent-browser");
+        assert_eq!(preview.agents, [SyncAgent::ClaudeCode, SyncAgent::Codex, SyncAgent::Cursor]);
+        assert_eq!(
+            preview.writes,
+            [
+                home.join(".claude/skills/dragent-browser"),
+                home.join(".agents/skills/dragent-browser"),
+                home.join(".cursor/skills/dragent-browser"),
+            ]
+        );
+        assert!(!home.join(".claude/skills").exists(), "a preview writes nothing");
+
+        change_in(&mut record, home, "dragent-browser", true);
+        for root in [".claude/skills", ".agents/skills", ".cursor/skills"] {
+            assert_eq!(read(home.join(root).join("dragent-browser/SKILL.md")), browser().content);
+        }
+        assert!(!home.join(".agents/skills/dragent-panes").exists(), "only the skill installed");
+        let row = rows_in(&record, home).into_iter().find(|row| row.name == "dragent-browser").unwrap();
+        assert!(row.agents.iter().all(|agent| agent.copy == Copy::Installed));
+        assert!(row.description.len() > 10);
+
+        // It stays on later starts; removing it takes out all its copies.
+        sync_skills(&mut record, home);
+        assert!(home.join(".claude/skills/dragent-browser/SKILL.md").is_file());
+        change_in(&mut record, home, "dragent-browser", false);
+        assert!(!home.join(".claude/skills/dragent-browser").exists());
+        assert!(!home.join(".agents/skills/dragent-browser").exists());
+    }
+
+    #[test]
+    fn a_skill_of_the_persons_own_by_that_name_is_never_touched() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        std::fs::create_dir(home.join(".codex")).unwrap();
+        let mine = home.join(".agents/skills/dragent-browser");
+        std::fs::create_dir_all(&mine).unwrap();
+        std::fs::write(mine.join("SKILL.md"), "my own").unwrap();
+        let mut record = Record::default();
+        let preview = preview_in(&record, home, "dragent-browser");
+        assert_eq!(preview.kept, [mine.clone()]);
+        assert!(preview.writes.is_empty());
+        change_in(&mut record, home, "dragent-browser", true);
+        change_in(&mut record, home, "dragent-browser", false);
+        assert_eq!(read(mine.join("SKILL.md")), "my own");
+    }
+
+    #[test]
+    fn skills_an_earlier_build_installed_unasked_are_taken_out() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        // What an earlier build did on its own: the whole set, shared folder.
+        let mut legacy: Record = serde_json::from_str(r#"{"enabled": true}"#).unwrap();
+        for skill in installable() {
+            apply_package(&mut legacy, home, &Package::bundled(skill), false);
+        }
+        let shared = home.join(".agents/skills");
+        assert!(shared.join("dragent-panes/SKILL.md").is_file());
+        // An edited file of the person's survives the clean-up.
+        let edited = shared.join("dragent-browser/SKILL.md");
+        std::fs::write(&edited, "my own notes").unwrap();
+        let mut record: Record = serde_json::from_slice(&serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let cleaned = sync_skills(&mut record, home);
+        assert!(!cleaned.removed.is_empty());
+        assert!(!shared.join("dragent-panes").exists(), "unasked skills are gone");
+        assert_eq!(read(edited), "my own notes");
+    }
 
     fn package<'a>(files: &[(&'a str, &'a str)]) -> Package<'a> {
         Package {
@@ -634,21 +929,10 @@ mod tests {
     }
 
     #[test]
-    fn the_bundled_suite_installs_without_desktop_guidance() {
+    fn desktop_guidance_has_its_own_opt_in() {
         let home = tempfile::tempdir().unwrap();
         let home = home.path();
-        let mut record = Record::default();
-        apply_suite(&mut record, home, false);
-        for skill in dragent_host::agent_skills::BUNDLED_SKILLS {
-            let installed = home.join(".agents/skills").join(skill.name);
-            if skill.name == dragent_host::agent_skills::COMPUTER_SKILL_NAME {
-                assert!(!installed.exists(), "desktop guidance has its own opt-in");
-                continue;
-            }
-            for file in skill.files {
-                assert_eq!(std::fs::read(installed.join(file.path)).unwrap(), file.bytes);
-            }
-        }
+        assert!(installable().all(|skill| skill.name != dragent_host::agent_skills::COMPUTER_SKILL_NAME));
         let mut computer = Record::default();
         apply_computer(&mut computer, home, true);
         assert!(home.join(".agents/skills/dragent-computer/SKILL.md").is_file());
@@ -670,9 +954,9 @@ mod tests {
                 (dragent_paths::DEV_HOME_ENV, Some(dev_home.path())),
             ],
             || {
+                std::fs::create_dir(home.path().join(".codex")).unwrap();
                 let outcome = set_enabled(true);
                 assert!(outcome.written.is_empty() && outcome.removed.is_empty());
-                assert!(enabled());
                 let outcome = set_computer_enabled(true);
                 assert!(outcome.written.is_empty() && outcome.removed.is_empty());
                 let outcome = sync();

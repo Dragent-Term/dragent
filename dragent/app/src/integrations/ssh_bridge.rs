@@ -41,8 +41,7 @@ struct Binding {
 }
 impl Binding {
     fn active(&self) -> bool {
-        super::agents::enabled()
-            && self.matches(
+        self.matches(
                 &dragent_paths::organisation_id(),
                 &crate::organisation_context::cached_active().map(|active| active.user_id),
             )

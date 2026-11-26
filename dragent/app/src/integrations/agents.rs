@@ -1,8 +1,8 @@
-//! Connected services for other coding agents: the `dragent mcp` bridge in
-//! their MCP settings (Claude Code, Codex, Cursor, Gemini, Qwen, OpenCode),
-//! written through `agent::mcp_agent_sync` like the servers in Settings →
-//! MCP servers. Coordination tools are available even without a connected
-//! service; the user can turn agent tools off for this machine.
+//! Dragent's tools (`dragent mcp`) belong to agents started from Dragent:
+//! each gets them at launch, for that session only, and the bridge refuses
+//! to serve anywhere else. Nothing is written into other agents' own MCP
+//! settings. Earlier builds added the bridge there; a sync takes those
+//! entries back out.
 
 use std::path::{Path, PathBuf};
 
@@ -16,42 +16,29 @@ use crate::settings::{McpServerEntry, McpTransport};
 /// `mcp__dragent__search` and the like.
 pub const BRIDGE_NAME: &str = "dragent";
 
-const RECORD_FILE: &str = "integrations.json";
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Record {
-    #[serde(default = "on")]
-    agent_tools: bool,
-}
-
-fn on() -> bool {
-    true
-}
-
-fn record_path() -> PathBuf {
-    dragent_paths::home().join(RECORD_FILE)
-}
-
-/// Whether other agents get the connected services (on unless turned off).
-pub fn enabled() -> bool {
-    std::fs::read(record_path())
+/// The agents whose own settings hold Dragent's bridge, as written by
+/// Dragent (its sync record), by name.
+fn agents_with_bridge() -> std::collections::BTreeSet<String> {
+    let record = dragent_paths::home().join("mcp-agent-sync.json");
+    let Some(value) = std::fs::read(record)
         .ok()
-        .and_then(|bytes| serde_json::from_slice::<Record>(&bytes).ok())
-        .is_none_or(|record| record.agent_tools)
-}
-
-/// Turn it on or off, then bring the agents' settings in line.
-pub fn set_enabled(on: bool) {
-    let path = record_path();
-    match serde_json::to_vec_pretty(&Record { agent_tools: on }) {
-        Ok(bytes) => {
-            if let Err(error) = std::fs::write(&path, bytes) {
-                log::warn!("[integrations] couldn't save {}: {error}", path.display());
-            }
-        }
-        Err(error) => log::warn!("[integrations] {error}"),
-    }
-    sync_in_background();
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    else {
+        return Default::default();
+    };
+    value
+        .get("agents")
+        .and_then(|agents| agents.as_object())
+        .map(|agents| {
+            agents
+                .iter()
+                .filter(|(_, names)| {
+                    names.as_array().is_some_and(|names| names.iter().any(|name| name == BRIDGE_NAME))
+                })
+                .map(|(key, _)| SyncAgent::from_key(key).map_or_else(|| key.clone(), |agent| agent.label().to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Something agents could use is connected. GitHub doesn't count: agents
@@ -63,59 +50,8 @@ pub(crate) fn any_connected() -> bool {
         .any(|provider| super::connection(provider).is_some())
 }
 
-/// How agents start the bridge: the `dragent` launcher, whose path stays
-/// put while the app moves or updates. On Windows, where agents can't start
-/// a `.cmd` file directly, the app itself.
-fn bridge_command() -> Option<(String, Vec<String>)> {
-    if cfg!(windows) {
-        let exe = std::env::current_exe().ok()?;
-        return Some((
-            exe.to_string_lossy().to_string(),
-            vec![crate::cli::CLI_ARG.to_string(), "mcp".to_string()],
-        ));
-    }
-    let launcher = crate::cli::user_bin_dir().join("dragent");
-    launcher.is_file().then(|| {
-        (
-            launcher.to_string_lossy().to_string(),
-            vec!["mcp".to_string()],
-        )
-    })
-}
-
-/// The bridge as a server for every agent present under `home`, when
-/// it's wanted.
-pub(crate) fn bridge_entry(home: &Path) -> Option<McpServerEntry> {
-    if !enabled() {
-        return None;
-    }
-    let (command, args) = bridge_command()?;
-    entry(command, args, home)
-}
-
-fn entry(command: String, args: Vec<String>, home: &Path) -> Option<McpServerEntry> {
-    let agents: Vec<String> = SyncAgent::ALL
-        .into_iter()
-        .filter(|agent| agent.is_present(home))
-        .map(|agent| agent.key().to_string())
-        .collect();
-    (!agents.is_empty()).then(|| McpServerEntry {
-        name: BRIDGE_NAME.to_string(),
-        command,
-        transport: McpTransport::Stdio,
-        args,
-        env: Default::default(),
-        enabled: true,
-        bearer_token: None,
-        auth_url: None,
-        token_url: None,
-        oauth_scope: None,
-        sync_agents: agents,
-    })
-}
-
-/// Rewrite the agents' MCP settings with the user's servers and the
-/// bridge, off the calling thread. A Dev build never touches other apps'
+/// Rewrite the agents' MCP settings with the user's servers (taking out a
+/// bridge an earlier build wrote), off the calling thread. A Dev build never touches other apps'
 /// settings: it leaves the bridge (and their servers) alone.
 pub fn sync_in_background() {
     if dragent_paths::is_dev() {
@@ -129,18 +65,26 @@ pub fn sync_in_background() {
             );
             return;
         };
+        let before = agents_with_bridge();
         let report = crate::agent::mcp_agent_sync::sync_agents(&entries);
         if let Some(summary) = report.summary() {
             log::info!("[integrations] {summary}");
         }
-        // Each connected machine's service bridge keeps running and follows
-        // the setting itself; restarting it would fail calls in flight.
-        let enabled = enabled();
+        let after = agents_with_bridge();
+        let removed: Vec<_> = before.difference(&after).cloned().collect();
+        if !removed.is_empty() {
+            crate::cli::agent_skill::add_cleanup_note(&format!(
+                "Removed Dragent's tools from the settings of {}.",
+                removed.join(", ")
+            ));
+        }
+        // Each connected machine takes out what it wrote into its agents'
+        // settings too; its tools service keeps running for its sessions.
         for machine in crate::remote_fs::connected_machines() {
             if let Ok(client) = crate::remote_fs::client(&machine) {
                 if let Err(error) = client.coordination(
                     "host_mcp_configure",
-                    serde_json::json!({"enabled": enabled}),
+                    serde_json::json!({"enabled": true}),
                     serde_json::to_value(crate::cli::team::Caller::person()).unwrap(),
                 ) {
                     log::warn!("[integrations] remote MCP registration: {error}");
@@ -163,57 +107,36 @@ fn user_servers() -> Option<Vec<McpServerEntry>> {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_bridge_goes_only_to_agents_used_here() {
+    fn a_bridge_an_earlier_build_wrote_is_taken_out_and_the_persons_servers_stay() {
         let home = tempfile::tempdir().unwrap();
-        assert!(entry("dragent".into(), vec!["mcp".into()], home.path()).is_none());
+        let record = home.path().join("sync.json");
         std::fs::create_dir(home.path().join(".codex")).unwrap();
-        std::fs::write(home.path().join(".claude.json"), "{}").unwrap();
-        let entry = entry(
-            "/home/a/.dragent/bin/dragent".into(),
-            vec!["mcp".into()],
-            home.path(),
-        )
-        .unwrap();
-        assert_eq!(entry.name, "dragent");
-        assert_eq!(entry.sync_agents, ["claude", "codex"]);
-        assert_eq!(entry.display_command(), "/home/a/.dragent/bin/dragent mcp");
-    }
-
-    #[test]
-    fn dev_builds_sync_no_bridge_into_other_agents() {
-        // Test builds are the Dev edition. With an agent present and a
-        // launcher that would build the bridge entry, the background sync
-        // must still write nothing into the home folder.
-        if !dragent_paths::is_dev() {
-            return;
-        } // only meaningful in the Dev edition
-        let home = tempfile::tempdir().unwrap();
-        let dev_home = tempfile::tempdir().unwrap();
-        std::fs::create_dir(home.path().join(".codex")).unwrap();
-        crate::test_env::with_vars(
-            &[
-                ("HOME", Some(home.path())),
-                (dragent_paths::DEV_HOME_ENV, Some(dev_home.path())),
-            ],
-            || {
-                std::fs::create_dir_all(crate::cli::user_bin_dir()).unwrap();
-                std::fs::write(crate::cli::user_bin_dir().join("dragent"), "#!/bin/sh\n").unwrap();
-                sync_in_background();
-                // No thread is spawned in Dev, so no write can be in flight;
-                // poll anyway so a removed guard fails instead of passing.
-                for _ in 0..20 {
-                    if home.path().join(".codex/config.toml").exists() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                assert!(!home.path().join(".codex/config.toml").exists());
-            },
-        );
+        let server = |name: &str| McpServerEntry {
+            name: name.to_string(),
+            command: format!("/bin/{name}"),
+            transport: McpTransport::Stdio,
+            args: Vec::new(),
+            env: Default::default(),
+            enabled: true,
+            bearer_token: None,
+            auth_url: None,
+            token_url: None,
+            oauth_scope: None,
+            sync_agents: vec!["codex".into()],
+        };
+        // What an earlier build did: the bridge beside the person's server.
+        dragent_host::mcp_sync::sync(&[server("mine"), server(BRIDGE_NAME)], home.path(), &record);
+        let config = || std::fs::read_to_string(home.path().join(".codex/config.toml")).unwrap();
+        assert!(config().contains("[mcp_servers.dragent]"));
+        // Now: only the person's servers are synced.
+        dragent_host::mcp_sync::sync(&[server("mine")], home.path(), &record);
+        assert!(!config().contains("[mcp_servers.dragent]"), "{}", config());
+        assert!(config().contains("[mcp_servers.mine]"));
     }
 }

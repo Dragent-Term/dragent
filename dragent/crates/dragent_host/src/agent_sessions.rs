@@ -1302,6 +1302,79 @@ fn apply_hook(
     Ok(())
 }
 
+/// Claude Code's `--mcp-config` value adding Dragent's tools bridge.
+fn claude_dragent_tools(launcher: &std::path::Path, pane: &str) -> String {
+    serde_json::json!({"mcpServers": {"dragent": {
+        "command": launcher.to_string_lossy(),
+        "args": ["mcp"],
+        "env": {crate::agent_skills::AGENT_PANE_ENV: pane},
+    }}})
+    .to_string()
+}
+
+/// Dragent's tools and a pointer to its skills, for one Codex session: Codex
+/// can't take a skills folder at launch, so its instructions say where they
+/// are. Nothing is written into Codex's own settings. An instruction the
+/// person set in Codex's settings is left as it is.
+fn codex_dragent_config(command: &Command, pane: &str) -> Vec<String> {
+    let Some(launcher) = crate::agent_skills::dragent_launcher() else {
+        return Vec::new();
+    };
+    let home = command
+        .get_envs()
+        .find(|(key, _)| *key == "CODEX_HOME")
+        .and_then(|(_, value)| value.map(std::path::PathBuf::from))
+        .or_else(|| std::env::var_os("CODEX_HOME").map(std::path::PathBuf::from))
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")));
+    let own_instructions = home
+        .and_then(|home| fs::read_to_string(home.join("config.toml")).ok())
+        .is_some_and(|text| text.lines().any(|line| line.trim_start().starts_with("developer_instructions")));
+    let skills = (!own_instructions)
+        .then(|| crate::agent_skills::materialize_bundle(&crate::agent_skills::bundle_root()).ok())
+        .flatten();
+    codex_dragent_args(&launcher, pane, skills.as_deref())
+}
+
+/// [`codex_dragent_config`]'s options: the tools bridge, and where the
+/// skills are unless `skills` is `None`.
+fn codex_dragent_args(launcher: &std::path::Path, pane: &str, skills: Option<&std::path::Path>) -> Vec<String> {
+    let mut args = vec![
+        "-c".to_string(),
+        format!(
+            "mcp_servers.dragent.command={}",
+            serde_json::to_string(&launcher.to_string_lossy()).unwrap()
+        ),
+        "-c".to_string(),
+        "mcp_servers.dragent.args=[\"mcp\"]".to_string(),
+        "-c".to_string(),
+        format!(
+            "mcp_servers.dragent.env.{}={}",
+            crate::agent_skills::AGENT_PANE_ENV,
+            serde_json::to_string(pane).unwrap()
+        ),
+    ];
+    // Codex passes a tools server only the variables it's told to: the
+    // remote dispatcher needs its session's.
+    if launcher.ends_with("dragent-mcp") {
+        args.extend([
+            "-c".to_string(),
+            format!("mcp_servers.dragent.env_vars={}", serde_json::to_string(&crate::remote_mcp::DISPATCH_ENV).unwrap()),
+        ]);
+    }
+    let Some(skills) = skills else {
+        return args;
+    };
+    let mut text = format!(
+        "You were started from Dragent. For anything about Dragent itself (its panes, browser, desktop control, teams, automations, connected services, pages, plugins or diagnostics), first read the matching guide below, then use the `dragent` command or the dragent tools. Guides, in {}:",
+        skills.display()
+    );
+    for skill in crate::agent_skills::BUNDLED_SKILLS {
+        text.push_str(&format!("\n- {}/SKILL.md", skill.name));
+    }
+    args.extend(["-c".to_string(), format!("developer_instructions={}", serde_json::to_string(&text).unwrap())]);
+    args
+}
+
 /// Codex trusts an individual normalized hook identity. Trust only the
 /// app-owned recorder in session flags, preserving all other hook policies.
 /// Matches codex-rs/{hooks/src/engine/discovery,config/src/fingerprint}.rs.
@@ -1405,7 +1478,10 @@ fn install_capture(
         .collect::<Vec<_>>()
         .join(" ");
     match hook {
-        HookKind::CodexSessionStart => args.extend(codex_capture_config(&hook_command)),
+        HookKind::CodexSessionStart => {
+            args.extend(codex_capture_config(&hook_command));
+            args.extend(codex_dragent_config(command, &record.pane_uuid.to_string()));
+        }
         HookKind::ClaudePlugin => {
             // A local plugin adds our hook alongside existing user/project hooks;
             // a --settings override would replace their SessionStart definition.
@@ -1438,6 +1514,11 @@ fn install_capture(
                 }
             }
             args.extend(["--plugin-dir".into(), plugin.to_string_lossy().to_string()]);
+            // Dragent's tools, for this session only (added to the person's
+            // own servers, never written into Claude's settings).
+            if let Some(launcher) = crate::agent_skills::dragent_launcher() {
+                args.extend(["--mcp-config".into(), claude_dragent_tools(&launcher, &record.pane_uuid.to_string())]);
+            }
             // The status line reports the account's plan limits (see
             // `agent_usage`) and then shows the person's own status line.
             // A session started with its own --settings keeps it untouched.
@@ -1496,6 +1577,30 @@ fn install_capture(
             #[cfg(not(windows))]
             let uri = format!("file://{}", file.display());
             plugins.push(serde_json::Value::String(uri));
+            // Dragent's tools and skills, for this session only.
+            if let Some(launcher) = crate::agent_skills::dragent_launcher() {
+                let object = config.as_object_mut().ok_or("provider inline config must be an object")?;
+                let mcp = object.entry("mcp").or_insert_with(|| serde_json::json!({}));
+                if let Some(mcp) = mcp.as_object_mut() {
+                    mcp.entry("dragent").or_insert_with(|| {
+                        serde_json::json!({
+                            "type": "local",
+                            "command": [launcher.to_string_lossy(), "mcp"],
+                            "environment": {crate::agent_skills::AGENT_PANE_ENV: record.pane_uuid.to_string()},
+                        })
+                    });
+                }
+                // An extra folder OpenCode reads skills from, beside its own.
+                // A folder the person set already is theirs.
+                if std::env::var_os("OPENCODE_CONFIG_DIR").is_none() {
+                    match crate::agent_skills::materialize_config_dir(&crate::agent_skills::bundle_root()) {
+                        Ok(dir) => {
+                            command.env("OPENCODE_CONFIG_DIR", dir);
+                        }
+                        Err(error) => log::warn!("[agent-sessions] Dragent skills for OpenCode: {error}"),
+                    }
+                }
+            }
             command.env(variable, config.to_string());
         }
         HookKind::UserConfig {
@@ -1982,6 +2087,42 @@ pub fn run_if_requested() -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn claude_gets_dragent_tools_for_one_session_only() {
+        let value: serde_json::Value =
+            serde_json::from_str(&claude_dragent_tools(std::path::Path::new("/opt/x/bin/dragent"), "pane-1")).unwrap();
+        assert_eq!(value["mcpServers"]["dragent"]["command"], "/opt/x/bin/dragent");
+        assert_eq!(value["mcpServers"]["dragent"]["args"][0], "mcp");
+        // The bridge serves only with the pane marker Dragent passes it.
+        assert_eq!(value["mcpServers"]["dragent"]["env"]["DRAGENT_AGENT_PANE"], "pane-1");
+    }
+
+    #[test]
+    fn codex_gets_dragent_for_one_session_only() {
+        let launcher = std::path::Path::new("/opt/x/bin/dragent");
+        let skills = std::path::Path::new("/opt/x/skills/v1");
+        let args = codex_dragent_args(launcher, "pane-1", Some(skills));
+        assert_eq!(
+            args[..6],
+            [
+                "-c",
+                "mcp_servers.dragent.command=\"/opt/x/bin/dragent\"",
+                "-c",
+                "mcp_servers.dragent.args=[\"mcp\"]",
+                "-c",
+                "mcp_servers.dragent.env.DRAGENT_AGENT_PANE=\"pane-1\"",
+            ]
+        );
+        assert_eq!(args[6], "-c");
+        assert!(args[7].starts_with("developer_instructions=\"You were started from Dragent."), "{}", args[7]);
+        assert!(args[7].contains("/opt/x/skills/v1") && args[7].contains("dragent-browser/SKILL.md"));
+        // The person's own instructions are left alone: tools only.
+        assert_eq!(codex_dragent_args(launcher, "pane-1", None).len(), 6);
+        if let Ok(path) = std::env::var("DRAGENT_TEST_CODEX_ARGS_OUT") {
+            fs::write(path, args.join("\n")).unwrap();
+        }
+    }
+
     use super::*;
 
     fn record(provider: &str) -> AgentSession {

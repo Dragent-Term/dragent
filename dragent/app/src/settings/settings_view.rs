@@ -224,6 +224,8 @@ pub struct SettingsView {
     pub(crate) expanded_skill: Option<std::path::PathBuf>,
     pub(crate) skill_detail_scroll: ClippedScrollStateHandle,
     pub(crate) pending_skill_delete: Option<std::path::PathBuf>,
+    /// A change to another agent's own setup, shown before anything is written.
+    pub(crate) pending_agent_change: Option<AgentChange>,
     /// When Some, the MCP add/edit form is open.
     pub(crate) mcp_form: Option<McpServerDraft>,
     /// Whether the "Log out?" confirmation modal is open.
@@ -776,6 +778,7 @@ impl SettingsView {
             skill_groups_expanded: Default::default(),
             skill_detail_scroll: ClippedScrollStateHandle::default(),
             pending_skill_delete: None,
+            pending_agent_change: None,
             logout_confirm_open: false,
             logout_dont_ask: false,
             mcp_form: None,
@@ -1384,6 +1387,9 @@ impl View for SettingsView {
             .flatten()
         {
             Stack::new().with_child(base).with_child(modal).finish()
+        } else if self.pending_agent_change.is_some() {
+            let modal = self.render_agent_change_confirm(&theme);
+            Stack::new().with_child(base).with_child(modal).finish()
         } else if self.pending_skill_delete.is_some() {
             let modal = self.render_skill_delete_confirm(&theme);
             Stack::new().with_child(base).with_child(modal).finish()
@@ -1848,4 +1854,16 @@ impl Element for ViewportWidthCapture {
     ) -> bool {
         self.child.dispatch_event(event, ctx, app)
     }
+}
+
+/// What Dragent would write into another agent's own setup, waiting for a yes.
+#[derive(Clone, Debug)]
+pub(crate) enum AgentChange {
+    /// One of Dragent's skills into the other agents' skill folders.
+    InstallSkill {
+        name: String,
+        agents: Vec<crate::agent::mcp_agent_sync::SyncAgent>,
+        writes: Vec<std::path::PathBuf>,
+        kept: Vec<std::path::PathBuf>,
+    },
 }

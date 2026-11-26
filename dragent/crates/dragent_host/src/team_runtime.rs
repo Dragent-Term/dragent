@@ -500,6 +500,10 @@ pub fn run_if_requested() -> Option<i32> {
     let start = args.iter().position(|a| a == "--dragent-cli")?;
     let command = args.get(start + 1).map(String::as_str).unwrap_or("help");
     if command == "mcp" {
+        if !crate::agent_skills::inside_dragent() {
+            eprintln!("Dragent's tools work only in agents started from Dragent. Start the agent from Dragent to use them.");
+            return Some(1);
+        }
         let result = crate::mcp::serve(
             "Dragent coordination on this machine. The team_, task_ and msg_ tools share the same team store and permissions as dragent team, tasks and msg. Leads plan tasks; workers report results and send messages to their lead. Read team_guide before coordinating. Connected-service tools use the signed-in desktop while it is connected; credentials remain there.",
             HostClient::connect_existing()

@@ -43,15 +43,9 @@ pub(crate) fn sync_agents_at(entries: &[McpServerEntry], home: &std::path::Path)
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let record = dragent_paths::home().join("mcp-agent-sync.json");
-    // The connected services' bridge rides along; a server of the
-    // user's own by that name wins.
-    let mut entries = entries.to_vec();
-    if let Some(bridge) = crate::integrations::agents::bridge_entry(home) {
-        if !entries.iter().any(|entry| entry.name == bridge.name) {
-            entries.push(bridge);
-        }
-    }
-    sync(&entries, home, &record)
+    // Dragent's own tools bridge is never written here: agents get it at
+    // launch. One an earlier build wrote is owned, so this takes it out.
+    sync(entries, home, &record)
 }
 
 #[cfg(test)]

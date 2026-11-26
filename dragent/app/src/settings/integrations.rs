@@ -27,8 +27,6 @@ pub enum IntegrationAction {
     Connect(Provider),
     Disconnect(Provider),
     OpenHelp(Provider),
-    /// Give other coding agents the connected services, or stop.
-    ToggleAgentTools,
     /// Whether the connection being made is for the whole team.
     SetShared(bool),
     Tab(IntegrationsTab),
@@ -54,8 +52,6 @@ pub struct IntegrationsState {
     /// The provider being checked with its service right now.
     pub busy: Option<Provider>,
     pub error: Option<(Provider, String)>,
-    /// Other agents get the connected services through `dragent mcp`.
-    pub agent_tools: bool,
     /// Dragent's server keeps connections, so they follow the account and
     /// can be shared.
     pub server: bool,
@@ -104,7 +100,6 @@ impl IntegrationsState {
             open: None,
             busy: None,
             error: None,
-            agent_tools: crate::integrations::agents::enabled(),
             server: false,
             admin: false,
             shared: false,
@@ -278,10 +273,6 @@ impl SettingsView {
                 self.integrations.shared = *shared && self.integrations.admin;
             }
             IntegrationAction::Tab(tab) => self.integrations.tab = *tab,
-            IntegrationAction::ToggleAgentTools => {
-                self.integrations.agent_tools = !self.integrations.agent_tools;
-                crate::integrations::agents::set_enabled(self.integrations.agent_tools);
-            }
         }
         ctx.notify();
     }

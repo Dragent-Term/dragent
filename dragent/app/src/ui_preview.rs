@@ -533,6 +533,10 @@ const SCENES: &[(&str, Scene)] = &[
         "settings_integrations_agents",
         settings_after(SettingsSection::Integrations, "integrations_agents"),
     ),
+    (
+        "settings_skills_confirm",
+        settings_after(SettingsSection::AgentSkills, "skills_confirm"),
+    ),
     ("settings_privacy", settings(SettingsSection::Privacy)),
     (
         "settings_notifications",

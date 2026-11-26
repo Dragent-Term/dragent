@@ -86,6 +86,11 @@ impl SyncAgent {
         }
     }
 
+    /// The settings file of this agent that holds its MCP servers.
+    pub fn settings_file(self, home: &Path) -> PathBuf {
+        self.config_path(home)
+    }
+
     fn config_path(self, home: &Path) -> PathBuf {
         match self {
             SyncAgent::ClaudeCode => home.join(".claude.json"),

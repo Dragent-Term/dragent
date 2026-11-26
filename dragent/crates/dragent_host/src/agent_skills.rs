@@ -166,6 +166,78 @@ fn prune_versions(root: &Path) {
     }
 }
 
+/// The `dragent` launcher agents start the tools bridge with, if the app
+/// has run on this machine.
+/// Set by Dragent on the tools bridge it gives an agent it started: `dragent
+/// mcp` serves only with it (or inside a Dragent terminal).
+pub const AGENT_PANE_ENV: &str = "DRAGENT_AGENT_PANE";
+
+/// Whether this process runs for an agent Dragent started, or in one of its
+/// terminals.
+pub fn inside_dragent() -> bool {
+    [AGENT_PANE_ENV, "DRAGENT_HOST_TERMINAL_ID"]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+}
+
+pub fn dragent_launcher() -> Option<PathBuf> {
+    // On a remote machine, its dispatcher picks the session's organisation.
+    if let Some(launcher) = crate::remote_mcp::launcher() {
+        return Some(launcher);
+    }
+    let launcher = if cfg!(windows) { "dragent.cmd" } else { "dragent" };
+    [
+        dragent_paths::organisation_dir().join("bin"),
+        dragent_paths::home().join("bin"),
+    ]
+    .into_iter()
+    .map(|dir| dir.join(launcher))
+    .find(|path| path.is_file())
+}
+
+/// A folder holding this build's skills as `skills/<name>/…`, for agents
+/// given an extra config folder at launch (OpenCode). Written once per
+/// build, like [`materialize_bundle`].
+pub fn materialize_config_dir(root: &Path) -> io::Result<PathBuf> {
+    let dir = root.join(format!("config-{BUNDLE_VERSION}"));
+    if dir.join(COMPLETE_MARKER).is_file() {
+        return Ok(dir);
+    }
+    let staging = root.join(format!(".staging-config-{BUNDLE_VERSION}-{}", std::process::id()));
+    if staging.exists() {
+        fs::remove_dir_all(&staging)?;
+    }
+    for skill in BUNDLED_SKILLS {
+        write_package(skill, &staging.join("skills").join(skill.name))?;
+    }
+    fs::write(staging.join(COMPLETE_MARKER), BUNDLE_VERSION)?;
+    if dir.exists() {
+        fs::remove_dir_all(&dir)?;
+    }
+    if let Err(error) = fs::rename(&staging, &dir) {
+        let _ = fs::remove_dir_all(&staging);
+        if dir.join(COMPLETE_MARKER).is_file() {
+            return Ok(dir);
+        }
+        return Err(error);
+    }
+    // Earlier builds' folders, unless a running session may still read them.
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let old = name.starts_with("config-") && entry.path() != dir;
+            let aged = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|at| at.elapsed().is_ok_and(|age| age > std::time::Duration::from_secs(7 * 24 * 3600)));
+            if old && aged {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    Ok(dir)
+}
+
 /// Whether this machine has a `dragent` launcher (the app has run here).
 /// Machines reached over SSH don't, and their agents shouldn't be told to
 /// use a command that isn't there.

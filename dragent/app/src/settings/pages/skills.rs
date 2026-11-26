@@ -136,6 +136,10 @@ pub fn render_skills(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
                 .finish(),
         );
     }
+    #[cfg(not(target_family = "wasm"))]
+    if query.is_empty() {
+        page = page.with_child(other_agents_section(view, theme));
+    }
     let mut shown = 0;
     for (key, title, description, skills) in [
         ("builtin", "Built into Dragent", "Included with the app and read-only. Updated with each Dragent version.", builtin),
@@ -652,4 +656,110 @@ mod tests {
         assert_eq!(m.actions.contains(&SkillRowAction::Remove), cfg!(not(windows)));
         assert!(m.problems.is_empty());
     }
+}
+
+/// Dragent's skills for the other agents on this computer, each installed
+/// on its own (with a preview first) and removable again.
+#[cfg(not(target_family = "wasm"))]
+fn other_agents_section(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
+    use crate::cli::agent_skill::{self, Copy};
+    let ui = view.ui_font;
+    let rows = agent_skill::skill_rows();
+    let first_sentence = |text: &str| -> String {
+        match text.find(". ") {
+            Some(end) => text[..=end].trim().to_string(),
+            None => text.trim().to_string(),
+        }
+    };
+    let list: Vec<Box<dyn Element>> = rows
+        .iter()
+        .map(|row| {
+            let names = |copy: Copy| -> Vec<&str> {
+                row.agents.iter().filter(|agent| agent.copy == copy).map(|agent| agent.agent.label()).collect()
+            };
+            let (installed, missing, theirs) = (names(Copy::Installed), names(Copy::NotInstalled), names(Copy::Theirs));
+            let mut trailing = Vec::new();
+            if !installed.is_empty() {
+                let label = if missing.is_empty() {
+                    "Installed".to_string()
+                } else {
+                    format!("Installed for {}", installed.join(", "))
+                };
+                trailing.push(mui::pill(theme, ui, &label, mui::Tone::Success));
+            }
+            if !theirs.is_empty() {
+                trailing.push(mui::pill(theme, ui, &format!("Your own copy in {}", theirs.join(", ")), mui::Tone::Neutral));
+            }
+            if row.agents.is_empty() {
+                trailing.push(mui::pill(theme, ui, "No other agents found", mui::Tone::Neutral));
+            }
+            if !installed.is_empty() {
+                trailing.push(mui::button(
+                    theme,
+                    ui,
+                    view.view_id,
+                    view.hover(&format!("agent-skill-remove-{}", row.name)),
+                    None,
+                    "Remove",
+                    mui::Variant::Ghost,
+                    mui::Size::Xs,
+                    true,
+                    SettingsAction::RemoveAgentSkill(row.name.to_string()),
+                ));
+            }
+            if !missing.is_empty() {
+                let label = if missing.len() == 1 {
+                    format!("Install for {}", missing[0])
+                } else if installed.is_empty() {
+                    format!("Install for {} agents", missing.len())
+                } else {
+                    format!("Install for {} more", missing.len())
+                };
+                trailing.push(mui::button(
+                    theme,
+                    ui,
+                    view.view_id,
+                    view.hover(&format!("agent-skill-install-{}", row.name)),
+                    None,
+                    &label,
+                    mui::Variant::Secondary,
+                    mui::Size::Xs,
+                    true,
+                    SettingsAction::InstallAgentSkill(row.name.to_string()),
+                ));
+            }
+            mui::list_row(
+                ui,
+                theme,
+                None,
+                mui::medium(ui, row.name, 13.5, theme.main_text()),
+                Some(first_sentence(&row.description)),
+                trailing,
+            )
+        })
+        .collect();
+    let mut section = Flex::column()
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_spacing(8.0)
+        .with_child(Text::new(format!("Dragent skills for your other agents  {}", rows.len()), ui, text_size(14.0)).with_color(theme.main_text()).finish())
+        .with_child(
+            Text::new(
+                "Agents you start from Dragent already have all of these. Install one to put it in your other agents' own skill folders, so they have it everywhere, also outside Dragent. You'll see exactly what is written first.".to_string(),
+                ui,
+                text_size(12.0),
+            )
+            .with_color(theme.sub_text())
+            .finish(),
+        );
+    if let Some(note) = &view.agent_skill_note {
+        section = section.with_child(Text::new(note.clone(), ui, text_size(12.0)).with_color(theme.sub_text()).finish());
+    }
+    if dragent_paths::is_dev() {
+        section = section.with_child(
+            Text::new("Dev builds don't change other apps' folders.".to_string(), ui, text_size(12.0))
+                .with_color(theme.disabled_text())
+                .finish(),
+        );
+    }
+    section.with_child(mui::list_card(theme, list)).finish()
 }

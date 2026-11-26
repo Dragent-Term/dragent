@@ -339,22 +339,17 @@ fn agent_access(model: &Model) -> Box<dyn Element> {
     use crate::agent::mcp_agent_sync::{prompt_agent, SyncAgent};
     use crate::workspace::PromptAgent;
     let (ui, theme) = (model.ui, model.theme);
-    let on = model.state.agent_tools;
-    let switch = card_rows(
+    let switch = mui::notice(
         theme,
-        vec![toggle_row(
-            theme,
-            ui,
-            model.view_id,
-            (model.hover)("integrations-agent-tools"),
-            "Let coding agents use these services",
-            Some(
-                "Agents on this computer get Dragent's tools to search, read and comment on what's \
-                 connected, through the dragent MCP server added to their settings.",
-            ),
-            on,
-            act(I::ToggleAgentTools),
-        )],
+        ui,
+        Tone::Info,
+        "Dragent's tools work only in agents you start from Dragent",
+        Some(
+            "Each agent gets them when Dragent starts it, for that session only. Nothing is \
+             added to your agents' own settings, and the tools don't run anywhere else."
+                .into(),
+        ),
+        None,
     );
 
     let mut rows = vec![mui::list_row(
@@ -367,16 +362,19 @@ fn agent_access(model: &Model) -> Box<dyn Element> {
     )];
     for agent in SyncAgent::ALL {
         let present = model.state.agents_present.contains(&agent);
-        let (detail, pill) = match (present, on) {
-            (true, true) => (
-                "The dragent MCP server is in its settings.",
-                mui::pill(theme, ui, "On", Tone::Success),
+        // Only these take Dragent's tools at launch; the others would need
+        // their own settings changed, which Dragent doesn't do.
+        let at_launch = matches!(agent, SyncAgent::ClaudeCode | SyncAgent::Codex | SyncAgent::OpenCode);
+        let (detail, pill) = match present {
+            true if at_launch => (
+                "Gets Dragent's tools when you start it from Dragent.",
+                mui::pill(theme, ui, "In Dragent", Tone::Success),
             ),
-            (true, false) => (
-                "Turn on access above to give it the services.",
-                mui::pill(theme, ui, "Off", Tone::Neutral),
+            true => (
+                "Can't take Dragent's tools without changing its own settings, so it doesn't get them.",
+                mui::pill(theme, ui, "Not available", Tone::Neutral),
             ),
-            (false, _) => (
+            false => (
                 "Not found on this computer.",
                 mui::pill(theme, ui, "Not installed", Tone::Neutral),
             ),

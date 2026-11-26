@@ -548,6 +548,19 @@ impl WorkspaceView {
             view.listen_for_companion_starts(ctx);
             // Idle agents are put to sleep to free memory.
             view.start_agent_sleep(ctx);
+            // What Dragent took back out of other agents, said once.
+            #[cfg(not(target_family = "wasm"))]
+            ctx.spawn(warpui::r#async::Timer::after(std::time::Duration::from_secs(4)), |view, _, ctx| {
+                if let Some(note) = crate::cli::agent_skill::take_cleanup_note() {
+                    view.show_error_notice(
+                        "Your other agents",
+                        format!(
+                            "{note} Dragent now changes your other agents only when you ask: agents you start from Dragent still get its skills and tools for that session. To use a skill outside Dragent too, install it in Settings → Skills."
+                        ),
+                        ctx,
+                    );
+                }
+            });
             // Sleeping agents a team needs are woken on request.
             view.start_wake_requests(ctx);
             // Agents that wait for memory, or are paused, are shown.

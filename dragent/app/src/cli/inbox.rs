@@ -58,6 +58,25 @@ impl CliInbox {
         if !outcome.written.is_empty() {
             log::info!("[cli] dragent skill written to {:?}", outcome.written);
         }
+        if !outcome.removed.is_empty() {
+            log::info!("[cli] dragent skills taken out of shared folders: {:?}", outcome.removed);
+            let skills: std::collections::BTreeSet<String> = outcome
+                .removed
+                .iter()
+                .filter_map(|path| {
+                    let mut parts = path.components().rev();
+                    parts.find_map(|part| {
+                        let name = part.as_os_str().to_string_lossy();
+                        name.starts_with("dragent").then(|| name.into_owned())
+                    })
+                })
+                .collect();
+            super::agent_skill::add_cleanup_note(&format!(
+                "Removed {} Dragent skill{} from the shared skills folder (~/.agents/skills) that other agents read.",
+                skills.len(),
+                if skills.len() == 1 { "" } else { "s" }
+            ));
+        }
         // And the connected services' tools in their MCP settings.
         crate::integrations::agents::sync_in_background();
         this

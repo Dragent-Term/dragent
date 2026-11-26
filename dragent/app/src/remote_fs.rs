@@ -254,7 +254,9 @@ pub fn connect(machine_id: &str, client: HostClient, home: String, shell: String
     #[cfg(not(target_family = "wasm"))]
     {
         let client = client.clone();
-        let enabled = crate::integrations::agents::enabled();
+        // The machine's tools serve its Dragent sessions; this also takes
+        // out what an earlier build wrote into its agents' settings.
+        let enabled = true;
         std::thread::spawn(move || {
             if let Err(error) = client.coordination(
                 "host_mcp_configure",

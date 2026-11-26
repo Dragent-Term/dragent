@@ -28,6 +28,7 @@ const USER_FACING_TITLES: &[&str] = &[
     "Agent request failed",
     // Explanations
     "Agent account",
+    "Your other agents",
     "Pull requests",
     "Review setup",
 ];

@@ -112,6 +112,8 @@ fn settings_state(state: &str) -> Vec<crate::settings::SettingsAction> {
         "integrations_agents" => vec![A::Integration(IntegrationAction::Tab(
             IntegrationsTab::Agents,
         ))],
+        // The preview before Dragent's skills go into the shared folders.
+        "skills_confirm" => vec![A::InstallAgentSkill("dragent-browser".into())],
         "voice_legacy" => Vec::new(),
         "voice_system" => vec![A::SelectVoiceBackend(
             crate::settings::voice_settings::VoiceBackend::System,

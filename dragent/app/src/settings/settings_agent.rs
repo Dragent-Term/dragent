@@ -83,17 +83,30 @@ impl SettingsView {
                 ctx.emit(SettingsEvent::EditorSettingsChanged);
             }
             #[cfg(not(target_family = "wasm"))]
-            SettingsAction::ToggleAgentSkill => {
-                let outcome = crate::cli::agent_skill::set_enabled(!crate::cli::agent_skill::enabled());
-                let shown = |path: &std::path::Path| {
-                    match dirs::home_dir().and_then(|home| path.strip_prefix(home).ok().map(|rest| rest.to_path_buf())) {
-                        Some(rest) => format!("~/{}", rest.display()),
-                        None => path.display().to_string(),
-                    }
-                };
-                self.agent_skill_note = outcome.kept.first().map(|path| {
-                    format!("Your own skill at {} is kept as it is.", shown(path))
+            SettingsAction::InstallAgentSkill(name) => {
+                // Writes into other agents' folders: show exactly what first.
+                let preview = crate::cli::agent_skill::preview_install(name);
+                self.pending_agent_change = Some(super::settings_view::AgentChange::InstallSkill {
+                    name: name.clone(),
+                    agents: preview.agents,
+                    writes: preview.writes,
+                    kept: preview.kept,
                 });
+            }
+            #[cfg(not(target_family = "wasm"))]
+            SettingsAction::RemoveAgentSkill(name) => {
+                let outcome = crate::cli::agent_skill::remove_skill(name);
+                self.note_kept(&outcome);
+            }
+            SettingsAction::CancelAgentChange => self.pending_agent_change = None,
+            #[cfg(not(target_family = "wasm"))]
+            SettingsAction::ConfirmAgentChange => {
+                if let Some(super::settings_view::AgentChange::InstallSkill { name, .. }) =
+                    self.pending_agent_change.take()
+                {
+                    let outcome = crate::cli::agent_skill::install_skill(&name);
+                    self.note_kept(&outcome);
+                }
             }
             #[cfg(not(target_family = "wasm"))]
             SettingsAction::InstallCliInShell => {
@@ -104,5 +117,20 @@ impl SettingsView {
             }
             _ => {}
         }
+    }
+
+    /// Say when a skill of the person's own was left as it is.
+    #[cfg(not(target_family = "wasm"))]
+    fn note_kept(&mut self, outcome: &crate::cli::agent_skill::Outcome) {
+        let shown = |path: &std::path::Path| match dirs::home_dir()
+            .and_then(|home| path.strip_prefix(home).ok().map(|rest| rest.to_path_buf()))
+        {
+            Some(rest) => format!("~/{}", rest.display()),
+            None => path.display().to_string(),
+        };
+        self.agent_skill_note = outcome
+            .kept
+            .first()
+            .map(|path| format!("Your own skill at {} is kept as it is.", shown(path)));
     }
 }

@@ -59,6 +59,84 @@ impl SettingsView {
         .with_background_color(ColorU::new(0, 0, 0, 160))
         .finish()
     }
+    /// The preview before Dragent writes into another agent's own setup:
+    /// every folder or file it would change, and a yes or no.
+    pub(crate) fn render_agent_change_confirm(&self, theme: &Theme) -> Box<dyn Element> {
+        use super::settings_view::AgentChange;
+        let Some(change) = self.pending_agent_change.as_ref() else {
+            return Flex::column().finish();
+        };
+        let shown = |path: &std::path::Path| match dirs::home_dir()
+            .and_then(|home| path.strip_prefix(home).ok().map(|rest| rest.to_path_buf()))
+        {
+            Some(rest) => format!("~/{}", rest.display()),
+            None => path.display().to_string(),
+        };
+        let (title, intro, paths, after) = match change {
+            AgentChange::InstallSkill { name, agents, writes, kept } => {
+                let names = agents.iter().map(|agent| agent.label()).collect::<Vec<_>>().join(", ");
+                (
+                    format!("Install {name} for {names}?"),
+                    "Dragent will write the skill into these folders. Those agents then have it in every session, including ones you start outside Dragent:".to_string(),
+                    writes.iter().map(|path| shown(path)).collect::<Vec<_>>(),
+                    if kept.is_empty() {
+                        "Remove takes it out again, except any file you edited.".to_string()
+                    } else {
+                        format!(
+                            "Your own skill at {} stays as it is. Remove takes Dragent's out again, except any file you edited.",
+                            kept.iter().map(|path| shown(path)).collect::<Vec<_>>().join(", ")
+                        )
+                    },
+                )
+            }
+        };
+        let small = |text: String, color| {
+            Text::new(text, self.ui_font, crate::theme::text_size(12.0)).with_color(color).finish()
+        };
+        let mut list = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch).with_spacing(3.0);
+        for path in paths {
+            list = list.with_child(
+                Text::new(path, self.ui_font, crate::theme::text_size(11.5))
+                    .with_color(theme.main_text())
+                    .finish(),
+            );
+        }
+        let list = Container::new(list.finish())
+            .with_background_color(theme.surface_2())
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.0)))
+            .with_uniform_padding(10.0)
+            .finish();
+        let dialog = Container::new(
+            Flex::column()
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_spacing(12.0)
+                .with_child(
+                    Text::new(title, self.ui_font, crate::theme::text_size(17.0))
+                        .with_color(theme.main_text())
+                        .finish(),
+                )
+                .with_child(small(intro, theme.sub_text()))
+                .with_child(list)
+                .with_child(small(after, theme.sub_text()))
+                .with_child(
+                    Flex::row()
+                        .with_main_axis_alignment(MainAxisAlignment::End)
+                        .with_spacing(8.0)
+                        .with_child(secondary_button(theme, self.ui_font, self.view_id, self.hover("agent-change-cancel"), "Cancel", SettingsAction::CancelAgentChange))
+                        .with_child(primary_button(theme, self.ui_font, self.view_id, self.hover("agent-change-confirm"), "Install", SettingsAction::ConfirmAgentChange))
+                        .finish(),
+                )
+                .finish(),
+        )
+        .with_background_color(theme.surface_1())
+        .with_border(Border::all(1.0).with_border_color(theme.border()))
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.0)))
+        .with_uniform_padding(22.0)
+        .finish();
+        Container::new(Align::new(ConstrainedBox::new(dialog).with_max_width(560.0).finish()).finish())
+            .with_background_color(ColorU::new(0, 0, 0, 160))
+            .finish()
+    }
     pub(crate) fn render_skill_modal(&self, theme: &Theme, draft: &SkillDraft) -> Box<dyn Element> {
         let ui = self.ui_font;
         let id = self.view_id;

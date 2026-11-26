@@ -28,11 +28,15 @@ agent_ tools create workspaces and follow the agents running in them. The comput
 
 /// Serve until the agent closes stdin.
 pub fn serve() -> Result<(), String> {
+    // Dragent's tools are for agents Dragent started: an entry someone put in
+    // an agent's own settings gets nothing outside it.
+    if !dragent_host::agent_skills::inside_dragent() {
+        return Err(
+            "Dragent's tools work only in agents started from Dragent. Start the agent from Dragent to use them.".into(),
+        );
+    }
     let root = std::env::current_dir().unwrap_or_default();
     dragent_host::mcp::serve_content(INSTRUCTIONS, catalog(), |name, arguments| {
-        if !super::agents::enabled() {
-            return Err("Agent tools are disabled in Dragent settings".into());
-        }
         call(name, arguments, &root, crate::cli::signed_in).map(|output| content(name, &output))
     })
 }

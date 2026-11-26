@@ -376,27 +376,10 @@ fn command_line_card(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
         }
         _ => warpui::elements::Empty::new().finish(),
     };
-    let skill_description = view.agent_skill_note.clone().unwrap_or_else(|| {
-        if dev {
-            "Dev builds don't change other apps' settings.".to_string()
-        } else {
-            "Installs Dragent’s focused skills for browser use, panes, teams, automations and connected services in shared agent folders. User-edited files are preserved. Agents that are already running need a restart to see changes. Claude Code sessions launched by Dragent and Dragent’s own agent include the pack. Desktop guidance has its own control in Computer use.".into()
-        }
-    });
     card_rows(
         theme,
         vec![
             setting_row(theme, ui_font, "dragent command", Some(&description), control),
-            toggle_row(
-                theme,
-                ui_font,
-                view.view_id,
-                view.hover("agent_skill"),
-                "Teach other agents",
-                Some(&skill_description),
-                crate::cli::agent_skill::enabled(),
-                SettingsAction::ToggleAgentSkill,
-            ),
         ],
     )
 }

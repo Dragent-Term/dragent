@@ -252,8 +252,15 @@ pub enum SettingsAction {
     SelectDefaultShell(Option<String>),
     /// Add the `dragent` command to the user's shell profile.
     InstallCliInShell,
-    /// Copy Dragent's skill into other agents' skill folders, or remove it.
-    ToggleAgentSkill,
+    /// Install one of Dragent's skills for the other agents found here
+    /// (after a preview of what it writes).
+    InstallAgentSkill(String),
+    /// Take one of Dragent's skills back out of the other agents.
+    RemoveAgentSkill(String),
+    /// Write the change the preview showed into the other agent's setup.
+    ConfirmAgentChange,
+    /// Close the preview; nothing is written.
+    CancelAgentChange,
     /// `None` = platform default (Menlo on macOS, Fira Code elsewhere).
     SelectTerminalFont(Option<String>),
     SelectInterfaceFont(Option<String>),

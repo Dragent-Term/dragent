@@ -1,6 +1,8 @@
-//! Automatic registration uses the desktop's exact config editor. Global
-//! entries point to a context-neutral dispatcher; they never pin an org,
-//! endpoint or credential into the provider's settings.
+//! Dragent's tools on a remote machine. Agents started there get the
+//! context-neutral dispatcher at launch, for that session only (see
+//! [`launcher`]); nothing is written into the agents' own settings. Earlier
+//! builds registered it there: "registering" now takes out only the entries
+//! this installation wrote, with the desktop's exact config editor.
 use crate::mcp_config::{McpServerEntry, McpTransport};
 use crate::mcp_sync::{SyncAgent, SyncReport};
 use std::path::{Path, PathBuf};
@@ -34,6 +36,18 @@ fn install_dispatcher(home: &Path) -> Result<(), String> {
     }
     std::fs::rename(&temporary, &path).map_err(|e| e.to_string())
 }
+
+/// The dispatcher agents started on this machine get as their tools server.
+pub fn launcher() -> Option<PathBuf> {
+    std::env::var_os("DRAGENT_REMOTE_HOST_BINARY")?;
+    let home = dirs::home_dir()?;
+    install_dispatcher(&home).ok()?;
+    Some(dispatcher(&home))
+}
+
+/// What the dispatcher reads from its session, for an agent (Codex) that
+/// starts tools servers with only the variables it is told to pass.
+pub const DISPATCH_ENV: [&str; 3] = ["DRAGENT_REMOTE_HOST_BINARY", "DRAGENT_HOME", "DRAGENT_HOST_ENDPOINT_FILE"];
 
 pub fn register(selected: &[String]) -> Result<SyncReport, String> {
     if std::env::var_os("DRAGENT_REMOTE_HOST_BINARY").is_none() {
@@ -91,7 +105,8 @@ fn entry_at(home: &Path, agents: Vec<String>) -> McpServerEntry {
         transport: McpTransport::Stdio,
         args: Vec::new(),
         env: Default::default(),
-        enabled: enabled_at(home),
+        // Never written: a sync with it off removes what was written before.
+        enabled: false,
         bearer_token: None,
         auth_url: None,
         token_url: None,
@@ -174,29 +189,27 @@ fn configure_at(home: &Path, enabled: bool) -> Result<SyncReport, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{Value, json};
+    use serde_json::Value;
     #[test]
-    fn disable_preserves_user_servers_and_enable_restores_registration() {
-        let home =
-            std::env::temp_dir().join(format!("dragent-mcp-toggle-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::write(
-            home.join(".claude.json"),
-            r#"{"mcpServers":{"keep":{"command":"keep"}}}"#,
-        )
-        .unwrap();
-        register_at(&home, &["claude".into()]).unwrap();
-        configure_at(&home, false).unwrap();
-        let read = || {
-            serde_json::from_str::<Value>(
-                &std::fs::read_to_string(home.join(".claude.json")).unwrap(),
-            )
-            .unwrap()
-        };
+    fn entries_an_earlier_build_wrote_are_taken_out_and_user_servers_stay() {
+        let home = std::env::temp_dir().join(format!("dragent-mcp-cleanup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::write(home.join(".claude.json"), r#"{"mcpServers":{"keep":{"command":"keep"}}}"#).unwrap();
+        // What an earlier build wrote, with this installation's ownership record.
+        let mut written = entry_at(&home, vec!["claude".into(), "codex".into()]);
+        written.enabled = true;
+        let record = root(&home).join("mcp-agent-sync.json");
+        crate::mcp_sync::sync_selected(&[written], &home, &record, &[SyncAgent::ClaudeCode, SyncAgent::Codex]);
+        let read = || serde_json::from_str::<Value>(&std::fs::read_to_string(home.join(".claude.json")).unwrap()).unwrap();
+        assert!(read()["mcpServers"].get("dragent").is_some());
+        register_at(&home, &[]).unwrap();
         assert!(read()["mcpServers"].get("dragent").is_none());
         assert_eq!(read()["mcpServers"]["keep"]["command"], "keep");
+        assert!(!std::fs::read_to_string(home.join(".codex/config.toml")).unwrap_or_default().contains("mcp_servers.dragent"));
+        // A start writes nothing new.
+        register_at(&home, &["claude".into()]).unwrap();
         configure_at(&home, true).unwrap();
-        assert!(read()["mcpServers"].get("dragent").is_some());
+        assert!(read()["mcpServers"].get("dragent").is_none());
         std::fs::remove_dir_all(home).unwrap();
     }
 
@@ -240,70 +253,13 @@ mod tests {
     }
 
     #[test]
-    fn registers_all_six_formats_idempotently_without_pinning_a_namespace() {
-        let home =
-            std::env::temp_dir().join(format!("dragent-remote-mcp-{}", uuid::Uuid::new_v4()));
-        for dir in [
-            ".codex",
-            ".cursor",
-            ".gemini",
-            ".qwen",
-            ".config/opencode",
-            ".claude",
-        ] {
-            std::fs::create_dir_all(home.join(dir)).unwrap();
-        }
-        std::fs::write(
-            home.join(".claude.json"),
-            json!({"keep":"user setting","mcpServers":{"existing":{"command":"keep-me"}}})
-                .to_string(),
-        )
-        .unwrap();
-        let report = register_at(&home, &[]).unwrap();
-        assert_eq!(report.updated.len(), 6);
-        for (path, key) in [
-            (".claude.json", "mcpServers"),
-            (".cursor/mcp.json", "mcpServers"),
-            (".gemini/settings.json", "mcpServers"),
-            (".qwen/settings.json", "mcpServers"),
-            (".config/opencode/opencode.json", "mcp"),
-        ] {
-            let value: Value =
-                serde_json::from_str(&std::fs::read_to_string(home.join(path)).unwrap()).unwrap();
-            let entry = &value[key]["dragent"];
-            assert!(!entry.is_null(), "{path}");
-            assert!(entry.get("env").is_none() && entry.get("environment").is_none());
-        }
-        let claude: Value =
-            serde_json::from_str(&std::fs::read_to_string(home.join(".claude.json")).unwrap())
-                .unwrap();
-        assert_eq!(claude["keep"], "user setting");
-        assert_eq!(claude["mcpServers"]["existing"]["command"], "keep-me");
-        let codex = std::fs::read_to_string(home.join(".codex/config.toml")).unwrap();
-        assert!(codex.contains("mcp_servers.dragent"));
-        assert!(!codex.contains("DRAGENT_HOME"));
-        assert!(register_at(&home, &[]).unwrap().updated.is_empty());
-        std::fs::remove_dir_all(home).unwrap();
-    }
-    #[test]
-    fn first_launch_registers_a_selected_agent_but_preserves_user_owned_servers() {
-        let home = std::env::temp_dir().join(format!(
-            "dragent-remote-mcp-conflict-{}",
-            uuid::Uuid::new_v4()
-        ));
-        register_at(&home, &["codex".into()]).unwrap();
-        assert!(home.join(".codex/config.toml").is_file());
+    fn a_users_own_dragent_server_is_left_alone() {
+        let home = std::env::temp_dir().join(format!("dragent-remote-mcp-own-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
         let text = r#"{"mcpServers":{"dragent":{"command":"users-own-server"}}}"#;
         std::fs::write(home.join(".claude.json"), text).unwrap();
-        assert!(
-            register_at(&home, &["claude".into()])
-                .unwrap_err()
-                .contains("own \"dragent\" server")
-        );
-        assert_eq!(
-            std::fs::read_to_string(home.join(".claude.json")).unwrap(),
-            text
-        );
+        let _ = register_at(&home, &["claude".into()]);
+        assert_eq!(std::fs::read_to_string(home.join(".claude.json")).unwrap(), text);
         std::fs::remove_dir_all(home).unwrap();
     }
 }

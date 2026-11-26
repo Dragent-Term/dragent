@@ -1504,10 +1504,12 @@ fn check_skills() -> Check {
     let total = dragent_host::agent_skills::BUNDLED_SKILLS.len();
     // Installed copies in external agents (read-only; never installs here).
     let home = dirs::home_dir().unwrap_or_default();
-    let mut roots = vec![home.join(".agents/skills")];
-    if home.join(".qwen").is_dir() {
-        roots.push(home.join(".qwen/skills"));
-    }
+    let mut roots: Vec<_> = crate::agent::mcp_agent_sync::SyncAgent::ALL
+        .into_iter()
+        .map(|agent| super::agent_skill::agent_root(agent, &home))
+        .collect();
+    roots.sort();
+    roots.dedup();
     let record: BTreeMap<String, String> =
         std::fs::read(dragent_paths::home().join("agent-skill.json"))
             .ok()
@@ -1539,9 +1541,9 @@ fn check_skills() -> Check {
         ok(
             "skills",
             "skills_off",
-            "Shared skill folders are turned off; nothing is installed or expected.".into(),
+            "No Dragent skill is installed for other agents; agents started from Dragent get them per launch.".into(),
             evidence,
-            "Nothing to do. Turn them on in Settings to teach external agents the `dragent` command.",
+            "Nothing to do. To use one outside Dragent, install it in Settings → Skills.",
         )
     } else if materialized < total {
         warn(
