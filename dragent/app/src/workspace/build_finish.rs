@@ -550,6 +550,8 @@ impl WorkspaceView {
             view.start_agent_sleep(ctx);
             // Sleeping agents a team needs are woken on request.
             view.start_wake_requests(ctx);
+            // Agents that wait for memory, or are paused, are shown.
+            view.start_agent_resources(ctx);
             // Work item tasks agent CLIs were still on when the app closed.
             ctx.spawn(
                 warpui::r#async::Timer::after(std::time::Duration::from_secs(3)),
@@ -592,15 +594,24 @@ impl WorkspaceView {
                 }
                 SettingsEvent::AgentAccountSignIn {
                     machine_id,
+                    provider,
                     title,
                     command,
-                } => match machine_id {
-                    // Settings never routes to a terminal tab: local
-                    // sign-in runs in the embedded terminal over Settings,
-                    // like the remote one below.
-                    None => ws.open_page_command_terminal(title, None, command, ctx),
-                    Some(id) => ws.open_account_sign_in_terminal(id, title, command, ctx),
-                },
+                } => {
+                    // Settings never routes to a terminal tab: sign-in runs
+                    // in the embedded terminal over Settings.
+                    match machine_id {
+                        None => ws.open_page_command_terminal(title, None, command, ctx),
+                        Some(id) => ws.open_account_sign_in_terminal(id, title, command, ctx),
+                    }
+                    ws.describe_account_sign_in(provider, ctx);
+                }
+                SettingsEvent::AgentAccountSignedIn => {
+                    // Already over, so closing reports nothing back.
+                    if ws.account_sign_in.take().is_some() {
+                        ws.close_prompt_agent_install(ctx);
+                    }
+                }
                 SettingsEvent::Project(action) => ws.handle_projects_settings(action, ctx),
                 SettingsEvent::MachinesChanged => ws.remote_machines_changed(ctx),
                 SettingsEvent::AddRemoteProject(machine) => {
@@ -770,6 +781,10 @@ impl WorkspaceView {
         let auth = AuthManager::handle(ctx);
         view.account_logged_in_cache = ctx.read_model(&auth, |a, _| a.is_logged_in());
         ctx.subscribe_to_model(&auth, |ws, _, event, ctx| {
+            if matches!(event, AuthManagerEvent::AuthFailed { .. }) && ws.login_prompt_open {
+                // The sign-in window says what went wrong.
+                ctx.notify();
+            }
             if matches!(
                 event,
                 AuthManagerEvent::AuthComplete

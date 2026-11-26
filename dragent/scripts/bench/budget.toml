@@ -1,0 +1,25 @@
+# Dragent performance budget thresholds.
+#
+# Checked by dragent/scripts/bench/budget.py against the harness's
+# measurement CSV/JSON (dragent/docs/perf/data/measures.csv). Absolute limits
+# below fail the check; the regression rule (same file) fails when the latest
+# value for a (measure, method) is more than `max_worse_pct` worse than the
+# stored baseline in dragent/scripts/bench/budget_baseline.json.
+#
+# Units: milliseconds / percent. "frame_max_ms" is the per-frame budget while
+# streaming (≈60 fps); the harness records in-app render/interval maxima in
+# the frame-times row's note ("max frame … ms"), which is what this gates.
+
+[thresholds]
+# Launch → usable window (probe-startup headless; in-app-first-frame with a GUI).
+cold_start_ms = 300.0
+# Keystroke → presented frame, p95 (parsed from the input-latency row's note,
+# falling back to the row value for headless proxies).
+input_p95_ms = 10.0
+# Any single frame while streaming (parsed maxima in frame-times notes).
+frame_max_ms = 16.0
+
+[regression]
+# Fail when worse than baseline by more than this (percent). Lower-is-better
+# for ms measures; higher-is-better for rates (lines/s).
+max_worse_pct = 15.0

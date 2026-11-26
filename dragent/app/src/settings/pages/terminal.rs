@@ -241,6 +241,8 @@ pub fn render_terminal_input(view: &SettingsView, theme: &Theme) -> Box<dyn Elem
         ))
         .with_child(group_label(theme, ui_font, "Shell"))
         .with_child(shell_card)
+        .with_child(group_label(theme, ui_font, "History"))
+        .with_child(scrollback_card(view, theme))
         .with_child(group_label(theme, ui_font, "Input"))
         .with_child(input_card)
         .with_child(group_label(theme, ui_font, "macOS option key"))
@@ -256,6 +258,71 @@ pub fn render_terminal_input(view: &SettingsView, theme: &Theme) -> Box<dyn Elem
             .with_child(command_line_card(view, theme));
     }
     page.finish()
+}
+
+/// Kept terminal history, in lines. Always bounded (1,000–200,000):
+/// there is no unlimited option, so a runaway process can't grow terminal
+/// memory without bound. Applies to new terminals.
+fn scrollback_card(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
+    use crate::console::editor_settings::SCROLLBACK_LINES_DEFAULT;
+
+    let ui_font = view.ui_font;
+    let id = view.view_id;
+    let current = view.editor_settings.terminal.clamped_scrollback_lines();
+    // `0` can only arrive from a legacy settings file; the accessor already
+    // maps it to the default, so the label never shows "0".
+    let current_label = if current == SCROLLBACK_LINES_DEFAULT {
+        format!("{} (Default)", format_lines(current))
+    } else {
+        format_lines(current)
+    };
+    const PRESETS: [usize; 6] = [1_000, 5_000, 10_000, 50_000, 100_000, 200_000];
+    let items = PRESETS
+        .into_iter()
+        .map(|lines| {
+            let label = if lines == SCROLLBACK_LINES_DEFAULT {
+                format!("{} (Default)", format_lines(lines))
+            } else {
+                format_lines(lines)
+            };
+            SelectItem {
+                label,
+                selected: current == lines,
+                enabled: true,
+                hover: view.hover(&format!("scrollback_{lines}")),
+                action: SettingsAction::SetScrollbackLines(lines),
+            }
+        })
+        .collect();
+    let select = select_control(
+        theme,
+        ui_font,
+        id,
+        view.hover("scrollback_btn"),
+        &current_label,
+        190.0,
+        view.picker_open("scrollback"),
+        SettingsAction::TogglePicker("scrollback".to_string()),
+        items,
+    );
+    card_rows(
+        theme,
+        vec![setting_row(
+            theme,
+            ui_font,
+            "Scrollback",
+            Some("Kept terminal history, in lines (1,000–200,000; always capped). Applies to new terminals."),
+            select,
+        )],
+    )
+}
+
+fn format_lines(lines: usize) -> String {
+    if lines % 1_000 == 0 {
+        format!("{}k lines", lines / 1_000)
+    } else {
+        format!("{lines} lines")
+    }
 }
 
 /// The `dragent` command: always on PATH in Dragent's terminals; other

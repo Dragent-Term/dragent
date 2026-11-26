@@ -263,11 +263,11 @@ pub(crate) fn render_org_footer(
         )
     });
 
-    // Star on GitHub sits above the footer's border, outside it. Once the
-    // person has starred the repository it leaves the sidebar for good.
+    // Star on GitHub sits above the footer's border, outside it, until the
+    // person has starred the repository.
     let star_state = crate::community::state();
     let mut column = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-    if !sidebar_star_hidden(star_state) {
+    if star_state.offers_star() {
         let star = crate::community::render_star_button(
             theme,
             ui,
@@ -296,33 +296,6 @@ pub(crate) fn render_org_footer(
                 .finish(),
         )
         .finish()
-}
-
-/// The sidebar's Star button goes away once the person's GitHub account has
-/// starred the repository (it stays while a star request is under way, so
-/// the click shows "Starring…" first).
-fn sidebar_star_hidden(state: crate::community::StarState) -> bool {
-    state.starred == Some(true) && !state.starring
-}
-
-#[cfg(test)]
-mod sidebar_star_tests {
-    use super::sidebar_star_hidden;
-    use crate::community::StarState;
-
-    #[test]
-    fn the_sidebar_star_leaves_once_starred() {
-        let starred = |starred, starring| StarState {
-            stars: Some(1),
-            starred,
-            starring,
-        };
-        assert!(sidebar_star_hidden(starred(Some(true), false)));
-        assert!(!sidebar_star_hidden(starred(Some(true), true)));
-        assert!(!sidebar_star_hidden(starred(Some(false), false)));
-        // Unknown (no gh): keep offering it, Star opens the repository.
-        assert!(!sidebar_star_hidden(starred(None, false)));
-    }
 }
 
 /// The footer with demo data, for the previews and README screenshots.

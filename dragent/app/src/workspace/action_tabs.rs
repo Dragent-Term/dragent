@@ -502,7 +502,8 @@ impl WorkspaceView {
                             self.split_tree = None;
                             self.project_start_visible = true;
                         }
-                        self.left_panel_visible = !self.open_project_roots.is_empty();
+                        // The start screen keeps the sidebar, projects or not.
+                        self.left_panel_visible = true;
                     } else if self.active_tab_id == tab_id {
                         let new_pos = if pos >= self.tabs.len() {
                             self.tabs.len() - 1

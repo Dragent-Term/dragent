@@ -74,12 +74,12 @@ pub fn render_agent_general(
         vec![setting_row(
             theme,
             ui_font,
-            "Put idle agents to sleep after",
+            "Ask to put idle agents to sleep after",
             Some(
-                "An agent tab that has finished and sits unused off screen is stopped to free \
-                 memory. Its tab and history stay; opening it resumes the same conversation. \
-                 Agents that are working, waiting for you, serving something or open on your \
-                 phone stay awake. When memory runs low, idle agents sleep after 2 minutes.",
+                "When more than 5 agents are running, Dragent asks before stopping ones that have \
+                 finished and sit unused off screen. Opening the tab resumes the same conversation. \
+                 Agents that are working, running something in the background, waiting for you or \
+                 open on your phone are never offered. When memory runs low it asks after 2 minutes.",
             ),
             idle_sleep_segmented,
         )],

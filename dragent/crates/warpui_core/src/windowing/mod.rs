@@ -72,6 +72,9 @@ impl<'a> WindowCallbackDispatcher<'a> {
     }
 
     pub fn frame_drawn(&mut self) {
+        // Benchmark hook: "frame presented" timestamp for key→frame latency
+        // and per-frame times. No-op unless a DRAGENT_BENCH_* var is set.
+        crate::bench_frame::note_frame_presented();
         (self.callbacks.frame_callback)(&mut self.ctx)
     }
 

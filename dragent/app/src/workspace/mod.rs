@@ -27,6 +27,7 @@ mod chrome_inset;
 mod composer_input;
 #[cfg(test)]
 mod composer_input_tests;
+mod agent_resources;
 mod content_header;
 mod coordination_principal;
 mod docked_terminal;
@@ -111,6 +112,8 @@ mod cli_workers;
 mod pane_tools;
 #[cfg(test)]
 mod pane_focus_tests;
+#[cfg(all(test, unix))]
+mod popup_terminal_tests;
 #[cfg(test)]
 mod import_worktree_tests;
 #[cfg(not(target_family = "wasm"))]

@@ -856,7 +856,8 @@ impl WorkspaceView {
         self.remove_editor_pane();
         if self.tabs.is_empty() && !self.document_center_open {
             self.project_start_visible = true;
-            self.left_panel_visible = !self.open_project_roots.is_empty();
+            // The start screen keeps the sidebar, projects or not.
+            self.left_panel_visible = true;
         }
         self.set_active_terminal_sticky_headers(true, ctx);
         refresh_sidebar_projects(self, ctx);

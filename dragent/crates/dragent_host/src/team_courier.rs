@@ -21,8 +21,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::team::{
-    Change, CourierMark, Member, Message, MessageKind, Party, Task, TaskKind, TaskStatus, Team,
-    TeamEvent, TeamRequest, TeamStatus, TeamStore, concerns,
+    Change, CourierMark, Member, Message, MessageKind, Party, SessionIdentity, Task, TaskKind,
+    TaskStatus, Team, TeamEvent, TeamRequest, TeamStatus, TeamStore, concerns,
 };
 
 /// How long an agent sits at its prompt after a turn before the courier
@@ -81,6 +81,12 @@ pub struct SessionView {
     /// The agent was put to sleep on purpose (its terminal was closed to
     /// free memory). That isn't an exit: it's woken when something waits.
     pub asleep: bool,
+    /// It can't take anything in at the moment: it hasn't started because it
+    /// waits for memory, or it's paused over its memory limit. Nothing is
+    /// typed, no reminder is due, and it hasn't failed.
+    pub held: bool,
+    /// What it held when it was paused over its memory limit, while it is.
+    pub paused_holding: Option<u64>,
     /// For an agent that reports no hook events: how long its terminal's
     /// output has been unchanged, in milliseconds.
     pub output_quiet_ms: Option<i64>,
@@ -102,6 +108,10 @@ pub trait Sessions {
     }
     /// Ask for the sleeping agent in `pane` to be woken; the app resumes it.
     fn wake(&self, _pane: &str, _reason: &str) {}
+    /// The agent conversation running in `pane`, once its agent reported it.
+    fn identity(&self, _pane: &str) -> Option<SessionIdentity> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,6 +149,14 @@ pub(crate) enum Action {
         from: Member,
         lead: Member,
     },
+    /// `party`'s seat learns the conversation its agent runs, so the seat
+    /// can follow that conversation to another pane.
+    Learn {
+        team: String,
+        party: Party,
+        pane: String,
+        identity: SessionIdentity,
+    },
     /// Tell the person something about the lead.
     TellPerson {
         team: String,
@@ -171,6 +189,7 @@ pub(crate) enum PersonNote {
 pub(crate) enum NoteMark {
     Permission(u64),
     Stall,
+    Paused(u64),
 }
 
 fn idle(session: &SessionView) -> Option<u64> {
@@ -623,6 +642,7 @@ pub(crate) fn plan(team: &Team, now: i64, sessions: &dyn Sessions) -> Vec<Action
     if team.status == TeamStatus::Stopped {
         return actions;
     }
+    learn_conversations(team, sessions, &mut actions);
     let mark = |party: &Party| {
         team.courier
             .get(&party.label())
@@ -651,7 +671,8 @@ pub(crate) fn plan(team: &Team, now: i64, sessions: &dyn Sessions) -> Vec<Action
                 lead: Member {
                     pane: Some(pane.clone()),
                     terminal: Some(session.terminal_id.clone()),
-                    agent: lead.agent.clone(),
+                    // The same conversation, followed to its terminal.
+                    ..lead.clone()
                 },
             });
         }
@@ -683,7 +704,7 @@ pub(crate) fn plan(team: &Team, now: i64, sessions: &dyn Sessions) -> Vec<Action
                     .into(),
                 });
             }
-        } else if session.active {
+        } else if session.active && !session.held {
             let fresh = awake_for_typing(team, &Party::Lead, &lead_mark, &session, now, &mut actions);
             if !fresh {
                 // Just woken: it may still be starting up.
@@ -808,6 +829,28 @@ pub(crate) fn plan(team: &Team, now: i64, sessions: &dyn Sessions) -> Vec<Action
             actions.push(fail("Its agent exited before the task was finished. Its checkout keeps the work: send it back to start it again."));
             continue;
         }
+        if session.held {
+            // Waiting ends by itself. A pause doesn't: the lead decides.
+            if let Some(bytes) = session
+                .paused_holding
+                .filter(|bytes| *bytes != mark.pause_reported)
+            {
+                actions.push(Action::Note {
+                    team: team.id.clone(),
+                    task: task.id.clone(),
+                    body: format!(
+                        "The worker on {id} ({}) was paused: with everything it started it holds {:.1} GB. \
+                         It doesn't go on by itself. Once there is memory for it, let it run with \
+                         `dragent agents resume {pane}`, or cancel the task.",
+                        task.title,
+                        bytes as f64 / (1u64 << 30) as f64,
+                        id = task.id,
+                    ),
+                    mark: NoteMark::Paused(bytes),
+                });
+            }
+            continue;
+        }
         if !awake_for_typing(team, &party, &mark, &session, now, &mut actions) {
             // Just woken: it may still be starting up.
             continue;
@@ -897,6 +940,41 @@ pub(crate) fn plan(team: &Team, now: i64, sessions: &dyn Sessions) -> Vec<Action
 }
 
 /// Messages to `party` that nobody has taken yet.
+/// Seats that don't know their agent's conversation yet learn it once the
+/// agent reported it: the lead's, and those of workers under way.
+fn learn_conversations(team: &Team, sessions: &dyn Sessions, actions: &mut Vec<Action>) {
+    let lead = team
+        .lead
+        .as_ref()
+        .filter(|lead| lead.agent.as_deref() != Some(crate::team::DRAGENT_AGENT))
+        .map(|lead| (Party::Lead, lead));
+    let workers = team
+        .tasks
+        .iter()
+        .filter(|task| task.under_way())
+        .filter_map(|task| Some((Party::Task(task.id.clone()), task.worker.as_ref()?)));
+    for (party, member) in lead.into_iter().chain(workers) {
+        if member.conversation.is_some() {
+            continue;
+        }
+        let Some(pane) = member.pane.as_deref() else {
+            continue;
+        };
+        let Some(identity) = sessions.identity(pane) else {
+            continue;
+        };
+        if member.agent.as_deref().is_some_and(|agent| agent != identity.agent) {
+            continue;
+        }
+        actions.push(Action::Learn {
+            team: team.id.clone(),
+            party,
+            pane: pane.to_string(),
+            identity,
+        });
+    }
+}
+
 pub(crate) fn unread_for<'a>(team: &'a Team, party: &Party) -> Vec<&'a Message> {
     team.messages
         .iter()
@@ -1086,6 +1164,15 @@ impl TeamStore {
                 }
                 Ok(())
             }),
+            Action::Learn {
+                team,
+                party,
+                pane,
+                identity,
+            } => {
+                self.learn_conversation(team, party, Some(pane), identity);
+                Ok(())
+            }
             Action::TellPerson { team, body, about } => {
                 self.execute(TeamRequest::Send {
                     team: team.clone(),
@@ -1132,6 +1219,7 @@ impl TeamStore {
                     match mark {
                         NoteMark::Permission(at) => entry.permission_reported = *at,
                         NoteMark::Stall => entry.stall_reported = true,
+                        NoteMark::Paused(bytes) => entry.pause_reported = *bytes,
                     }
                     Ok(())
                 })
@@ -1205,6 +1293,10 @@ impl Sessions for Patient<'_> {
 
     fn pane_of_terminal(&self, terminal: &str) -> Option<String> {
         self.sessions.pane_of_terminal(terminal)
+    }
+
+    fn identity(&self, pane: &str) -> Option<SessionIdentity> {
+        self.sessions.identity(pane)
     }
 }
 
@@ -1311,6 +1403,8 @@ mod tests {
         /// Host terminal -> the pane of the agent in it.
         terminals: RefCell<HashMap<String, String>>,
         output: RefCell<Option<u64>>,
+        /// The conversation each pane's agent runs.
+        identities: RefCell<HashMap<String, SessionIdentity>>,
     }
 
     impl Sessions for Fake {
@@ -1329,6 +1423,9 @@ mod tests {
         fn output_total(&self, _terminal: &str) -> Option<u64> {
             *self.output.borrow()
         }
+        fn identity(&self, pane: &str) -> Option<SessionIdentity> {
+            self.identities.borrow().get(pane).cloned()
+        }
         fn wake(&self, pane: &str, reason: &str) {
             self.woken
                 .borrow_mut()
@@ -1346,6 +1443,8 @@ mod tests {
             activity: activity.map(|(event, at)| (event.to_string(), at as u64)),
             last_input_ms: None,
             asleep: false,
+            held: false,
+            paused_holding: None,
             output_quiet_ms: None,
         }
     }
@@ -1374,6 +1473,7 @@ mod tests {
                     pane: Some("lead".into()),
                     terminal: None,
                     agent: Some("claude".into()),
+                    ..Default::default()
                 }),
             })
             .unwrap()
@@ -1413,6 +1513,7 @@ mod tests {
                     pane: Some("worker".into()),
                     terminal: None,
                     agent: Some("codex".into()),
+                    ..Default::default()
                 },
             })
             .unwrap();
@@ -1540,6 +1641,7 @@ mod tests {
                     pane: Some("qa".into()),
                     terminal: None,
                     agent: Some("codex".into()),
+                    ..Default::default()
                 },
             })
             .unwrap();
@@ -1576,7 +1678,85 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(None),
+            identities: RefCell::new(HashMap::new()),
         }
+    }
+
+    #[test]
+    fn after_a_resume_the_leads_news_goes_to_its_new_terminal() {
+        let (_scratch, mut store, team) = running_team();
+        let now = 10_000_000;
+        let identity = SessionIdentity {
+            conversation: "lead-conv".into(),
+            agent: "claude".into(),
+        };
+        // The courier learns the conversation the lead runs.
+        let fake = fake_with(&[("lead", view("term-1", Some(("Stop", now - 60_000))))]);
+        fake.identities
+            .borrow_mut()
+            .insert("lead".into(), identity.clone());
+        act(&mut store, &team, now, &fake);
+        let seat = store.team(&team).unwrap().lead.clone().unwrap();
+        assert_eq!(seat.conversation.as_deref(), Some("lead-conv"));
+
+        // Its pane is gone; Dragent resumed the conversation in another.
+        let fake = fake_with(&[("lead-2", view("term-2", Some(("Stop", now - 60_000))))]);
+        let TeamResponse::Reseated(moved) = store
+            .execute(TeamRequest::Reseat {
+                pane: "lead-2".into(),
+                terminal: None,
+                identity: identity.clone(),
+                at_ms: Some(now),
+            })
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(moved, vec![(team.clone(), Party::Lead)]);
+        store
+            .execute(TeamRequest::BlockTask {
+                team: team.clone(),
+                task: "t1".into(),
+                reason: "Which provider?".into(),
+            })
+            .unwrap();
+        act(&mut store, &team, now, &fake);
+        let typed = fake.typed.borrow().clone();
+        assert_eq!(typed.len(), 1, "{typed:?}");
+        assert_eq!(typed[0].0, "term-2");
+        assert!(typed[0].1.contains("Which provider?"), "{}", typed[0].1);
+
+        // A resume announced before that one is stale: it doesn't move it back.
+        let TeamResponse::Reseated(moved) = store
+            .execute(TeamRequest::Reseat {
+                pane: "lead-old".into(),
+                terminal: None,
+                identity: identity.clone(),
+                at_ms: Some(now - 1_000),
+            })
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(moved.is_empty());
+        let seat = store.team(&team).unwrap().lead.clone().unwrap();
+        assert_eq!(seat.pane.as_deref(), Some("lead-2"));
+        // Another conversation resumed elsewhere moves nothing.
+        let TeamResponse::Reseated(moved) = store
+            .execute(TeamRequest::Reseat {
+                pane: "elsewhere".into(),
+                terminal: None,
+                identity: SessionIdentity {
+                    conversation: "other".into(),
+                    agent: "claude".into(),
+                },
+                at_ms: Some(now + 1_000),
+            })
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(moved.is_empty());
     }
 
     fn person_writes(store: &mut TeamStore, team: &str, body: &str) {
@@ -1804,6 +1984,7 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(None),
+            identities: RefCell::new(HashMap::new()),
         };
         fake.sessions.borrow_mut().insert(
             "lead".into(),
@@ -1909,6 +2090,7 @@ mod tests {
                     pane: Some("lead".into()),
                     terminal: None,
                     agent: Some(crate::team::DRAGENT_AGENT.into()),
+                    ..Default::default()
                 },
                 model: None,
             })
@@ -1925,6 +2107,7 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(None),
+            identities: RefCell::new(HashMap::new()),
         };
         fake.sessions.borrow_mut().insert(
             "lead".into(),
@@ -1991,6 +2174,7 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(None),
+            identities: RefCell::new(HashMap::new()),
         };
         fake.sessions.borrow_mut().insert(
             "lead".into(),
@@ -2040,6 +2224,7 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(None),
+            identities: RefCell::new(HashMap::new()),
         };
         let mut lead = view("lead-term", Some(("Stop", now - 60_000)));
         lead.last_input_ms = Some(now - 2_000);
@@ -2114,6 +2299,7 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(None),
+            identities: RefCell::new(HashMap::new()),
         };
         fake.sessions
             .borrow_mut()
@@ -2172,6 +2358,7 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(None),
+            identities: RefCell::new(HashMap::new()),
         };
         let now = 10_000_000;
         fake.sessions.borrow_mut().insert(
@@ -2254,6 +2441,7 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(None),
+            identities: RefCell::new(HashMap::new()),
         };
         let started = store
             .team(&team)
@@ -2278,6 +2466,7 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(None),
+            identities: RefCell::new(HashMap::new()),
         };
         let mut gone = view("t", Some(("Stop", 0)));
         gone.reachable = false;
@@ -2354,6 +2543,71 @@ mod tests {
         assert_eq!(terminal, "worker-term");
         assert!(text.contains("Use Resend"), "{text}");
         assert!(store.team(&team).unwrap().messages[0].read);
+        assert_eq!(store.team(&team).unwrap().task("t1").unwrap().status, TaskStatus::Running);
+    }
+
+    /// Waiting for memory, or paused: not failed, not nudged, not typed into,
+    /// however long it lasts. Its messages reach it afterwards.
+    #[test]
+    fn a_held_worker_is_neither_failed_nor_typed_into() {
+        let (_scratch, mut store, team) = running_team();
+        let now = 10_000_000;
+        let mut worker = view("worker-term", None);
+        worker.held = true;
+        worker.output_quiet_ms = Some(60 * 60_000);
+        let fake = fake_with(&[("worker", worker.clone())]);
+        store
+            .execute(TeamRequest::Send {
+                team: team.clone(),
+                from: Party::Lead,
+                to: Party::Task("t1".into()),
+                kind: MessageKind::Answer,
+                body: "Use Resend".into(),
+                reply_to: None,
+                choices: Vec::new(),
+            })
+            .unwrap();
+        for later in [0, NO_SESSION_MS, STALL_AFTER_MS, 24 * 60 * 60_000] {
+            let actions = act(&mut store, &team, now + later, &fake);
+            assert!(actions.is_empty(), "{actions:?}");
+        }
+        assert_eq!(store.team(&team).unwrap().task("t1").unwrap().status, TaskStatus::Running);
+        assert!(fake.typed.borrow().is_empty());
+        worker.held = false;
+        worker.output_quiet_ms = None;
+        let later = now + 25 * 60 * 60_000;
+        worker.activity = Some(("Stop".into(), (later - 60_000) as u64));
+        fake.sessions.borrow_mut().insert("worker".into(), worker);
+        act(&mut store, &team, later, &fake);
+        assert_eq!(fake.typed.borrow().len(), 1);
+    }
+
+    /// A pause needs a decision, and it's the lead's: told once per pause.
+    #[test]
+    fn a_paused_worker_is_the_leads_to_resume() {
+        let (_scratch, mut store, team) = running_team();
+        let mut worker = view("worker-term", None);
+        worker.held = true;
+        let notes = |store: &mut TeamStore, worker: &SessionView, now| {
+            let fake = fake_with(&[("worker", worker.clone())]);
+            act(store, &team, now, &fake)
+                .into_iter()
+                .filter_map(|action| match action {
+                    Action::Note { body, mark: NoteMark::Paused(_), .. } => Some(body),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        // Waiting for memory needs nobody.
+        assert!(notes(&mut store, &worker, 10_000_000).is_empty());
+        worker.paused_holding = Some(5 << 30);
+        let told = notes(&mut store, &worker, 10_001_000);
+        assert_eq!(told.len(), 1);
+        assert!(told[0].contains("5.0 GB") && told[0].contains("dragent agents resume worker"), "{told:?}");
+        assert!(notes(&mut store, &worker, 10_002_000).is_empty(), "told once");
+        // Resumed, and paused again later at more.
+        worker.paused_holding = Some(8 << 30);
+        assert_eq!(notes(&mut store, &worker, 10_003_000).len(), 1);
         assert_eq!(store.team(&team).unwrap().task("t1").unwrap().status, TaskStatus::Running);
     }
 
@@ -2498,6 +2752,7 @@ mod tests {
                     pane: Some("gone".into()),
                     terminal: Some("old-term".into()),
                     agent: Some("claude".into()),
+                    ..Default::default()
                 },
                 model: None,
             })
@@ -2515,6 +2770,7 @@ mod tests {
             pane: Some("lead3".into()),
             terminal: Some("term3".into()),
             agent: Some("codex".into()),
+            ..Default::default()
         };
         store
             .execute(TeamRequest::SetLead {
@@ -2545,6 +2801,7 @@ mod tests {
                     pane: Some("gone".into()),
                     terminal: Some("old-term".into()),
                     agent: Some("claude".into()),
+                    ..Default::default()
                 },
                 model: None,
             })
@@ -2600,6 +2857,7 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(Some(5)),
+            identities: RefCell::new(HashMap::new()),
         };
         let terminal = format!("term-{}", uuid::Uuid::new_v4());
         assert_eq!(output_quiet_ms(&fake, &terminal, 1_000), Some(0));
@@ -2751,6 +3009,7 @@ mod tests {
                     pane: Some("worker2".into()),
                     terminal: None,
                     agent: Some("codex".into()),
+                    ..Default::default()
                 },
             })
             .unwrap();
@@ -2818,6 +3077,7 @@ mod tests {
             woken: RefCell::new(Vec::new()),
             terminals: RefCell::new(HashMap::new()),
             output: RefCell::new(None),
+            identities: RefCell::new(HashMap::new()),
         };
         let mut gone = view("t", Some(("Stop", 0)));
         gone.reachable = false;

@@ -123,6 +123,8 @@ Agents
   agents read AGENT [--lines N]         An agent's terminal, as text
   agents send AGENT TEXT [--no-enter]   Type a message into an agent's session
   agents stop AGENT                     End an agent's session
+  agents resume AGENT                   Let an agent paused for its memory run again
+  agents start-anyway AGENT             Start an agent that waits for memory now
   agents start --workspace PATH [--agent KEY] (--prompt TEXT | --prompt-file FILE)
                [--model NAME] [--from AGENT] [--account ID|system|inherit]
                                         Another agent in an existing workspace

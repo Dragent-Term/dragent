@@ -663,6 +663,14 @@ impl WorkspaceView {
             WorkspaceAction::OpenCustomAgentInstall { agent_id } => {
                 self.open_custom_agent_install(agent_id.clone(), ctx);
             }
+            WorkspaceAction::FocusPopupTerminal => {
+                if let Some(terminal) = self.prompt_install_terminal.clone() {
+                    // Inside it already (an editor of its own, say): leave it.
+                    if !terminal.read(ctx, |view, app| view.pane_has_focus(app)) {
+                        ctx.focus(&terminal);
+                    }
+                }
+            }
             WorkspaceAction::ClosePromptAgentInstall => {
                 self.close_prompt_agent_install(ctx);
             }
@@ -837,8 +845,8 @@ impl WorkspaceView {
                 if prompt_text.is_empty()
                     && self.prompt_attachments.is_empty()
                     && self.prompt_links.is_empty()
-                    && self.prompt_agent == super::action::PromptAgent::Dragent
                 {
+                    // Nothing to work on, whichever agent is picked.
                     return;
                 }
                 // A team: the picked agent leads; its kind and the chosen
@@ -2242,6 +2250,7 @@ impl WorkspaceView {
             ctx.update_view(&terminal, |view, _| view.shutdown());
         }
         let was_page_command = self.page_command.take().is_some();
+        let signing_in = self.account_sign_in.take().is_some();
         self.prompt_install_agent = None;
         self.custom_install_agent = None;
         self.remote_tool_install = None;
@@ -2257,6 +2266,24 @@ impl WorkspaceView {
                 ctx.focus(&self.pull_requests_view);
             }
         }
+        if signing_in {
+            ctx.update_view(&self.settings_view, |page, c| page.account_sign_in_closed(c));
+        }
+        ctx.notify();
+    }
+
+    /// The pop-up terminal just opened for an account sign-in: say so in its
+    /// heading, and report back to Settings when it closes.
+    pub(super) fn describe_account_sign_in(&mut self, provider: &str, ctx: &mut ViewContext<Self>) {
+        let Some((_, description)) = &mut self.page_command else {
+            // It never opened (the machine went away).
+            ctx.update_view(&self.settings_view, |page, c| page.account_sign_in_closed(c));
+            return;
+        };
+        *description = "Finish in your browser. If it shows a code, paste it here. This closes when you're signed in.".into();
+        self.account_sign_in = super::PromptAgent::ALL
+            .into_iter()
+            .find(|agent| agent.command_key() == provider);
         ctx.notify();
     }
 }

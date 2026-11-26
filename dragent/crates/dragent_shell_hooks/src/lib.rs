@@ -530,6 +530,47 @@ pub fn source_command(kind: ShellKind, path: &std::path::Path) -> String {
     }
 }
 
+/// Carries a new shell's setup statements until the shell runs them.
+pub const SETUP_ENV: &str = "DRAGENT_SHELL_SETUP";
+
+/// How a new shell gets its setup statements. Whatever they hold, the line
+/// typed into the terminal stays the same few bytes: a shell that is still
+/// starting reads whole lines, and a terminal keeps no more of an unread line
+/// than 1,024 bytes on macOS (4,096 on Linux). A longer one never ends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetupDelivery {
+    /// `value` goes into the shell's environment as [`SETUP_ENV`]; `line` is
+    /// typed once the shell runs. After the shell's own startup files, so
+    /// what they set is there to be kept.
+    Typed { value: String, line: &'static str },
+    /// Arguments that run it as the shell starts; nothing is typed.
+    Arguments(Vec<String>),
+}
+
+/// How a shell of `kind` gets `setup`. The line's leading space keeps it out
+/// of history as in [`source_command`].
+pub fn deliver_setup(kind: ShellKind, setup: &str) -> Option<SetupDelivery> {
+    let setup = setup.trim();
+    Some(match kind {
+        ShellKind::Zsh | ShellKind::Bash => SetupDelivery::Typed {
+            value: format!("unset {SETUP_ENV}; {setup}"),
+            line: " builtin eval \"$DRAGENT_SHELL_SETUP\"",
+        },
+        ShellKind::Fish => SetupDelivery::Typed {
+            value: format!("set -e {SETUP_ENV}; {setup}"),
+            line: " eval $DRAGENT_SHELL_SETUP",
+        },
+        // PSReadLine redraws the whole line for each typed character, which
+        // costs seconds on a busy machine and shows the line being typed.
+        ShellKind::PowerShell => {
+            SetupDelivery::Arguments(vec!["-NoExit".into(), "-Command".into(), setup.into()])
+        }
+        // `source` takes no variable here, so there is no short line to type.
+        ShellKind::Nu => SetupDelivery::Arguments(vec!["--execute".into(), setup.into()]),
+        ShellKind::Other => return None,
+    })
+}
+
 /// On Windows, rewrite a native path (`C:\a\b`) to the MSYS / Git-Bash POSIX form
 /// (`/c/a/b`) so POSIX shells (bash/zsh/fish/nu run under Git-Bash/MSYS) can
 /// `source` it — a Windows-format path fails `source` in those shells. No-op on
@@ -662,6 +703,37 @@ mod tests {
             source_command(ShellKind::Nu, p),
             "source '/tmp/dragent_hooks.nu'"
         );
+    }
+
+    #[test]
+    fn the_typed_setup_line_has_one_short_length_whatever_it_sets_up() {
+        // What every POSIX terminal must hold of one unread line.
+        const POSIX_MAX_CANON: usize = 255;
+        for kind in [ShellKind::Zsh, ShellKind::Bash, ShellKind::Fish] {
+            let mut lines = Vec::new();
+            for length in [0, 30, 106, 200, 244, 1000] {
+                let setup = format!("export A='/{}'; ", "x".repeat(length));
+                let Some(SetupDelivery::Typed { value, line }) = deliver_setup(kind, &setup) else {
+                    panic!("{kind:?} types its setup line");
+                };
+                assert!(value.ends_with(setup.trim()) && value.len() > setup.trim().len());
+                assert!(
+                    line.len() < POSIX_MAX_CANON && line.starts_with(' '),
+                    "{line}"
+                );
+                assert!(line.contains(SETUP_ENV));
+                lines.push(line);
+            }
+            lines.dedup();
+            assert_eq!(lines.len(), 1, "{kind:?}");
+        }
+        for kind in [ShellKind::PowerShell, ShellKind::Nu] {
+            assert!(matches!(
+                deliver_setup(kind, "x"),
+                Some(SetupDelivery::Arguments(_))
+            ));
+        }
+        assert_eq!(deliver_setup(ShellKind::Other, "x"), None);
     }
 
     #[test]

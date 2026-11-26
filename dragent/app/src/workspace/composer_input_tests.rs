@@ -29,6 +29,8 @@ struct Fixture {
     workspace: ViewHandle<WorkspaceView>,
     terminal: ViewHandle<TerminalView>,
     composer: Composer,
+    /// Nothing is typed or attached.
+    empty: bool,
     sent: usize,
     opened: usize,
     scroll: ClippedScrollStateHandle,
@@ -75,10 +77,10 @@ impl View for Fixture {
                     view.mono_font,
                     id,
                     &view.prompt_editor,
-                    super::action::PromptAgent::Dragent,
+                    super::action::PromptAgent::Claude,
                     (false, &[]),
                     None,
-                    false,
+                    self.empty,
                     view.project_start_busy,
                     crate::voice::VoiceUiState::Idle,
                     0,
@@ -283,6 +285,7 @@ fn isolated_composer_input() {
                 workspace,
                 terminal,
                 composer: Composer::Project,
+                empty: false,
                 sent: 0,
                 opened: 0,
                 scroll: ClippedScrollStateHandle::new(),
@@ -585,6 +588,31 @@ fn isolated_composer_input() {
             2,
             "idle state must allow retry"
         );
+        workspace.update(&mut app, |view, ctx| {
+            view.project_start_busy = false;
+            ctx.notify();
+        });
+        fixture.update(&mut app, |view, ctx| {
+            view.empty = true;
+            ctx.notify();
+        });
+        rebuild(&mut app);
+        click(&mut app);
+        assert_eq!(
+            fixture.read(&app, |view, _| view.sent),
+            2,
+            "nothing typed: nothing to send, with a coding agent either"
+        );
+        workspace.update(&mut app, |view, ctx| {
+            view.prompt_agent = super::action::PromptAgent::Claude;
+            view.prompt_text = "  ".into();
+            view.prompt_attachments.clear();
+            view.prompt_links.clear();
+            view.project_start_error = None;
+            view.handle_action(&WorkspaceAction::SubmitPrompt, ctx);
+            assert!(!view.project_start_busy);
+            assert_eq!(view.project_start_error, None);
+        });
 
         workspace.update(&mut app, |view, ctx| {
             view.project_start_busy = false;

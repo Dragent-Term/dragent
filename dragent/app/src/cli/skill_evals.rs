@@ -239,7 +239,7 @@ fn allowed_subcommands(family: &str) -> &'static [&'static str] {
             "submit",
         ],
         "agents" => &[
-            "list", "running", "read", "send", "stop", "start", "accounts",
+            "list", "running", "read", "send", "stop", "resume", "start-anyway", "start", "accounts",
         ],
         "workspaces" => &["list", "create", "delete"],
         "projects" => &["list", "add"],

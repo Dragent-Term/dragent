@@ -139,6 +139,38 @@ impl PtySessionHandle {
             .context("PTY session command channel closed")
     }
 
+    /// The longest line the terminal can take right now; `None` when it has no
+    /// limit. A program that reads whole lines (a shell that isn't at its
+    /// prompt yet, unlike one editing a line) leaves them to the terminal,
+    /// which drops what it can't hold.
+    pub fn line_limit(&self) -> Option<usize> {
+        #[cfg(unix)]
+        {
+            let probe = self.foreground.as_ref()?;
+            // SAFETY: the probe owns the descriptor, and `state` is only read
+            // once filled.
+            let state = unsafe {
+                let mut state: libc::termios = std::mem::zeroed();
+                if libc::tcgetattr(probe.master_fd, &mut state) != 0 {
+                    return None;
+                }
+                state
+            };
+            // Both one less than the buffer, for the line's end.
+            let held = if cfg!(target_os = "linux") {
+                4095
+            } else {
+                1023
+            };
+            (state.c_lflag & libc::ICANON != 0).then_some(held)
+        }
+        // The console host gives a program its lines whole.
+        #[cfg(windows)]
+        {
+            None
+        }
+    }
+
     /// True when a foreground job (a running command) currently owns the
     /// terminal — i.e. the shell is NOT at an idle prompt. This reflects a
     /// SILENT running process too (unlike output-activity heuristics). Unix
@@ -196,14 +228,16 @@ pub fn spawn_interactive(
     sync_buffer_len: SyncBufferLenCallback,
     on_wakeup: WakeupCallback,
 ) -> Result<(PtySessionHandle, AsyncReceiver<PtyEvent>)> {
-    spawn_interactive_with_args(config, &[], feed, sync_buffer_len, on_wakeup)
+    spawn_interactive_with_args(config, &[], &[], feed, sync_buffer_len, on_wakeup)
 }
 
 /// [`spawn_interactive`] with extra shell arguments after the login flag,
-/// e.g. a startup command that loads shell integration without typing it.
+/// e.g. a startup command that loads shell integration without typing it, and
+/// extra variables in the shell's environment.
 pub fn spawn_interactive_with_args(
     config: PtyConfig,
     args: &[String],
+    env: &[(&str, String)],
     feed: FeedCallback,
     sync_buffer_len: SyncBufferLenCallback,
     on_wakeup: WakeupCallback,
@@ -216,6 +250,9 @@ pub fn spawn_interactive_with_args(
     apply_login_shell_arg(&mut cmd, &shell);
     cmd.args(args);
     configure_shell_command(&mut cmd, &shell);
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
     if let Some(cwd) = config.cwd {
         cmd.cwd(cwd);
     }

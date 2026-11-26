@@ -100,6 +100,7 @@ pub fn call(tool: &str, args: &Value, caller: &Caller) -> Result<Value, String> 
                 pane: Some(pane.into()),
                 terminal: None,
                 agent: Some(agent.into()),
+                ..Default::default()
             },
             model,
         })?;

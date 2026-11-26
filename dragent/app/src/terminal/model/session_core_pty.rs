@@ -45,6 +45,35 @@ impl super::session_core_types::TerminalSessionCore {
         resume: &dragent_host::screen_protocol::TerminalResume,
         theme: &Theme,
     ) -> Result<(), String> {
+        let emulator = Self::decode_host_resume(resume, self.size.rows, self.size.cols)?;
+        self.apply_host_resume(resume, emulator, theme)
+    }
+
+    /// Decode a resume's display checkpoint. Needs no session state, so
+    /// callers run it without holding the session lock.
+    pub(crate) fn decode_host_resume(
+        resume: &dragent_host::screen_protocol::TerminalResume,
+        rows: u16,
+        cols: u16,
+    ) -> Result<Emulator, String> {
+        let mut emulator = Emulator::with_scrollback(
+            rows as usize,
+            cols as usize,
+            crate::console::editor_settings::EditorSettings::global()
+                .terminal
+                .clamped_scrollback_lines(),
+        );
+        emulator.restore_display_checkpoint(&resume.display)?;
+        Ok(emulator)
+    }
+
+    /// Adopt a resume whose checkpoint [`Self::decode_host_resume`] decoded.
+    pub(crate) fn apply_host_resume(
+        &mut self,
+        resume: &dragent_host::screen_protocol::TerminalResume,
+        emulator: Emulator,
+        theme: &Theme,
+    ) -> Result<(), String> {
         // An older, unintegrated shell cannot distinguish an idle prompt from
         // a running interactive program. Treating its missing command as idle
         // would complete the block and route keystrokes into our input editor.
@@ -53,9 +82,8 @@ impl super::session_core_types::TerminalSessionCore {
         if !resume.shell_ready && resume.command.is_none() && resume.starting.is_none() {
             return Err("Shell integration unavailable. Update the machine runtime and open a new terminal.".into());
         }
-        // Decode first: a failed checkpoint must not alter routing/state.
-        let mut emulator = Emulator::new(self.size.rows as usize, self.size.cols as usize);
-        emulator.restore_display_checkpoint(&resume.display)?;
+        // Decoded first (see `decode_host_resume`): a failed checkpoint
+        // never reaches here, so it cannot alter routing/state.
         // The daemon's grid is the PTY's real size. Adopting it means the next
         // layout resizes the process only if the pane truly differs from it.
         let (rows, cols) = emulator.dimensions();
@@ -75,7 +103,13 @@ impl super::session_core_types::TerminalSessionCore {
                 block.sync_live_line_count();
             }
             // The shell's previous display cannot retain an obsolete alt flag.
-            self.session = Emulator::new(self.size.rows as usize, self.size.cols as usize);
+            self.session = Emulator::with_scrollback(
+                self.size.rows as usize,
+                self.size.cols as usize,
+                crate::console::editor_settings::EditorSettings::global()
+                    .terminal
+                    .clamped_scrollback_lines(),
+            );
         } else {
             // A command the app just submitted that the shell hasn't run yet
             // is still queued behind this checkpoint, so its block stays open

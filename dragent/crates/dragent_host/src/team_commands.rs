@@ -66,6 +66,15 @@ pub trait Services {
     }
     /// Whether the agent in `pane` still runs.
     fn alive(&mut self, pane: &str) -> bool;
+    /// The agent conversation running in session `pane` (else in host
+    /// terminal `terminal`), from its record.
+    fn identity(
+        &mut self,
+        pane: Option<&str>,
+        terminal: Option<&str>,
+    ) -> Option<crate::team::SessionIdentity> {
+        crate::team::session_identity(pane, terminal)
+    }
     /// Whether the agent in `pane` waits at a permission prompt, by its
     /// last hook report.
     fn at_permission_prompt(&mut self, pane: &str) -> bool {
@@ -199,6 +208,7 @@ pub fn call_with(
             })?)?;
             Ok(team_json(&updated, seat.party.as_ref()))
         }
+        "team_take_lead" => take_lead(args, caller, seat, host),
         "team_stop" => {
             manager(&seat)?;
             let stopped = team_of(host.team(TeamRequest::Stop { team })?)?;
@@ -764,6 +774,7 @@ fn resolve(caller: &Caller, host: &mut Host) -> Result<Option<(String, Party)>, 
     match host.team(TeamRequest::Resolve {
         pane: caller.pane.clone(),
         terminal: caller.terminal.clone(),
+        identity: None,
     })? {
         TeamResponse::Resolved(found) => Ok(found),
         _ => Err(unexpected()),
@@ -832,6 +843,77 @@ fn manager(seat: &Seat) -> Result<(), String> {
     }
 }
 
+/// `team lead --take`: the calling session becomes the lead again. The
+/// person may seat any session; an agent only its own conversation, when
+/// that's the one the lead's seat was given to.
+fn take_lead(args: &Value, caller: &Caller, seat: Seat, host: &mut Host) -> Result<Value, String> {
+    let team = seat.team.id.clone();
+    if seat.party == Some(Party::Lead) {
+        return Ok(json!({"team": team, "lead": "you", "taken": false, "note": "This session already leads the team."}));
+    }
+    if seat.team.lead.as_ref().is_some_and(|lead| lead.agent.as_deref() == Some(crate::team::DRAGENT_AGENT)) {
+        return Err("Dragent's own agent leads this team from inside the app; its seat can't be taken from a terminal.".into());
+    }
+    let lead = if caller.agent {
+        if let Some(Party::Task(own)) = &seat.party {
+            return Err(format!("You work on {own}; a worker can't take the lead."));
+        }
+        let identity = host.identity(caller.pane.as_deref(), caller.terminal.as_deref());
+        let held = seat.team.lead.as_ref();
+        match identity {
+            Some(identity) if held.is_some_and(|lead| lead.holds(&identity)) => Member {
+                pane: caller.pane.clone(),
+                terminal: caller.terminal.clone(),
+                agent: Some(identity.agent),
+                conversation: Some(identity.conversation),
+                ..Default::default()
+            },
+            _ => {
+                let session = caller
+                    .pane
+                    .as_deref()
+                    .map(|pane| format!(" --pane {pane}"))
+                    .unwrap_or_default();
+                return Err(format!(
+                    "This session isn't running the conversation that leads {team} ({}), so it can't take the lead.                      If it should lead, the person can make it the lead: they run                      `dragent team lead --take --team {team}{session}` in a terminal of their own.",
+                    seat.team.title
+                ));
+            }
+        }
+    } else {
+        let pane = match string(args, "pane") {
+            Some(pane) => Some(pane),
+            None => caller
+                .terminal
+                .as_deref()
+                .and_then(agent_sessions::pane_for_terminal)
+                .map(|pane| pane.to_string()),
+        };
+        let terminal = string(args, "pane").is_none().then(|| caller.terminal.clone()).flatten();
+        if pane.is_none() && terminal.is_none() {
+            return Err("Say which session leads with --pane, or run this in its terminal.".into());
+        }
+        let session = pane
+            .as_deref()
+            .and_then(|pane| pane.parse::<uuid::Uuid>().ok())
+            .and_then(agent_sessions::load);
+        Member {
+            pane,
+            terminal: terminal.or_else(|| session.as_ref().map(|session| session.terminal_id.clone())),
+            agent: session
+                .as_ref()
+                .and_then(|session| support::agent_key(&session.provider).ok())
+                .or_else(|| seat.team.lead.as_ref().and_then(|lead| lead.agent.clone())),
+            conversation: session.and_then(|session| session.conversation_id),
+            ..Default::default()
+        }
+    };
+    let updated = team_of(host.team(TeamRequest::TakeLead { team, lead })?)?;
+    let mut value = team_json(&updated, Some(&Party::Lead));
+    value["taken"] = json!(true);
+    Ok(value)
+}
+
 fn member(seat: &Seat) -> Result<Party, String> {
     seat.party.clone().ok_or_else(|| not_in(&seat.team))
 }
@@ -866,16 +948,22 @@ fn lead_member(caller: &Caller) -> Result<Option<Member>, String> {
                 .into(),
         );
     }
-    let agent = caller
+    let session = caller
         .pane
         .as_deref()
         .and_then(|pane| pane.parse::<uuid::Uuid>().ok())
-        .and_then(crate::agent_sessions::load)
+        .and_then(crate::agent_sessions::load);
+    let agent = session
+        .as_ref()
         .and_then(|session| support::agent_key(&session.provider).ok());
     Ok(Some(Member {
         pane: caller.pane.clone(),
         terminal: caller.terminal.clone(),
         agent,
+        // Its conversation, when the agent already reported it (the courier
+        // learns it later otherwise): the seat follows it to a new pane.
+        conversation: session.and_then(|session| session.conversation_id),
+        ..Default::default()
     }))
 }
 
@@ -1240,6 +1328,7 @@ fn start_task(team: &Team, id: &str, host: &mut Host) -> Result<Value, String> {
                     pane: Some(pane.clone()),
                     terminal: None,
                     agent: Some(agent),
+                    ..Default::default()
                 },
             })?;
             if let Err(error) = host.launch_confirmed(&pane) {
@@ -1898,6 +1987,7 @@ fn integrate(seat: &Seat, args: &Value, host: &mut Host) -> Result<Value, String
         .map(|task| task.id.clone())
         .collect();
     let checks = strings(args, "checks");
+    let already_applied = flag(args, "already_applied");
     let root = seat.team.project_root.clone();
     let mut brought: Vec<Value> = Vec::new();
     let stop = |brought: &[Value], code: &str, message: String, next: String| {
@@ -1975,13 +2065,52 @@ fn integrate(seat: &Seat, args: &Value, host: &mut Host) -> Result<Value, String
             .lines()
             .map(str::to_string)
             .collect();
+        let mut present = false;
         if !files.is_empty() {
             let patch = scratch_file(&team, &task, "patch", host)?;
             let output = format!("--output={patch}");
-            let applied = host
-                .git(&root, &["diff", "--binary", &output, &from, &tip])
-                .and_then(|_| host.git(&root, &["apply", "--check", "--binary", &patch]))
-                .and_then(|_| host.git(&root, &["apply", "--binary", &patch]));
+            let written = host.git(&root, &["diff", "--binary", &output, &from, &tip]);
+            // Its changes are in the checkout already (brought in with work
+            // that started after it, say) when its patch undoes cleanly.
+            let already = |host: &mut Host| {
+                host.git(&root, &["apply", "--check", "--reverse", "--binary", &patch])
+            };
+            let applied = if already_applied {
+                match written.and_then(|_| already(host)) {
+                    Ok(_) => {
+                        present = true;
+                        Ok(String::new())
+                    }
+                    Err(error) => {
+                        let _ = std::fs::remove_file(&patch);
+                        let missing = refused_files(&error);
+                        return stop(
+                            &brought,
+                            "not_already_applied",
+                            format!(
+                                "{id}'s changes aren't all in {root}{}, so it isn't recorded as integrated.",
+                                if missing.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(": {} differ", missing.join(", "))
+                                }
+                            ),
+                            format!("Integrate it without --already-applied: `dragent tasks integrate {id}`."),
+                        );
+                    }
+                }
+            } else {
+                written
+                    .and_then(|_| host.git(&root, &["apply", "--check", "--binary", &patch]))
+                    .and_then(|_| host.git(&root, &["apply", "--binary", &patch]))
+                    .or_else(|error| match already(host) {
+                        Ok(_) => {
+                            present = true;
+                            Ok(String::new())
+                        }
+                        Err(_) => Err(error),
+                    })
+            };
             let _ = std::fs::remove_file(&patch);
             if let Err(error) = applied {
                 let conflicts = refused_files(&error);
@@ -2018,7 +2147,13 @@ fn integrate(seat: &Seat, args: &Value, host: &mut Host) -> Result<Value, String
                 checks: checks.clone(),
             },
         })?;
-        brought.push(json!({"task": id, "commit": tip, "files": files}));
+        let mut entry = json!({"task": id, "commit": tip, "files": files});
+        if present {
+            entry["note"] = json!(format!(
+                "{id}'s changes were already in the checkout; recorded as integrated without changing anything."
+            ));
+        }
+        brought.push(entry);
     }
     Ok(json!({
         "team": team_id,
@@ -2794,7 +2929,7 @@ pub struct TeamTool {
     pub writes: bool,
 }
 
-pub const TOOLS: [TeamTool; 23] = [
+pub const TOOLS: [TeamTool; 24] = [
     TeamTool {
         name: "team_guide",
         description: "How to lead a team of agents in Dragent: planning tasks, starting workers, following them, reviews, and reporting back. Read it before you create or lead a team.",
@@ -2828,6 +2963,11 @@ pub const TOOLS: [TeamTool; 23] = [
     TeamTool {
         name: "team_stop",
         description: "Stop a team: its unfinished tasks are cancelled. The lead or the person only.",
+        writes: true,
+    },
+    TeamTool {
+        name: "team_take_lead",
+        description: "Take the lead's seat back for this session, after the lead's conversation was resumed somewhere Dragent didn't follow (`dragent team lead --take`). Allowed for the session running the lead's own conversation, and for the person; any other agent is refused.",
         writes: true,
     },
     TeamTool {
@@ -2907,7 +3047,7 @@ pub const TOOLS: [TeamTool; 23] = [
     },
     TeamTool {
         name: "task_integrate",
-        description: "Bring finished, verified work into the person's checkout as uncommitted changes (the lead or the person only): each task's commits since it started, one task at a time in plan order, never a commit or merge. Work it builds on goes first. A task whose changes don't apply cleanly stops it and changes nothing for that task; the answer names the files.",
+        description: "Bring finished, verified work into the person's checkout as uncommitted changes (the lead or the person only): each task's commits since it started, one task at a time in plan order, never a commit or merge. Work it builds on goes first. A task whose changes don't apply cleanly stops it and changes nothing for that task; the answer names the files. A task whose changes are already in the checkout is recorded as integrated; `already_applied` only records (it checks they're all there first).",
         writes: true,
     },
 ];
@@ -2950,6 +3090,10 @@ pub fn schema(name: &str) -> Value {
             vec!["summary"],
         ),
         "team_status" | "team_stop" => (json!({"team": team}), vec![]),
+        "team_take_lead" => (
+            json!({"team": team, "pane": text("The person only: the agent session to make the lead (default: the one in this terminal).")}),
+            vec![],
+        ),
         "team_agents" => (
             json!({
                 "team": team,
@@ -3009,6 +3153,7 @@ pub fn schema(name: &str) -> Value {
             json!({
                 "team": team,
                 "tasks": list("Finished work tasks to bring in, e.g. [\"t1\", \"t3\"]."),
+                "already_applied": {"type": "boolean", "description": "Only record tasks whose changes are already in the checkout (refused when they aren't all there)."},
                 "checks": list("What you ran to verify them and how it went, e.g. `cargo test: pass`.")
             }),
             vec!["tasks"],
@@ -3113,6 +3258,9 @@ Teams
   team agents add KEY[,KEY…] [--team TEAM]
                                         More agents for a team at work; its plan carries on
   team stop [TEAM]                      Cancel what isn't finished
+  team lead --take [--team TEAM] [--pane SESSION]
+                                        Make this session the lead again (its own
+                                        conversation, or the person's choice)
   team remove [TEAM]                    Take a finished or stopped team off the list
   team guide                            How to lead a team (for the lead agent)
 
@@ -3163,7 +3311,11 @@ Bringing work back (the lead or the person)
                                         uncommitted changes, one task at a time in plan
                                         order (what it builds on first). Never commits,
                                         merges or stages; a task that doesn't apply cleanly
-                                        stops it with nothing of that task changed
+                                        stops it with nothing of that task changed. Work
+                                        already in the checkout is recorded, not reapplied
+  tasks integrate TASK --already-applied
+                                        Record a task whose changes are all in the checkout
+                                        already (refused when they aren't)
   Stages of finished work: implemented, review approved, QA passed, integrated.
 
 Messages
@@ -3277,6 +3429,16 @@ pub fn parse(command: &str, flags: &Flags) -> Result<Option<Parsed>, String> {
             json!({"team": flags.value("team"), "summary": summary(flags, &words(1))?}),
         ),
         ("team", "stop") => ("team_stop", json!({"team": flags.argument(0)})),
+        ("team", "lead") if flags.on("take") => (
+            "team_take_lead",
+            json!({"team": flags.value("team").or(flags.argument(0)), "pane": flags.value("pane")}),
+        ),
+        ("team", "lead") => {
+            return Err(
+                "`dragent team lead --take [--team ID]` makes this session the team's lead again."
+                    .into(),
+            );
+        }
         ("team", "agents") => {
             let keys: Vec<&str> = flags
                 .positional
@@ -3383,6 +3545,7 @@ pub fn parse(command: &str, flags: &Flags) -> Result<Option<Parsed>, String> {
             json!({
                 "tasks": flags.positional.get(1..).unwrap_or_default(),
                 "checks": flags.all("check"),
+                "already_applied": flags.on("already-applied"),
             }),
         ),
         ("tasks", "read" | "screen") => (
@@ -3520,7 +3683,7 @@ pub fn render(tool: &str, value: &Value, tasks_only: bool, quiet: bool) -> Strin
                 .join("\n")
         }
         "team_status" | "team_create" | "team_stop" | "team_agents" if tasks_only => plan(value),
-        "team_status" | "team_create" | "team_stop" | "team_agents" => {
+        "team_status" | "team_create" | "team_stop" | "team_agents" | "team_take_lead" => {
             if quiet {
                 return field(value, "id").to_string();
             }

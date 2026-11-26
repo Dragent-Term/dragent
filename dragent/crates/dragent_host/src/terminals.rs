@@ -210,21 +210,21 @@ impl SpawnGate {
 
     pub fn acquire_with(&self, timeout: Duration) -> Result<SpawnPermit<'_>, String> {
         let mut active = self.active.lock().unwrap_or_else(|p| p.into_inner());
-        if *active >= MAX_SPAWNS {
-            let (guard, res) = self
-                .cvar
-                .wait_timeout(active, timeout)
-                .unwrap_or_else(|p| p.into_inner());
-            active = guard;
-            if *active >= MAX_SPAWNS {
-                if res.timed_out() {
-                    return Err(format!(
-                        "terminal spawn gate timeout ({} in flight)",
-                        *active
-                    ));
-                }
-                return Err(format!("terminal spawn gate busy ({} in flight)", *active));
+        // Another waiter may take the place this one is woken for: wait on.
+        let until = std::time::Instant::now() + timeout;
+        while *active >= MAX_SPAWNS {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Err(format!(
+                    "terminal spawn gate timeout ({} in flight)",
+                    *active
+                ));
             }
+            active = self
+                .cvar
+                .wait_timeout(active, left)
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
         }
         *active += 1;
         Ok(SpawnPermit { gate: self })
@@ -287,6 +287,45 @@ impl Startup {
     fn ready() -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self { ready: true, pending: Vec::new() }))
     }
+}
+
+/// How long held input waits for a shell at its first prompt to start editing
+/// lines itself, where a line is longer than the terminal holds until then.
+const LINE_WAIT: Duration = Duration::from_secs(10);
+
+/// What delivering a starting shell's held input needs.
+struct Starting {
+    screen: Arc<Mutex<super::terminal_screen::SessionScreen>>,
+    ring: Arc<Mutex<ReplayBuffer>>,
+    fanout: Arc<Fanout>,
+    startup: Arc<Mutex<Startup>>,
+    handle: dragent_pty::PtySessionHandle,
+}
+
+fn longest_line(input: &[u8]) -> usize {
+    input
+        .split(|byte| matches!(byte, b'\r' | b'\n'))
+        .map(<[u8]>::len)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Show `text` in a terminal as if printed there.
+fn say(
+    text: &str,
+    screen: &Mutex<super::terminal_screen::SessionScreen>,
+    ring: &Mutex<ReplayBuffer>,
+    fanout: &Arc<Fanout>,
+) {
+    let bytes = format!("\r\n{text}\r\n");
+    // In the order the PTY's own output takes them.
+    let mut ring = ring.lock().unwrap_or_else(|p| p.into_inner());
+    let frame = screen
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .feed(bytes.as_bytes());
+    ring.push(bytes.as_bytes());
+    fanout.publish_operations(&frame);
 }
 
 /// The most input held for one starting shell.
@@ -460,6 +499,22 @@ impl TerminalRegistry {
                 _ => format!("export DRAGENT_HOST_WORKSPACE_ID={} DRAGENT_HOST_TERMINAL_ID={}; ", quote(workspace_id), quote(&id)),
             };
             bootstrap.insert_str(0, &vars);
+            // Where Cargo builds in a worktree, and the build slots every
+            // terminal shares. Neither replaces a value already set.
+            let org_dir = crate::pty_supervisor::org_dir();
+            bootstrap.insert_str(
+                0,
+                &crate::build_cache::bootstrap_prefix(shell_kind, &quote, &org_dir, &cwd_path),
+            );
+            bootstrap.insert_str(
+                0,
+                &crate::build_slots::prefix(
+                    shell_kind,
+                    &quote,
+                    crate::build_slots::auth(&org_dir).as_deref(),
+                    crate::build_slots::make_support(),
+                ),
+            );
             // The organisation's `dragent` launcher first on PATH, so
             // `dragent …` in this terminal acts in this organisation.
             if let Some(path) = launcher_path_entry(shell_kind, &quote) {
@@ -473,16 +528,13 @@ impl TerminalRegistry {
             }
             bootstrap
         };
-        // PowerShell runs the integration as its startup command instead of
-        // typed input: PSReadLine redraws the whole line for each typed
-        // character, which for this line costs seconds of startup on a busy
-        // machine and shows the line being typed.
-        let as_startup_command = has_bootstrap
-            && matches!(shell_kind, dragent_shell_hooks::ShellKind::PowerShell);
-        let args: Vec<String> = if as_startup_command {
-            vec!["-NoExit".into(), "-Command".into(), integration.trim().to_string()]
-        } else {
-            Vec::new()
+        use dragent_shell_hooks::SetupDelivery;
+        let (args, env, typed) = match dragent_shell_hooks::deliver_setup(shell_kind, &integration) {
+            Some(SetupDelivery::Typed { value, line }) => {
+                (Vec::new(), vec![(dragent_shell_hooks::SETUP_ENV, value)], Some(line))
+            }
+            Some(SetupDelivery::Arguments(args)) => (args, Vec::new(), None),
+            None => (Vec::new(), Vec::new(), None),
         };
         if has_bootstrap {
             // Before the shell exists, so no prompt can beat it.
@@ -501,14 +553,15 @@ impl TerminalRegistry {
         let (handle, event_rx) = dragent_pty::spawn_interactive_with_args(
             config,
             &args,
+            &env,
             plumbing.feed,
             plumbing.sync_len,
             plumbing.wakeup,
         )
         .map_err(|e| format!("pty spawn failed: {e:#}"))?;
         plumbing.replies.lock().unwrap_or_else(|p| p.into_inner()).bind(handle.clone());
-        if !as_startup_command {
-            if let Err(error) = handle.write(format!("{integration}\r").as_bytes()) {
+        if let Some(line) = typed {
+            if let Err(error) = handle.write(format!("{line}\r").as_bytes()) {
                 let _ = handle.shutdown();
                 return Err(format!("shell integration bootstrap failed: {error:#}"));
             }
@@ -537,7 +590,13 @@ impl TerminalRegistry {
                     .map_err(|e| format!("initial command write failed: {e:#}"))?;
             }
         }
-        let watcher = has_bootstrap.then(|| (plumbing.screen.clone(), handle.clone()));
+        let watcher = has_bootstrap.then(|| Starting {
+            screen: plumbing.screen.clone(),
+            ring: plumbing.ring.clone(),
+            fanout: plumbing.fanout.clone(),
+            startup: startup.clone(),
+            handle: handle.clone(),
+        });
 
         let record = TerminalSession {
             id: id.clone(),
@@ -568,12 +627,12 @@ impl TerminalRegistry {
             plumbing.fanout,
             plumbing.screen,
             plumbing.replies,
-            startup.clone(),
+            startup,
             handle,
             event_rx,
         );
-        if let Some((screen, handle)) = watcher {
-            self.release_when_ready(id, resolved_shell, screen, startup, handle);
+        if let Some(starting) = watcher {
+            self.release_when_ready(id, resolved_shell, starting);
         }
         Ok(record)
     }
@@ -585,28 +644,43 @@ impl TerminalRegistry {
         &self,
         id: String,
         shell: String,
-        screen: Arc<Mutex<super::terminal_screen::SessionScreen>>,
-        startup: Arc<Mutex<Startup>>,
-        handle: dragent_pty::PtySessionHandle,
+        starting: Starting,
     ) {
         let sessions = self.sessions.clone();
         std::thread::spawn(move || {
+            let Starting { screen, ring, fanout, startup, handle } = starting;
             let started = std::time::Instant::now();
             let mut reported_slow = false;
+            let mut held_back: Option<std::time::Instant> = None;
             loop {
                 if screen.lock().unwrap_or_else(|p| p.into_inner()).shell_ready() {
                     let mut startup = startup.lock().unwrap_or_else(|p| p.into_inner());
-                    if !startup.pending.is_empty() {
-                        if let Err(error) = handle.write(&startup.pending) {
-                            log::warn!("[terminal] {id}: delivering held input failed: {error:#}");
+                    let longest = longest_line(&startup.pending);
+                    // The prompt's marker comes just before the shell starts
+                    // editing lines itself; until then the terminal would
+                    // cut a longer one.
+                    let cut = handle.line_limit().is_some_and(|limit| longest > limit);
+                    if cut && held_back.get_or_insert_with(std::time::Instant::now).elapsed() < LINE_WAIT {
+                        drop(startup);
+                    } else {
+                        if cut {
+                            let text = format!(
+                                "Dragent couldn't type a command of {longest} bytes here: this terminal only takes shorter lines right now. Nothing was run."
+                            );
+                            log::warn!("[terminal] {id}: {text}");
+                            say(&text, &screen, &ring, &fanout);
+                        } else if !startup.pending.is_empty() {
+                            if let Err(error) = handle.write(&startup.pending) {
+                                log::warn!("[terminal] {id}: delivering held input failed: {error:#}");
+                            }
                         }
                         startup.pending.clear();
+                        startup.ready = true;
+                        if reported_slow {
+                            log::info!("[terminal] {id}: {shell} ready after {:?}", started.elapsed());
+                        }
+                        return;
                     }
-                    startup.ready = true;
-                    if reported_slow {
-                        log::info!("[terminal] {id}: {shell} ready after {:?}", started.elapsed());
-                    }
-                    return;
                 }
                 if !sessions.lock().unwrap_or_else(|p| p.into_inner()).contains_key(&id) {
                     return;
@@ -775,14 +849,12 @@ impl TerminalRegistry {
             .map(|(record, live)| (record.clone(), live.clone()))
             .collect();
         for (_, live) in &lives {
-            if let Some(handle) = live
-                .lock()
+            // Held through the fan-out: a subscriber draining meanwhile must
+            // not resume reading behind the snapshot.
+            live.lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .handle
-                .as_ref()
-            {
-                let _ = handle.set_read_paused(true);
-            }
+                .fanout
+                .hold(true);
         }
         // Let a read already in flight on each event loop land in its ring
         // before the rings are copied.
@@ -825,11 +897,8 @@ impl TerminalRegistry {
             .values()
         {
             let live = live.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(handle) = live.handle.as_ref() {
-                let _ = handle.set_read_paused(false);
-            }
-            // Re-apply flow control a subscriber may still need.
-            live.fanout.reapply_pause();
+            // Flow control a subscriber still needs stays in force.
+            live.fanout.hold(false);
         }
     }
 
@@ -863,6 +932,7 @@ impl TerminalRegistry {
             )
         }
         .map_err(|e| format!("adopt {}: {e:#}", session.id))?;
+        plumbing.fanout.hold(true);
         plumbing.replies.lock().unwrap_or_else(|p| p.into_inner()).bind(handle.clone());
         let record = TerminalSession {
             id: session.id,
@@ -1297,6 +1367,27 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn every_spawn_that_waits_gets_its_turn() {
+        let gate = Arc::new(SpawnGate::default());
+        let spawns: Vec<_> = (0..40)
+            .map(|_| {
+                let gate = gate.clone();
+                std::thread::spawn(move || {
+                    let permit = gate.acquire().map(|permit| {
+                        std::thread::sleep(Duration::from_millis(5));
+                        drop(permit);
+                    });
+                    permit
+                })
+            })
+            .collect();
+        for spawn in spawns {
+            spawn.join().unwrap().unwrap();
+        }
+        assert_eq!(gate.in_flight(), 0);
+    }
 
     #[test]
     fn ring_push_snapshot_fidelity_and_cap() {

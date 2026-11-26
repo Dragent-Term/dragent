@@ -308,7 +308,11 @@ impl TerminalView {
                 let paste_shortcut = (keystroke.cmd || keystroke.ctrl)
                     && !keystroke.alt
                     && keystroke.key == "v";
+                // Except the command editor while a command runs: it is hidden
+                // and takes no keys then, so the program gets the paste.
+                let editor_inert = command_running && focused == Some(command_editor_view_id);
                 if embedded_editor_focused
+                    && !editor_inert
                     && !rich_proxy_focused
                     && (clipboard_shortcut_action(keystroke).is_some() || paste_shortcut)
                 {

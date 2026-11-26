@@ -11,7 +11,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use warpui::elements::{
-    Align, ClippedScrollStateHandle, ConstrainedBox, Container, Element, ParentElement, Stack,
+    Align, ChildAnchor, ClippedScrollStateHandle, ConstrainedBox, Container, Element,
+    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Stack, Text,
 };
 use warpui::fonts::{Cache as FontCache, FamilyId};
 use warpui::geometry::vector::vec2f;
@@ -111,6 +112,10 @@ enum Scene {
     TeamMenu,
     LeadModelMenu,
     TaskModelMenu,
+    /// The dev-only performance overlay card over a plain backdrop.
+    PerfOverlay {
+        dark: bool,
+    },
     Demo(demo::DemoScene),
     CoordinationComposer {
         narrow: bool,
@@ -618,6 +623,8 @@ const SCENES: &[(&str, Scene)] = &[
         settings_after(SettingsSection::Mobile, "records_reset"),
     ),
     ("settings_about", settings(SettingsSection::About)),
+    ("perf_overlay_dark", Scene::PerfOverlay { dark: true }),
+    ("perf_overlay_light", Scene::PerfOverlay { dark: false }),
 ];
 
 const fn settings(section: SettingsSection) -> Scene {
@@ -1778,6 +1785,7 @@ impl View for Preview {
                     None,
                     false,
                     false,
+                    None,
                 );
                 let mut stack =
                     Stack::new().with_child(warpui::elements::ChildView::new(&self.prs).finish());
@@ -1972,6 +1980,44 @@ impl View for Preview {
                     .with_padding_left(60.0)
                     .with_padding_top(60.0)
                     .finish()
+            }
+            Scene::PerfOverlay { dark } => {
+                let theme = if dark { Theme::dark() } else { Theme::light() };
+                // Drive the overlay with this window's own frames so the
+                // capture shows live numbers: one seeded key event, then a
+                // tick per render (dev-only paths, no-ops when off).
+                static SEEDED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+                SEEDED.get_or_init(|| crate::perf_overlay::note_key());
+                crate::perf_overlay::note_frame_tick();
+                let backdrop = Container::new(
+                    Align::new(
+                        Text::new(
+                            "dev perf overlay (cmd-shift-O)",
+                            self.ui,
+                            crate::theme::text_size(13.0),
+                        )
+                        .with_color(theme.sub_text())
+                        .finish(),
+                    )
+                    .finish(),
+                )
+                .finish();
+                match crate::perf_overlay::render_overlay(&theme, self.ui) {
+                    Some(card) => {
+                        let offset = OffsetPositioning::offset_from_parent(
+                            vec2f(-12.0, 12.0),
+                            ParentOffsetBounds::WindowByPosition,
+                            ParentAnchor::TopRight,
+                            ChildAnchor::TopRight,
+                        );
+                        Box::new(
+                            Stack::new()
+                                .with_child(backdrop)
+                                .with_positioned_overlay_child(card, offset),
+                        ) as Box<dyn Element>
+                    }
+                    None => backdrop,
+                }
             }
             Scene::DevBadge { .. } => {
                 // Preview builds are the Dev edition, so the badge renders

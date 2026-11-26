@@ -85,7 +85,8 @@ pub enum DevelopmentRequest {
     },
     PullRequests(crate::pull_requests::Request),
     /// Machine-local agent accounts, answered by the owning host (local or
-    /// remote `dragent-host`). No credential ever passes through here.
+    /// remote `dragent-host`). Answers never carry a credential; a typed API
+    /// key travels one way, to the machine that stores it.
     Accounts(AccountsRequest),
 }
 
@@ -117,6 +118,17 @@ pub enum AccountsRequest {
     LaunchEnv {
         provider: String,
         selection: crate::agent_accounts::Selection,
+    },
+    /// Add an API-key account together with its key.
+    AddWithKey {
+        provider: String,
+        label: String,
+        key: crate::agent_accounts::ApiKey,
+    },
+    /// Replace an API-key account's key.
+    SetKey {
+        id: uuid::Uuid,
+        key: crate::agent_accounts::ApiKey,
     },
 }
 
@@ -864,6 +876,25 @@ mod runtime {
                         kind: profile.kind,
                     },
                 )))
+            }
+            AccountsRequest::AddWithKey {
+                provider,
+                label,
+                key,
+            } => {
+                let profile = crate::agent_accounts::add_with_key(&provider, &label, &key)?;
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::Added(
+                    AccountProfileView {
+                        id: profile.id,
+                        provider: profile.provider,
+                        label: profile.label,
+                        kind: profile.kind,
+                    },
+                )))
+            }
+            AccountsRequest::SetKey { id, key } => {
+                crate::agent_accounts::save_key(id, &key)?;
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::Ack))
             }
             AccountsRequest::Rename { id, label } => {
                 crate::agent_accounts::Registry::update(|r| r.rename(id, &label))?;

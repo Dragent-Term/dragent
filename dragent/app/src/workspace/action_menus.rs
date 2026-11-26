@@ -452,14 +452,12 @@ impl WorkspaceView {
     /// Read the repository's star count and the person's star off the UI
     /// thread, then redraw the places that show them.
     pub(crate) fn refresh_community(&mut self, ctx: &mut ViewContext<Self>) {
-        // `gh` and the HTTP fallback block: run them on a blocking thread, as
-        // a blocking client built inside an async task panics on drop.
-        ctx.spawn(
-            async { tokio::task::spawn_blocking(crate::community::refresh).await },
-            |view, _, ctx| {
-                view.community_changed(ctx);
-            },
-        );
+        // `gh` and an HTTP call: blocking work, kept off the shared async
+        // pool (and a blocking HTTP client may not run inside it at all).
+        let refresh = crate::bg::run_result(|| Ok(crate::community::refresh()));
+        ctx.spawn(refresh, |view, _, ctx| {
+            view.community_changed(ctx);
+        });
     }
 
     /// Star right here, like any in-app action: "Starring…", then
@@ -474,11 +472,7 @@ impl WorkspaceView {
         }
         self.community_changed(ctx);
         ctx.spawn(
-            async {
-                tokio::task::spawn_blocking(crate::community::star)
-                    .await
-                    .unwrap_or_else(|error| Err(error.to_string()))
-            },
+            crate::bg::run_result(crate::community::star),
             |view, result, ctx| {
                 if let Err(error) = result {
                     log::warn!("starring on GitHub failed, opening the repository: {error}");

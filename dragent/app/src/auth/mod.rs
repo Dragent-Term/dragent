@@ -16,7 +16,7 @@ mod manager;
 mod pkce;
 mod poll;
 mod session_store;
-mod token_exchange;
+pub(crate) mod token_exchange;
 pub(crate) use token_exchange::exchange as exchange_token;
 mod types;
 

@@ -278,6 +278,19 @@ impl SettingsView {
                 self.editor_settings.save();
                 ctx.emit(SettingsEvent::EditorSettingsChanged);
             }
+            SettingsAction::SetScrollbackLines(lines) => {
+                use crate::console::editor_settings::{
+                    SCROLLBACK_LINES_DEFAULT, SCROLLBACK_LINES_MAX, SCROLLBACK_LINES_MIN,
+                };
+                self.editor_settings.terminal.scrollback_lines = if *lines == 0 {
+                    SCROLLBACK_LINES_DEFAULT
+                } else {
+                    (*lines).clamp(SCROLLBACK_LINES_MIN, SCROLLBACK_LINES_MAX)
+                };
+                self.open_picker = None;
+                self.editor_settings.save();
+                ctx.emit(SettingsEvent::EditorSettingsChanged);
+            }
             SettingsAction::ToggleAutoSave => {
                 self.editor_settings.editor.auto_save = !self.editor_settings.editor.auto_save;
                 self.editor_settings.save();

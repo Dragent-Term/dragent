@@ -55,14 +55,10 @@ fn collect_agent_rows(
                     )
                 })
                 .unwrap_or_default();
-            let (alive, exit) = match run.state {
-                dragent_host::AgentRunState::Running => (true, None),
-                dragent_host::AgentRunState::Exited { code } => (false, Some(code)),
-            };
             rows.push(AgentRunRow {
                 run_id: run.id,
                 label: run.label,
-                state: run_state_text(alive, exit),
+                state: run_state_text(&run.state, run.memory_bytes),
                 branch,
                 home_path: path,
             });

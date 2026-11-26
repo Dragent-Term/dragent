@@ -1,0 +1,16 @@
+{
+  "_note": "Stored baseline for dragent/scripts/bench/budget.py. Keys are 'measure:method' as written by run.py/gui_app.py into measures.csv. Headless-proxy values are the quiet-machine first baseline (2026-11-22); in-app values are the branch column of the second (GUI-driven) baseline in dragent/docs/perf/baseline-2026-11-22.md. Regression compares the latest numeric row per key; absolute thresholds live in budget.toml.",
+  "measures": {
+    "cold-start:probe-startup": {"value": 14.0, "unit": "ms"},
+    "cold-start:in-app-first-frame": {"value": 740.0, "unit": "ms"},
+    "input-latency:pty-echo-proxy": {"value": 0.04, "unit": "ms"},
+    "input-latency:in-app-log": {"value": 4.944, "unit": "ms", "p95": 14.04},
+    "throughput:yes-head-2M": {"value": 131.7, "unit": "ms"},
+    "frame-times:stream-load-applied": {"value": 693.6, "unit": "lines/s"},
+    "frame-times:in-app-frames": {"value": 253.485, "unit": "ms", "max": 845.46},
+    "tab-switch:headless-proxy": {"value": 40.3, "unit": "ms"},
+    "worktree-create:git-worktree-add": {"value": 119.0, "unit": "ms"},
+    "git-status:git-status-porcelain": {"value": 58.6, "unit": "ms"},
+    "diff-open:git-diff-parse": {"value": 57.6, "unit": "ms"}
+  }
+}

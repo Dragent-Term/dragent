@@ -1315,6 +1315,22 @@ impl View for WorkspaceView {
         // Layer popups above the workspace.
         let root = self.render_menu_overlays(app, &self.theme, ui, header_mouse_state, root_inner);
         let (root, pending_document_ready) = self.render_sheet_overlays(app, &self.theme, ui, root);
+        // Dev-only perf overlay: a small corner card above everything. Zero
+        // cost when off (`render_overlay` returns None without building).
+        #[cfg(not(target_family = "wasm"))]
+        let root: Box<dyn Element> = match crate::perf_overlay::render_overlay(&self.theme, ui) {
+            Some(card) => {
+                use warpui::geometry::vector::vec2f;
+                let offset = OffsetPositioning::offset_from_parent(
+                    vec2f(-12.0, 12.0),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::TopRight,
+                    ChildAnchor::TopRight,
+                );
+                Box::new(Stack::new().with_child(root).with_positioned_overlay_child(card, offset))
+            }
+            None => root,
+        };
         let settings_active = self.settings_open || self.automations_open || self.teams_open || self.tasks_open || self.pull_requests_open;
         let close_document_confirmation_open = pending_document_ready.is_some();
         let close_workspace_confirmation_open = self.pending_close_workspace_tab.is_some();
@@ -1343,6 +1359,10 @@ impl View for WorkspaceView {
                 DispatchEventResult::PropagateToParent
             })
             .on_keydown(move |event_ctx, _app, keystroke| {
+                // Bench hook (dev only, one atomic load when off): every
+                // workspace keydown is the key side of key→frame latency.
+                #[cfg(not(target_family = "wasm"))]
+                crate::bench::note_key_received();
                 if close_workspace_confirmation_open {
                     if keystroke.key == "escape" {
                         event_ctx.dispatch_typed_action_for(

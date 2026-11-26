@@ -17,6 +17,7 @@ use super::emu_events::Screens;
 use super::emulator::{parse_osc52_write, HOOK_OSC_NUMBER};
 use super::emulator::KITTY_KEYBOARD_STACK_MAX;
 use super::emulator::MAX_SCROLLBACK;
+use super::scrollback::normalize_scrollback_lines;
 use crate::cell::Style;
 use crate::color::Color;
 use crate::emulator::FENCE_BG_SENTINEL;
@@ -53,7 +54,9 @@ pub(crate) struct Interpreter {
     /// IME composition state.
     #[serde(skip)]
     pub(crate) ime: ImeState,
-    /// Configured scrollback line limit (settings-driven; 0 = unlimited).
+    /// Configured scrollback line limit. Always bounded (1,000–200,000
+    /// lines); a legacy `0` loads as the default (see
+    /// [`normalize_scrollback_lines`]).
     pub(crate) max_scrollback: usize,
 }
 
@@ -70,6 +73,7 @@ impl Interpreter {
     }
 
     pub(crate) fn with_scrollback(rows: usize, cols: usize, max_scrollback: usize) -> Self {
+        let max_scrollback = normalize_scrollback_lines(max_scrollback);
         Self {
             max_scrollback,
             screens: Screens {

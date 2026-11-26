@@ -1,6 +1,6 @@
 [package]
 name = "dragent"
-version = "0.2.9-rc.6"
+version = "0.2.9-rc.8"
 edition = "2021"
 description = "Dragent — self-healing terminal application"
 license.workspace = true
@@ -24,6 +24,11 @@ git-graph-history = []
 # every build: the server only relays ciphertext, so a desktop built without it
 # cannot reach phones.
 e2ee = ["dep:dragent_e2ee"]
+# Experimental allocator swap (perf investigation, off by default): use
+# mimalloc as the global allocator in the desktop binary. See
+# docs/perf/mimalloc.md. Windows/Linux are unmeasured; do not turn on by
+# default until they are measured too.
+mimalloc = ["dep:mimalloc"]
 
 [[bin]]
 name = "dragent"
@@ -144,6 +149,9 @@ raw-window-handle = "0.6.2"
 image = { workspace = true, default-features = false, features = ["png", "jpeg", "webp", "ico", "gif"] }
 
 dragent_host = { workspace = true }
+# Optional: only built with `--features mimalloc` (native only; the wasm
+# viewer never sets the feature, so this stays out of browser builds).
+mimalloc = { version = "0.1", optional = true }
 dragent_acp = { workspace = true }
 dragent_computer = { workspace = true }
 dragent_e2ee = { workspace = true, optional = true }

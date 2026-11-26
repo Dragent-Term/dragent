@@ -51,6 +51,7 @@ fn what_the_person_writes_reaches_a_working_lead_at_once() {
                 pane: Some(lead.to_string()),
                 terminal: None,
                 agent: Some("claude".into()),
+                ..Default::default()
             }),
         })
         .unwrap()

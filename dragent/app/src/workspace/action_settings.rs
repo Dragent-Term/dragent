@@ -134,6 +134,15 @@ use super::view::{
 use super::view_tabs::{apply_sidebar_visibility, refresh_sidebar_projects};
 
 impl WorkspaceView {
+    /// The sign-in prompt, fresh: a sign-in that failed elsewhere (first-run
+    /// setup, Settings) must not be reported here.
+    pub(super) fn open_login_prompt(&mut self, ctx: &mut ViewContext<Self>) {
+        let auth = AuthManager::handle(ctx);
+        ctx.update_model(&auth, |auth, _| auth.clear_sign_in_problem());
+        self.login_prompt_open = true;
+        ctx.notify();
+    }
+
     pub(crate) fn handle_settings_action(
         &mut self,
         action: &WorkspaceAction,

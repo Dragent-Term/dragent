@@ -379,7 +379,7 @@ impl WorkspaceView {
             .and_then(|tab| tab.pane.read(ctx, |view, _| view.launch_shell.clone()));
         let stand_in = crate::remote_fs::resolve(&anchor);
         ctx.spawn(
-            async move {
+            crate::bg::run_result(move || {
                 let mut anchor_str = anchor_str;
                 let mut cwd_str = cwd_str;
                 let mut shell = shell;
@@ -411,7 +411,7 @@ impl WorkspaceView {
                     shell.as_deref(),
                 )?;
                 Ok::<_, String>((workspace_id, home.id, session.id, client))
-            },
+            }),
             move |view, result, ctx| {
                 match result {
                     Ok((workspace_id, home_id, session_id, client)) => {
@@ -786,7 +786,7 @@ impl WorkspaceView {
                     .update(ctx, |view, _| view.set_remote_machine(Some(machine)));
             }
             ctx.spawn(
-                async move {
+                crate::bg::run_result(move || {
                     let mut root_str = root_str;
                     let client = if let Some(remote) = &stand_in {
                         root_str = remote.path.clone();
@@ -841,8 +841,12 @@ impl WorkspaceView {
                         },
                     )? };
                     Ok::<_, String>((workspace_id, restored, client))
-                },
+                }),
                 move |view, result, ctx| {
+                    // Launch timing: this terminal is in, unless it will retry.
+                    if result.is_ok() || result.as_ref().is_err_and(|e| is_missing_folder(e)) {
+                        crate::startup_timing::terminal_settled(tab_id);
+                    }
                     match result {
                         Ok((workspace_id, restored, client)) => {
                             slot.set_client(client.clone());

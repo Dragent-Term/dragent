@@ -525,6 +525,9 @@ impl WorkspaceView {
             chip.label = format!("{} · Sleeping", chip.label);
             return chip;
         }
+        if let Some(resources) = self.pane_resources(tab.pane.pane_uuid(ctx)) {
+            chip.label = format!("{} · {}", chip.label, resources);
+        }
         let status = self.effective_pane_status(tab, ctx);
         if matches!(
             status,

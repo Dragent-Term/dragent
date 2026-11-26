@@ -70,6 +70,9 @@ impl RootView {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
         sync_native_window_chrome(ctx.windows(), ctx.window_id());
         Self::follow_organisation(ctx);
+        ctx.on_next_frame_drawn(|| {
+            crate::startup_timing::mark(crate::startup_timing::Phase::FirstFrame)
+        });
 
         let font_cache = ctx.get_singleton_model_handle::<FontCache>();
         let ui_font = ctx.update_model(&font_cache, |cache, _| prewarm::load_ui_font(cache));
@@ -99,6 +102,8 @@ impl RootView {
                 *this =
                     Self::spawn_workspace_pending(ctx, theme, ui_font, PendingWorkspace::Restore);
             });
+            // Onboarding is the usable window of a first launch.
+            Self::mark_usable_after_next_frame(ctx);
             Self {
                 state: RootState::Onboarding(flow),
                 primary: true,
@@ -244,9 +249,23 @@ impl RootView {
                     started.elapsed().as_millis()
                 );
                 root.state = RootState::Workspace(workspace);
+                if root.primary {
+                    Self::mark_usable_after_next_frame(ctx);
+                }
                 ctx.notify();
             },
         );
+    }
+
+    /// The launch window is usable once a frame showing the workspace (or
+    /// onboarding) has been drawn; startup timing records that moment.
+    fn mark_usable_after_next_frame(ctx: &mut ViewContext<Self>) {
+        if crate::startup_timing::is_settled(crate::startup_timing::Phase::Usable) {
+            return;
+        }
+        ctx.on_next_frame_drawn(|| {
+            crate::startup_timing::mark(crate::startup_timing::Phase::Usable)
+        });
     }
 
     /// Keep the window painting while session metadata and worktrees load.

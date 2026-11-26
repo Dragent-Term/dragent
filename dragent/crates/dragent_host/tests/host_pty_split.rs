@@ -25,6 +25,8 @@ fn host_bin() -> PathBuf {
 
 struct Isolated {
     _guard: std::sync::MutexGuard<'static, ()>,
+    /// Stops the services this test started, pass or fail.
+    services: dragent_host::testing::ServiceGuard,
     base: PathBuf,
     endpoint: PathBuf,
     db: PathBuf,
@@ -50,6 +52,7 @@ impl Isolated {
             std::env::set_var("DRAGENT_WORKSPACE_DB", &db);
         }
         Self {
+            services: dragent_host::testing::ServiceGuard::new(),
             _guard: guard,
             base,
             endpoint,
@@ -64,6 +67,7 @@ impl Isolated {
 
 impl Drop for Isolated {
     fn drop(&mut self) {
+        self.services.stop();
         if let Ok(client) = HostClient::connect_existing() {
             let _ = client.shutdown();
         }
@@ -1137,8 +1141,15 @@ fn stuck_subscriber_is_dropped_and_the_program_resumes() {
         .create_terminal(&ws, &home.id, None, None, 80, 24)
         .expect("terminal");
 
+    // More than the queue's limit plus every socket buffer on the way, so
+    // the program can only finish once this reader is out of its way.
+    const FLOOD: usize = 8_000_000;
     let mut first = true;
-    let result = client.stream_terminal(&ws, &sess.id, 0, |_chunk| {
+    let mut resumed = false;
+    let mut waited_out = false;
+    let mut received = 0;
+    let result = client.stream_terminal(&ws, &sess.id, 0, |chunk| {
+        received += chunk.data.len();
         if first {
             first = false;
             let sender = HostClient::connect_existing().expect("sender");
@@ -1146,19 +1157,27 @@ fn stuck_subscriber_is_dropped_and_the_program_resumes() {
                 .send_terminal_input(
                     &ws,
                     &sess.id,
-                    format!("{}\n", flood_command(&marker)).as_bytes(),
+                    format!(
+                        "head -c {FLOOD} /dev/zero | tr '\\0' x; touch \"{}\"\n",
+                        marker.display()
+                    )
+                    .as_bytes(),
                 )
                 .expect("start flood");
-            // Never read again: this subscriber is stuck.
-            std::thread::sleep(Duration::from_secs(8));
+            // Stay stuck until the program got through, not for a fixed time:
+            // a shell slower than that to start flooding would find a reader
+            // that is reading again, whose stream rightly never ends.
+            resumed = wait_for(Duration::from_secs(240), || marker.exists());
+            waited_out = !resumed;
         }
-        true
+        !waited_out
     });
-    assert!(result.is_err(), "a stuck subscriber's stream must be ended");
     assert!(
-        wait_for(Duration::from_secs(60), || marker.exists()),
+        resumed,
         "program must resume once the stuck subscriber is dropped"
     );
+    assert!(result.is_err(), "a stuck subscriber's stream must be ended");
+    assert!(received < FLOOD, "the stuck reader was sent everything");
     let _ = client.close_terminal(&ws, &sess.id);
 }
 
@@ -1306,6 +1325,104 @@ while IFS= read -r value; do printf 'REPLY-%s:%s:%s\n' "$1" "$$" "$value"; done
         assert!(fresh.read_terminal_screen(&ws, &id).unwrap().complete);
         fresh.close_terminal(&ws, &id).unwrap();
     }
+}
+
+/// Regression: the 2 s healthy-reuse shortcut must not skip a same-protocol
+/// rebuild. A healthy check for build A followed immediately by an ensure
+/// with build B must replace the host (sessions kept), not return the stale
+/// host. The refresh with A right before the update with B makes the
+/// shortcut window deterministic: without the fix the second ensure returns
+/// within the reuse window and keeps the old pid.
+#[cfg(unix)]
+#[test]
+fn healthy_shortcut_does_not_skip_build_update() {
+    let iso = Isolated::new("healthy-shortcut-update");
+    let client = iso.ensure();
+    let ws = client
+        .create_workspace(&iso.base.to_string_lossy())
+        .unwrap();
+    let home = client
+        .create_standalone_session(&ws, "shortcut-home")
+        .unwrap();
+    let script = iso.base.join("shortcut-agent.sh");
+    std::fs::write(
+        &script,
+        r#"printf 'READY-%s:%s\n' "$1" "$$"
+while IFS= read -r value; do printf 'REPLY-%s:%s:%s\n' "$1" "$$" "$value"; done
+"#,
+    )
+    .unwrap();
+    let sess = client
+        .create_terminal(
+            &ws,
+            &home.id,
+            Some(&format!("/bin/bash '{}' A", script.display())),
+            None,
+            80,
+            24,
+        )
+        .unwrap();
+    let prefix = "READY-A:";
+    let process = |text: &str| {
+        text.split(prefix).skip(1).find_map(|part| {
+            part.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse::<u32>()
+                .ok()
+        })
+    };
+    assert!(wait_for(Duration::from_secs(15), || process(&tail(
+        &client, &ws, &sess.id
+    ))
+    .is_some()));
+    let shell_pid = process(&tail(&client, &ws, &sess.id)).unwrap();
+    let old_host = client.host_info().unwrap().pid;
+    let original = host_bin();
+    let next_binary = iso.base.join("updated-dragent-host-shortcut");
+    std::fs::copy(&original, &next_binary).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&next_binary)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
+        .unwrap();
+    let identity = |path: &std::path::Path| {
+        let metadata = std::fs::metadata(path).unwrap();
+        let modified = metadata
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        format!("{}-{}", metadata.len(), modified.as_nanos())
+    };
+    assert_ne!(
+        identity(&original),
+        identity(&next_binary),
+        "successor must look like a rebuild"
+    );
+    // Refresh the healthy timestamp for build A, then immediately ask for
+    // build B: back-to-back, so the reuse window definitely still applies.
+    let _ = HostClient::ensure_host_with(&original).expect("refresh healthy for A");
+    let fresh = HostClient::ensure_host_with(&next_binary).expect("automatic host update");
+    assert_ne!(
+        fresh.host_info().unwrap().pid,
+        old_host,
+        "healthy shortcut must not skip the update to build B"
+    );
+    assert_eq!(fresh.list_terminals(&ws).unwrap().len(), 1);
+    assert!(pid_alive(shell_pid));
+    fresh
+        .send_terminal_input(&ws, &sess.id, b"input-A\n")
+        .unwrap();
+    let expected = format!("REPLY-A:{shell_pid}:input-A");
+    assert!(
+        wait_for(Duration::from_secs(15), || tail(&fresh, &ws, &sess.id)
+            .contains(&expected)),
+        "same process must receive input: {}",
+        tail(&fresh, &ws, &sess.id)
+    );
+    fresh.close_terminal(&ws, &sess.id).unwrap();
 }
 
 #[cfg(unix)]

@@ -15,6 +15,10 @@ use super::session_store::{clear_refresh_token, load_refresh_token, save_refresh
 use super::types::{AuthManagerEvent, AuthStatus, AuthUser};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// The server forgets a started sign-in after 10 minutes; a little longer, so
+/// an approval at the last moment is still collected.
+const SIGN_IN_LIMIT: Duration = Duration::from_secs(11 * 60);
+const SIGN_IN_EXPIRED: &str = "This sign-in expired before it was approved.";
 /// Fire the silent restore shortly after startup so the UI has time to render first.
 const RESTORE_DELAY: Duration = Duration::from_millis(200);
 /// Return a cached access token only if it has at least this long left before expiry.
@@ -43,12 +47,37 @@ enum RestoreKind {
     Revalidate,
 }
 
+/// What a launch's silent session restore means for the signed-in state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestoreOutcome {
+    /// The server confirmed the session.
+    SignedIn,
+    /// The server refused the token: the session is over.
+    SignOut,
+    /// No usable answer (offline, server error, bad body): keep the cached
+    /// session; the next exchange settles it.
+    KeepSession,
+}
+
+fn restore_outcome<T>(result: &Result<T, crate::api::ApiError>) -> RestoreOutcome {
+    match result {
+        Ok(_) => RestoreOutcome::SignedIn,
+        Err(crate::api::ApiError::NotAuthenticated) => RestoreOutcome::SignOut,
+        Err(_) => RestoreOutcome::KeepSession,
+    }
+}
+
 pub struct AuthManager {
     status: AuthStatus,
     pending_state: Option<String>,
     /// PKCE verifier of the pending browser sign-in; never leaves this app
     /// except to the server, to collect that sign-in.
     pending_verifier: Option<String>,
+    /// When the pending browser sign-in started.
+    pending_since: Option<Instant>,
+    /// Why the last browser sign-in didn't finish, until the person tries
+    /// again or cancels.
+    sign_in_problem: Option<String>,
     refresh_token: Option<String>,
     /// Cached short-lived access token and its expiry instant.
     access_token: Option<String>,
@@ -73,6 +102,8 @@ impl AuthManager {
             status: AuthStatus::LoggedOut,
             pending_state: None,
             pending_verifier: None,
+            pending_since: None,
+            sign_in_problem: None,
             refresh_token: None,
             access_token: None,
             access_token_expires_at: None,
@@ -154,10 +185,13 @@ impl AuthManager {
         // Local mode: signed in as the demo identity from the first frame.
         // No Keychain read, no restore, no token anywhere.
         if crate::api::is_local_mode() {
+            crate::startup_timing::skip(crate::startup_timing::Phase::Auth);
             return Self {
                 status: AuthStatus::LoggedIn(AuthUser::local_demo()),
                 pending_state: None,
                 pending_verifier: None,
+                pending_since: None,
+                sign_in_problem: None,
                 refresh_token: None,
                 access_token: None,
                 access_token_expires_at: None,
@@ -174,16 +208,21 @@ impl AuthManager {
                 status: AuthStatus::Restoring,
                 pending_state: None,
                 pending_verifier: None,
+                pending_since: None,
+                sign_in_problem: None,
                 refresh_token: Some(token),
                 access_token: None,
                 access_token_expires_at: None,
                 session_epoch: 0,
             }
         } else {
+            crate::startup_timing::skip(crate::startup_timing::Phase::Auth);
             Self {
                 status: AuthStatus::LoggedOut,
                 pending_state: None,
                 pending_verifier: None,
+                pending_since: None,
+                sign_in_problem: None,
                 refresh_token: None,
                 access_token: None,
                 access_token_expires_at: None,
@@ -201,12 +240,12 @@ impl AuthManager {
         }
         warn!("[auth] session expired — signing out");
         self.reset_session_state();
+        crate::api::API_CLIENT.clear();
         // The keychain is normally already cleared by whoever detected the
         // expiry; do it again in case we got here another way. Harmless.
         if let Err(err) = clear_refresh_token() {
             warn!("failed to clear keychain session: {err:#}");
         }
-        crate::api::API_CLIENT.clear();
         self.status = AuthStatus::LoggedOut;
         ctx.emit(AuthManagerEvent::SessionExpired);
         ctx.notify();
@@ -301,12 +340,46 @@ impl AuthManager {
         let challenge = super::pkce::challenge(&verifier);
         self.pending_state = Some(state.clone());
         self.pending_verifier = Some(verifier);
+        self.pending_since = Some(Instant::now());
+        self.sign_in_problem = None;
         self.status = AuthStatus::SigningIn;
         self.schedule_poll(ctx);
         browser_sign_in_url(&state, &challenge)
     }
 
     pub fn cancel_browser_sign_in(&mut self) {
+        self.sign_in_problem = None;
+        self.stop_browser_sign_in();
+    }
+
+    pub fn clear_sign_in_problem(&mut self) {
+        self.sign_in_problem = None;
+    }
+
+    /// Why the last browser sign-in didn't finish.
+    pub fn sign_in_problem(&self) -> Option<&str> {
+        self.sign_in_problem.as_deref()
+    }
+
+    fn fail_sign_in(&mut self, message: String, ctx: &mut ModelContext<Self>) {
+        self.sign_in_problem = Some(message.clone());
+        self.emit_failure(message, ctx);
+    }
+
+    /// Give up on a sign-in the server has forgotten; whether it did.
+    fn expire_sign_in(&mut self, now: Instant) -> bool {
+        let expired = matches!(self.status, AuthStatus::SigningIn)
+            && self
+                .pending_since
+                .is_some_and(|since| now.duration_since(since) >= SIGN_IN_LIMIT);
+        if expired {
+            self.stop_browser_sign_in();
+        }
+        expired
+    }
+
+    fn stop_browser_sign_in(&mut self) {
+        self.pending_since = None;
         if matches!(self.status, AuthStatus::SigningIn) {
             self.pending_state = None;
             self.pending_verifier = None;
@@ -363,7 +436,7 @@ impl AuthManager {
                 if callback.state != expected_state {
                     warn!("auth callback CSRF state mismatch");
                     self.pending_state = None;
-                    self.emit_failure("Sign-in link expired. Try again.".to_string(), ctx);
+                    self.fail_sign_in("Sign-in link expired. Try again.".to_string(), ctx);
                     self.status = AuthStatus::LoggedOut;
                     return;
                 }
@@ -423,34 +496,71 @@ impl AuthManager {
             let _ = tx.send(crate::api::API_CLIENT.restore_session());
         });
 
+        let epoch = self.session_epoch;
         ctx.spawn(
             Timer::after(Duration::from_millis(20)),
             move |this, _, mctx| {
-                this.poll_restore_result(rx, kind, mctx);
+                this.poll_restore_result(rx, kind, epoch, mctx);
             },
         );
+    }
+
+    /// The answer to a restore started in `epoch` still concerns this
+    /// session. The app is usable while a slow network answers: by then the
+    /// person may have signed out, or in as someone else.
+    fn restore_is_current(&self, epoch: u64) -> bool {
+        self.session_epoch == epoch && self.refresh_token.is_some()
     }
 
     fn poll_restore_result(
         &mut self,
         rx: std::sync::mpsc::Receiver<Result<crate::api::RestoredSession, crate::api::ApiError>>,
         kind: RestoreKind,
+        epoch: u64,
         ctx: &mut ModelContext<Self>,
     ) {
+        if !self.restore_is_current(epoch) {
+            log::info!("[auth] dropping the restore of a session that has ended");
+            if kind == RestoreKind::Initial {
+                crate::startup_timing::mark(crate::startup_timing::Phase::Auth);
+            }
+            return;
+        }
         match rx.try_recv() {
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 ctx.spawn(
                     Timer::after(Duration::from_millis(20)),
                     move |this, _, mctx| {
-                        this.poll_restore_result(rx, kind, mctx);
+                        this.poll_restore_result(rx, kind, epoch, mctx);
                     },
                 );
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 warn!("[auth] silent restore thread disconnected unexpectedly");
+                if kind == RestoreKind::Initial {
+                    crate::startup_timing::mark(crate::startup_timing::Phase::Auth);
+                }
                 self.assume_offline_session(ctx);
             }
-            Ok(Ok(session)) => {
+            Ok(result) => {
+                if kind == RestoreKind::Initial {
+                    crate::startup_timing::mark(crate::startup_timing::Phase::Auth);
+                }
+                self.apply_restore_result(result, kind, ctx);
+            }
+        }
+    }
+
+    /// Apply what a silent restore answered. The app never waited for it:
+    /// the window and the cached session were up from the first frame.
+    fn apply_restore_result(
+        &mut self,
+        result: Result<crate::api::RestoredSession, crate::api::ApiError>,
+        kind: RestoreKind,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        match (restore_outcome(&result), result) {
+            (RestoreOutcome::SignedIn, Ok(session)) => {
                 // The client already persisted the rotated refresh token and
                 // cached the access token — mirror its state, don't re-derive.
                 self.refresh_token = crate::api::API_CLIENT.current_refresh_token();
@@ -471,14 +581,16 @@ impl AuthManager {
             // The token is gone or the server refused it: this session is over.
             // Signing the user out here is the whole point — the old code showed
             // a logged-in UI backed by a dead session until the next restart.
-            Ok(Err(crate::api::ApiError::NotAuthenticated)) => {
+            (RestoreOutcome::SignOut, _) => {
                 self.handle_session_expired(ctx);
             }
             // Anything else (offline, 5xx, malformed body) is transient: the
             // token may well be fine. Don't punish the user for a flaky network
             // — keep the session and let the next call settle it.
-            Ok(Err(err)) => {
-                warn!("[auth] silent session restore failed (transient): {err}");
+            (_, result) => {
+                if let Err(err) = result {
+                    warn!("[auth] silent session restore failed (transient): {err}");
+                }
                 self.assume_offline_session(ctx);
             }
         }
@@ -531,10 +643,12 @@ impl AuthManager {
                 }
             });
         }
+        // The client first: a token exchange still running checks it before
+        // and after storing what it got.
+        crate::api::API_CLIENT.clear();
         if let Err(err) = clear_refresh_token() {
             warn!("failed to clear keychain session: {err:#}");
         }
-        crate::api::API_CLIENT.clear();
         self.reset_session_state();
         self.status = AuthStatus::LoggedOut;
         ctx.emit(AuthManagerEvent::LoggedOut);
@@ -547,9 +661,14 @@ impl AuthManager {
         user_id: Option<String>,
         ctx: &mut ModelContext<Self>,
     ) {
+        // Notify ApiClient of the new refresh token so it can exchange on next
+        // server call; before storing it, so that an exchange still running
+        // for the previous session can't store its own over it.
+        crate::api::API_CLIENT.set_refresh_token(refresh_token.clone());
         if let Err(err) = save_refresh_token(&refresh_token) {
             warn!("failed to persist refresh token: {err:#}");
-            self.emit_failure("Could not save session securely.".to_string(), ctx);
+            crate::api::API_CLIENT.clear();
+            self.fail_sign_in("Could not save session securely.".to_string(), ctx);
             self.status = AuthStatus::LoggedOut;
             return;
         }
@@ -557,9 +676,9 @@ impl AuthManager {
         // A new session starts here — retire any timers armed by the previous one.
         self.session_epoch = self.session_epoch.wrapping_add(1);
         self.pending_state = None;
-        self.refresh_token = Some(refresh_token.clone());
-        // Notify ApiClient of the new refresh token so it can exchange on next server call
-        crate::api::API_CLIENT.set_refresh_token(refresh_token.clone());
+        self.pending_since = None;
+        self.sign_in_problem = None;
+        self.refresh_token = Some(refresh_token);
         // Silently exchange right away so we get user_id + a cached access token
         // without waiting for the first Fix press.
         ctx.spawn(Timer::after(Duration::ZERO), |this, _, mctx| {
@@ -575,9 +694,23 @@ impl AuthManager {
         ctx.notify();
     }
 
+    /// Whether `attempt` is the sign-in still being waited for.
+    fn waiting_for(&self, attempt: &str) -> bool {
+        matches!(self.status, AuthStatus::SigningIn)
+            && self.pending_state.as_deref() == Some(attempt)
+    }
+
     fn schedule_poll(&mut self, ctx: &mut ModelContext<Self>) {
-        ctx.spawn(Timer::after(POLL_INTERVAL), |auth, _, ctx| {
-            if !matches!(auth.status, AuthStatus::SigningIn) {
+        // Each attempt polls for itself: one replaced by "Try again" stops.
+        let Some(attempt) = self.pending_state.clone() else {
+            return;
+        };
+        ctx.spawn(Timer::after(POLL_INTERVAL), move |auth, _, ctx| {
+            if !auth.waiting_for(&attempt) {
+                return;
+            }
+            if auth.expire_sign_in(Instant::now()) {
+                auth.fail_sign_in(SIGN_IN_EXPIRED.to_string(), ctx);
                 return;
             }
             let (Some(state), Some(verifier)) =
@@ -594,7 +727,7 @@ impl AuthManager {
             crate::bg::detach(move || {
                 let _ = tx.send(try_poll_pending_session(&state, &verifier));
             });
-            auth.await_poll_result(rx, ctx);
+            auth.await_poll_result(attempt, rx, ctx);
         });
     }
 
@@ -602,19 +735,22 @@ impl AuthManager {
     /// timer and `try_recv` until the worker thread reports back.
     fn await_poll_result(
         &mut self,
+        attempt: String,
         rx: std::sync::mpsc::Receiver<PollResult>,
         ctx: &mut ModelContext<Self>,
     ) {
         ctx.spawn(
             Timer::after(Duration::from_millis(100)),
             move |auth, _, ctx| {
-                if !matches!(auth.status, AuthStatus::SigningIn) {
+                if !auth.waiting_for(&attempt) {
                     return;
                 }
                 match rx.try_recv() {
                     Ok(PollResult::Ready(callback)) => auth.handle_auth_callback(callback, ctx),
                     Ok(PollResult::Pending) => auth.schedule_poll(ctx),
-                    Err(std::sync::mpsc::TryRecvError::Empty) => auth.await_poll_result(rx, ctx),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        auth.await_poll_result(attempt, rx, ctx)
+                    }
                     // Worker died (should not happen) — resume the normal cadence.
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => auth.schedule_poll(ctx),
                 }
@@ -634,7 +770,10 @@ impl AuthManager {
                 Ok(Ok(callback)) => auth.handle_auth_callback(callback, ctx),
                 Ok(Err(message)) => {
                     // Polling may still deliver this sign-in once approved.
-                    auth.emit_failure(message, ctx);
+                    // Cancelled or already signed in: nothing to say.
+                    if matches!(auth.status, AuthStatus::SigningIn) {
+                        auth.fail_sign_in(message, ctx);
+                    }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => auth.await_redemption(rx, ctx),
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
@@ -692,4 +831,127 @@ pub fn handle_pasted_auth(ctx: &mut warpui::AppContext, raw: &str) {
     ctx.update_model(&handle, |auth, ctx| {
         auth.handle_completion(completion, CompletionSource::ManualPaste, ctx)
     });
+}
+
+#[cfg(test)]
+mod restore_order_tests {
+    use super::*;
+    use crate::api::ApiError;
+
+    fn manager(status: AuthStatus) -> AuthManager {
+        AuthManager {
+            status,
+            pending_state: None,
+            pending_verifier: None,
+            pending_since: None,
+            sign_in_problem: None,
+            refresh_token: Some("stored".into()),
+            access_token: None,
+            access_token_expires_at: None,
+            session_epoch: 0,
+        }
+    }
+
+    #[test]
+    fn a_stored_session_counts_as_signed_in_before_the_refresh_answers() {
+        // Launch never waits for the network: until the refresh answers, the
+        // cached session is the signed-in state the window shows.
+        assert!(manager(AuthStatus::Restoring).is_logged_in());
+    }
+
+    #[test]
+    fn an_answer_for_an_ended_session_is_dropped() {
+        let mut auth = manager(AuthStatus::Restoring);
+        let epoch = auth.session_epoch;
+        assert!(auth.restore_is_current(epoch));
+        // Signed out while the network was slow…
+        auth.reset_session_state();
+        assert!(!auth.restore_is_current(epoch));
+        // …and in again as someone else.
+        auth.refresh_token = Some("another".into());
+        assert!(!auth.restore_is_current(epoch));
+        assert!(auth.restore_is_current(auth.session_epoch));
+    }
+
+    #[test]
+    fn a_network_failure_keeps_the_session() {
+        let offline: Result<(), ApiError> = Err(ApiError::Network("connect timed out".into()));
+        assert_eq!(restore_outcome(&offline), RestoreOutcome::KeepSession);
+        let server: Result<(), ApiError> = Err(ApiError::Server {
+            status: 503,
+            body: String::new(),
+        });
+        assert_eq!(restore_outcome(&server), RestoreOutcome::KeepSession);
+        let parse: Result<(), ApiError> = Err(ApiError::Parse("eof".into()));
+        assert_eq!(restore_outcome(&parse), RestoreOutcome::KeepSession);
+    }
+
+    #[test]
+    fn a_refused_token_signs_out_when_the_refresh_finally_answers() {
+        let refused: Result<(), ApiError> = Err(ApiError::NotAuthenticated);
+        assert_eq!(restore_outcome(&refused), RestoreOutcome::SignOut);
+        assert_eq!(
+            restore_outcome(&Ok::<(), ApiError>(())),
+            RestoreOutcome::SignedIn
+        );
+    }
+}
+
+#[cfg(test)]
+mod sign_in_tests {
+    use super::*;
+    use warpui::App;
+
+    fn waiting(app: &mut App) -> warpui::ModelHandle<AuthManager> {
+        let auth = app.add_model(AuthManager::preview);
+        auth.update(app, |auth, _| {
+            auth.status = AuthStatus::SigningIn;
+            auth.pending_state = Some("first".into());
+            auth.pending_verifier = Some("verifier".into());
+            auth.pending_since = Some(Instant::now());
+        });
+        auth
+    }
+
+    #[test]
+    fn a_sign_in_waits_for_the_limit_then_expires() {
+        App::test((), |mut app| async move {
+            let auth = waiting(&mut app);
+            auth.update(&mut app, |auth, _| {
+                let start = auth.pending_since.unwrap();
+                assert!(!auth.expire_sign_in(start + SIGN_IN_LIMIT - Duration::from_secs(1)));
+                assert!(auth.pending_sign_in_code().is_some());
+                assert!(auth.expire_sign_in(start + SIGN_IN_LIMIT));
+                assert!(auth.pending_sign_in_code().is_none());
+                assert!(matches!(auth.status, AuthStatus::LoggedOut));
+            });
+        });
+    }
+
+    #[test]
+    fn a_replaced_attempt_is_no_longer_waited_for() {
+        App::test((), |mut app| async move {
+            let auth = waiting(&mut app);
+            auth.update(&mut app, |auth, _| {
+                assert!(auth.waiting_for("first"));
+                auth.pending_state = Some("second".into());
+                assert!(!auth.waiting_for("first"));
+                assert!(auth.waiting_for("second"));
+            });
+        });
+    }
+
+    #[test]
+    fn cancelling_clears_the_problem() {
+        App::test((), |mut app| async move {
+            let auth = waiting(&mut app);
+            auth.update(&mut app, |auth, ctx| {
+                auth.fail_sign_in(SIGN_IN_EXPIRED.to_string(), ctx);
+                assert_eq!(auth.sign_in_problem(), Some(SIGN_IN_EXPIRED));
+                auth.cancel_browser_sign_in();
+                assert_eq!(auth.sign_in_problem(), None);
+                assert!(matches!(auth.status, AuthStatus::LoggedOut));
+            });
+        });
+    }
 }

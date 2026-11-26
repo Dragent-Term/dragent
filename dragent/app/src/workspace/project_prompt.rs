@@ -238,7 +238,9 @@ pub(crate) fn render(props: ProjectPromptProps<'_>) -> Box<dyn Element> {
                 .finish(),
         );
     }
-    body = body.with_child(community_line(theme, ui, id, props.mouse_states));
+    if crate::community::state().offers_star() {
+        body = body.with_child(community_line(theme, ui, id, props.mouse_states));
+    }
 
     Align::new(
         ConstrainedBox::new(body.finish())
@@ -410,7 +412,7 @@ pub(crate) fn prompt_box(
 
     let submit = Hoverable::new(mouse_state(states, "prompt_submit"), move |state| {
         let accent = theme.accent;
-        let bg = if prompt_empty && agent == PromptAgent::Dragent && !busy {
+        let bg = if prompt_empty && !busy {
             warpui::color::ColorU::new(accent.r, accent.g, accent.b, 110)
         } else if state.is_hovered() {
             warpui::color::ColorU::new(
@@ -471,9 +473,13 @@ pub(crate) fn prompt_box(
             .with_padding_bottom(7.5)
             .finish()
     })
-    .with_cursor(Cursor::PointingHand)
+    .with_cursor(if prompt_empty || busy {
+        Cursor::Arrow
+    } else {
+        Cursor::PointingHand
+    })
     .on_click(move |event_ctx, _app, _pos| {
-        if (!prompt_empty || agent != PromptAgent::Dragent) && !busy {
+        if !prompt_empty && !busy {
             event_ctx.dispatch_typed_action_for(id, WorkspaceAction::SubmitPrompt);
         }
     })
@@ -624,8 +630,8 @@ pub(crate) fn prompt_box(
         .with_padding_top(10.0)
         .with_padding_bottom(12.0)
         .finish();
-    // While a team starts, a light laps the box's edge.
-    let content: Box<dyn Element> = if busy && team_on {
+    // While the work starts, with a team or not, a light laps the box's edge.
+    let content: Box<dyn Element> = if busy {
         Box::new(super::workspace_activity::EdgeLap::new(
             content,
             theme.accent,
@@ -2370,6 +2376,7 @@ pub(crate) fn render_embedded_terminal_modal(
     error: Option<&str>,
     retry_elevated: bool,
     show_verification: bool,
+    sign_in: Option<PromptAgent>,
 ) -> Box<dyn Element> {
     let heading = Flex::column()
         .with_cross_axis_alignment(CrossAxisAlignment::Start)
@@ -2384,18 +2391,33 @@ pub(crate) fn render_embedded_terminal_modal(
                 .with_color(theme.sub_text())
                 .finish(),
         );
+    let heading: Box<dyn Element> = match sign_in {
+        Some(agent) => Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(14.0)
+            .with_child(agent_image(agent, theme, 30.0, 1.0))
+            .with_child(warpui::elements::Expanded::new(1.0, heading.finish()).finish())
+            .finish(),
+        None => heading.finish(),
+    };
 
     let mut body = Flex::column()
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
         .with_spacing(14.0)
-        .with_child(Box::new(heading));
+        .with_child(heading);
     if let Some(terminal) = terminal {
         body = body.with_child(
-            Container::new(ConstrainedBox::new(terminal).with_height(300.0).finish())
-                .with_background_color(theme.solid_bg())
-                .with_border(Border::all(1.0).with_border_color(theme.outline()))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.0)))
+            Container::new(
+                warpui::elements::SavePosition::new(
+                    ConstrainedBox::new(terminal).with_height(300.0).finish(),
+                    "popup_terminal_body",
+                )
                 .finish(),
+            )
+            .with_background_color(theme.solid_bg())
+            .with_border(Border::all(1.0).with_border_color(theme.outline()))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.0)))
+            .finish(),
         );
     } else if error.is_none() {
         body = body.with_child(
@@ -2457,7 +2479,7 @@ pub(crate) fn render_embedded_terminal_modal(
         .with_child(control(
             "prompt_agent_install_close",
             AppIcon::XClose,
-            "Close",
+            if sign_in.is_some() { "Cancel" } else { "Close" },
             WorkspaceAction::ClosePromptAgentInstall,
             140.0,
         ));
@@ -2491,12 +2513,17 @@ pub(crate) fn render_embedded_terminal_modal(
     .with_corner_radius(CornerRadius::with_all(Radius::Pixels(14.0)))
     .with_uniform_padding(20.0)
     .finish();
-    // A click in the sheet stays in the sheet. The terminal focuses itself on
-    // a click and lets it go on; past the sheet it reached the workspace's
-    // "click on nothing" handler, which took the keyboard back from the
-    // terminal, so typing and pasting went nowhere.
+    // A click in the sheet stays in the sheet: past it, the workspace's "click
+    // on nothing" handler took the keyboard from the terminal. Any click also
+    // gives the terminal the keyboard (`always_handle`: its output takes clicks
+    // for selecting text without focusing), as a click in a pane does.
     EventHandler::new(sheet)
-        .on_left_mouse_down(|_, _, _| DispatchEventResult::StopPropagation)
+        .with_always_handle()
+        .on_left_mouse_down(move |event_ctx, _, _| {
+            event_ctx
+                .dispatch_typed_action_for(workspace_view_id, WorkspaceAction::FocusPopupTerminal);
+            DispatchEventResult::StopPropagation
+        })
         .finish()
 }
 

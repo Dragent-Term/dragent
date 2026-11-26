@@ -162,7 +162,14 @@ pub fn start() {
         std::thread::sleep(Duration::from_secs(90));
         // Read each time: the organisation can change while the app runs.
         let root = dragent_paths::organisation_dir().join("worktrees");
-        let swept = sweep(&root, SystemTime::now(), in_use);
+        let mut swept = sweep(&root, SystemTime::now(), in_use);
+        // Build folders kept outside their worktree: the idle ones, and
+        // those whose worktree is gone.
+        let org = dragent_paths::organisation_dir();
+        let cache = sweep(&org.join(dragent_host::build_cache::BUILD_CACHE_DIRNAME), SystemTime::now(), in_use);
+        let (folders, bytes) = dragent_host::build_cache::remove_orphans(&org);
+        swept.folders += cache.folders + folders;
+        swept.bytes += cache.bytes + bytes;
         if swept.folders > 0 {
             log::info!("[sweep] freed {} MB from {} idle build folders", swept.bytes / (1024 * 1024), swept.folders);
         }

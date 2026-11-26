@@ -439,7 +439,14 @@ pub fn force_remove_worktree(checkout: &Path, worktree: &Path) -> Result<(), Str
             return Err(detail);
         }
     }
-    crate::bg::detach(move || delete_moved_worktrees(&aside));
+    let removed = worktree.to_path_buf();
+    crate::bg::detach(move || {
+        delete_moved_worktrees(&aside);
+        let org = dragent_paths::organisation_dir();
+        if let Err(error) = dragent_host::build_cache::remove_for_worktree(&org, &removed) {
+            log::warn!("[worktree] build folder of {}: {error}", removed.display());
+        }
+    });
     Ok(())
 }
 

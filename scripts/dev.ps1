@@ -122,6 +122,9 @@ while ($i -lt $args.Count) {
   } elseif ($ParsingOptions -and ($a -match '^(-{1,2}|/)release-?profile$')) {
     $ReleaseProfile = $true
     $i++
+  } elseif ($ParsingOptions -and ($a -match '^(account|server|fresh|release-?profile)$')) {
+    # A forgotten "-" would otherwise start local mode without a word.
+    Fail "scripts/dev.ps1: did you mean -${a}?"
   } elseif ($ParsingOptions -and ($a -match '^(-{1,2}|/).+')) {
     # Not a dev.ps1 flag: the app's own flags start here. (PowerShell consumes
     # a bare `--` separator for script invocations, so this branch is what

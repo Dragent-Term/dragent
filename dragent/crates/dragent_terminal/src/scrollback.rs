@@ -112,6 +112,25 @@ impl<'a> Dimension<'a, RowSummary> for ByteOffset {
 // Scrollback
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Mandatory scrollback bounds, in lines. There is no unlimited mode: an
+/// unbounded process could otherwise grow the tree (and terminal memory)
+/// without bound. A stored/configured `0` (the legacy unlimited marker)
+/// loads as [`SCROLLBACK_DEFAULT_LINES`].
+pub const SCROLLBACK_MIN_LINES: usize = 1_000;
+pub const SCROLLBACK_MAX_LINES: usize = 200_000;
+pub const SCROLLBACK_DEFAULT_LINES: usize = 10_000;
+
+/// Normalize a stored or configured scrollback limit: legacy `0` becomes
+/// the default, anything else clamps to
+/// `[SCROLLBACK_MIN_LINES, SCROLLBACK_MAX_LINES]`.
+pub fn normalize_scrollback_lines(raw: usize) -> usize {
+    if raw == 0 {
+        SCROLLBACK_DEFAULT_LINES
+    } else {
+        raw.clamp(SCROLLBACK_MIN_LINES, SCROLLBACK_MAX_LINES)
+    }
+}
+
 /// A B+ tree-backed terminal scrollback buffer.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Scrollback {
@@ -146,12 +165,19 @@ impl Scrollback {
             tree: SumTree::new(()),
             version: 0,
             rewrite_version: 0,
-            max_rows,
+            max_rows: normalize_scrollback_lines(max_rows),
             evicted: 0,
         }
     }
 
     // ── Capacity ─────────────────────────────────────────────────────────────
+
+    /// Effective line cap. Stored checkpoints from before the mandatory cap
+    /// may still carry `max_rows == 0` (legacy unlimited); they behave as
+    /// the default rather than growing without bound.
+    pub fn capacity(&self) -> usize {
+        normalize_scrollback_lines(self.max_rows)
+    }
 
     pub fn len(&self) -> usize {
         self.tree.summary().row_count
@@ -179,27 +205,22 @@ impl Scrollback {
 
     pub fn push(&mut self, row: Row) {
         self.tree.push(row, ());
-        // A zero capacity is the documented unlimited mode. In that mode the
-        // tree is append-only and no historical rows are evicted.
-        if self.max_rows == 0 {
-            self.version += 1;
-            return;
-        }
+        let cap = self.capacity();
         // Evict in amortized batches. Trimming exactly one row per push (the old
         // behavior) rebuilt the B+ tree spine on *every* line once the buffer was
         // full, so high-throughput output like `yes` (a newline every 2 bytes) was
         // O(rebuild) per line — ~15ms per 8 KiB feed, which pinned the shared
         // session lock and froze the UI. Instead we let the buffer overshoot by
-        // `max_rows / 8` and then drop the whole excess in a single rebuild, so a
+        // `cap / 8` and then drop the whole excess in a single rebuild, so a
         // rebuild happens roughly once per `slack` lines rather than every line.
-        // `len()` is therefore a soft bound in `[max_rows, max_rows + slack]`;
+        // `len()` is therefore a soft bound in `[cap, cap + slack]`;
         // every consumer reads the live count, so the transient overshoot (a few
         // percent extra rows, trivial memory) is harmless. The proportional slack
-        // also keeps small buffers exact: `max_rows/8 == 0` there, reproducing the
+        // also keeps small buffers exact: `cap/8 == 0` there, reproducing the
         // original one-row-per-push eviction.
-        let slack = self.max_rows / 8;
-        if self.len() > self.max_rows + slack {
-            let excess = self.len() - self.max_rows;
+        let slack = cap / 8;
+        if self.len() > cap + slack {
+            let excess = self.len() - cap;
             let new_tree = {
                 let mut cursor = self.tree.cursor::<RowCount>(());
                 cursor.seek(&RowCount(excess), Bias::Right);
@@ -213,9 +234,10 @@ impl Scrollback {
 
     pub fn replace_all(&mut self, rows: impl IntoIterator<Item = Row>) {
         self.rewrite_version += 1;
+        let cap = self.capacity();
         let mut all: Vec<Row> = rows.into_iter().collect();
-        if self.max_rows > 0 && all.len() > self.max_rows {
-            let excess = all.len() - self.max_rows;
+        if all.len() > cap {
+            let excess = all.len() - cap;
             self.evicted += excess;
             self.tree = SumTree::from_iter(all.drain(excess..), ());
         } else {
@@ -412,42 +434,94 @@ mod tests {
     }
 
     #[test]
-    fn eviction_at_capacity() {
-        let mut sb = Scrollback::new(3);
-        for i in 0..5usize {
+    fn normalize_scrollback_bounds() {
+        // Legacy unlimited marker loads as the default.
+        assert_eq!(normalize_scrollback_lines(0), SCROLLBACK_DEFAULT_LINES);
+        assert_eq!(normalize_scrollback_lines(10_000), 10_000);
+        // Below the minimum clamps up; above the maximum clamps down.
+        assert_eq!(normalize_scrollback_lines(1), SCROLLBACK_MIN_LINES);
+        assert_eq!(normalize_scrollback_lines(999), SCROLLBACK_MIN_LINES);
+        assert_eq!(
+            normalize_scrollback_lines(SCROLLBACK_MIN_LINES),
+            SCROLLBACK_MIN_LINES
+        );
+        assert_eq!(
+            normalize_scrollback_lines(SCROLLBACK_MAX_LINES),
+            SCROLLBACK_MAX_LINES
+        );
+        assert_eq!(normalize_scrollback_lines(200_001), SCROLLBACK_MAX_LINES);
+        assert_eq!(normalize_scrollback_lines(usize::MAX), SCROLLBACK_MAX_LINES);
+        // The constructor normalizes too: no unlimited, no tiny buffers.
+        assert_eq!(Scrollback::new(0).capacity(), SCROLLBACK_DEFAULT_LINES);
+        assert_eq!(Scrollback::new(10).capacity(), SCROLLBACK_MIN_LINES);
+        assert_eq!(Scrollback::new(999_999).capacity(), SCROLLBACK_MAX_LINES);
+    }
+
+    #[test]
+    fn zero_scrollback_is_capped_not_unlimited() {
+        // The legacy `0 = unlimited` marker must behave as the default cap:
+        // pushing past it evicts instead of growing without bound.
+        let mut sb = Scrollback::new(0);
+        let cap = SCROLLBACK_DEFAULT_LINES;
+        for i in 0..(cap + 2_000) {
             sb.push(row_with_char(
-                char::from_u32('a' as u32 + i as u32).unwrap(),
+                char::from_u32('a' as u32 + (i % 26) as u32).unwrap(),
+                4,
+            ));
+        }
+        assert!(
+            sb.len() <= cap + cap / 8,
+            "len {} over soft bound",
+            sb.len()
+        );
+        assert!(sb.evicted > 0, "legacy 0 must evict, not grow forever");
+        assert_eq!(sb.len() + sb.evicted, cap + 2_000);
+    }
+
+    #[test]
+    fn eviction_at_capacity() {
+        // Tiny caps clamp up to the minimum, so exercise eviction at minimum
+        // scale. Batched eviction keeps `len + evicted == pushed` exactly.
+        let cap = SCROLLBACK_MIN_LINES;
+        let pushed = cap + 200;
+        let mut sb = Scrollback::new(3);
+        assert_eq!(sb.capacity(), cap);
+        for i in 0..pushed {
+            sb.push(row_with_char(
+                char::from_u32('a' as u32 + (i % 26) as u32).unwrap(),
                 10,
             ));
         }
-        assert_eq!(sb.len(), 3);
-        assert_eq!(sb.evicted, 2);
+        assert_eq!(sb.len() + sb.evicted, pushed);
+        assert!(sb.evicted > 0);
+        assert!(sb.len() <= cap + cap / 8);
+        let expected_first = char::from_u32('a' as u32 + (sb.evicted % 26) as u32).unwrap();
         let first = sb.get_cloned(0).unwrap();
-        assert_eq!(first.cells[0].ch, 'c');
+        assert_eq!(first.cells[0].ch, expected_first);
     }
 
     #[test]
     fn eviction_is_batched_but_bounded() {
-        // With a non-zero slack (max_rows/8), the buffer is allowed to overshoot
-        // max_rows transiently, then trims the whole excess at once. It must never
-        // exceed max_rows + slack, and eviction must still drop the oldest rows.
-        let max_rows = 8usize;
-        let slack = max_rows / 8; // == 1
-        let mut sb = Scrollback::new(max_rows);
-        for i in 0..64usize {
+        // With a non-zero slack (cap/8), the buffer is allowed to overshoot
+        // the cap transiently, then trims the whole excess at once. It must never
+        // exceed cap + slack, and eviction must still drop the oldest rows.
+        let cap = SCROLLBACK_MIN_LINES;
+        let slack = cap / 8;
+        let mut sb = Scrollback::new(cap);
+        for i in 0..(cap + 2_000) {
             sb.push(row_with_char(
                 char::from_u32('0' as u32 + (i % 10) as u32).unwrap(),
                 4,
             ));
             assert!(
-                sb.len() <= max_rows + slack,
+                sb.len() <= cap + slack,
                 "len {} exceeded soft bound {}",
                 sb.len(),
-                max_rows + slack,
+                cap + slack,
             );
         }
         // Oldest surviving row is consistent with the number evicted.
-        assert_eq!(sb.len() + sb.evicted, 64);
+        assert_eq!(sb.len() + sb.evicted, cap + 2_000);
         let expected_first = char::from_u32('0' as u32 + (sb.evicted % 10) as u32).unwrap();
         assert_eq!(sb.get_cloned(0).unwrap().cells[0].ch, expected_first);
     }
@@ -484,10 +558,14 @@ mod tests {
     #[test]
     fn replace_all_trims_to_max() {
         let mut sb = Scrollback::new(3);
-        let rows: Vec<Row> = (0..7).map(|_| blank_row(10)).collect();
+        // Tiny caps clamp to the minimum.
+        assert_eq!(sb.capacity(), SCROLLBACK_MIN_LINES);
+        let rows: Vec<Row> = (0..SCROLLBACK_MIN_LINES + 50)
+            .map(|_| blank_row(10))
+            .collect();
         sb.replace_all(rows);
-        assert_eq!(sb.len(), 3);
-        assert_eq!(sb.evicted, 4);
+        assert_eq!(sb.len(), SCROLLBACK_MIN_LINES);
+        assert_eq!(sb.evicted, 50);
     }
 
     #[test]

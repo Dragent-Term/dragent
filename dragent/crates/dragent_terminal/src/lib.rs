@@ -69,7 +69,10 @@ pub use shell_integration::SemanticMarker;
 pub use kitty_graphics::{KittyAction, KittyCommand, KittyFormat, KittyImage, KittyImageStore};
 
 // Scrollback B+ tree types.
-pub use scrollback::{ByteOffset, RowCount, RowSummary, Scrollback, VisibleRowCount};
+pub use scrollback::{
+    ByteOffset, RowCount, RowSummary, Scrollback, VisibleRowCount, normalize_scrollback_lines,
+    SCROLLBACK_DEFAULT_LINES, SCROLLBACK_MAX_LINES, SCROLLBACK_MIN_LINES,
+};
 
 // Terminal mode bitset.
 pub use term_mode::TermMode;

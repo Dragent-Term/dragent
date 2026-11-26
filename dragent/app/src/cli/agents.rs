@@ -19,6 +19,10 @@ pub(super) enum State {
     Failed,
     /// Alive, but it doesn't report what it's doing.
     Running,
+    /// Hasn't started: it waits for memory.
+    WaitingForMemory,
+    /// Stopped for holding too much memory.
+    Paused,
     /// Dragent's terminal service isn't reachable to check.
     Unknown,
 }
@@ -31,6 +35,8 @@ impl State {
             State::Waiting => "waiting",
             State::Failed => "failed",
             State::Running => "running",
+            State::WaitingForMemory => "waiting_for_memory",
+            State::Paused => "paused",
             State::Unknown => "unknown",
         }
     }
@@ -42,6 +48,8 @@ impl State {
             "waiting" => "waiting for you",
             "failed" => "stopped with an error",
             "running" => "running",
+            "waiting_for_memory" => "waiting for memory",
+            "paused" => "paused for its memory",
             _ => "unknown",
         }
     }
@@ -87,6 +95,10 @@ fn running_with(client: Option<&HostClient>) -> Vec<Running> {
     let Ok(entries) = std::fs::read_dir(dragent_paths::organisation_dir().join("agent-sessions")) else {
         return Vec::new();
     };
+    let paused: Vec<String> = client
+        .and_then(|client| client.agent_resources().ok())
+        .map(|found| found.paused.into_iter().map(|agent| agent.pane).collect())
+        .unwrap_or_default();
     let mut agents: Vec<Running> = entries
         .flatten()
         .filter_map(|entry| entry.file_name().to_str()?.parse::<uuid::Uuid>().ok())
@@ -103,6 +115,8 @@ fn running_with(client: Option<&HostClient>) -> Vec<Running> {
             }
             let activity = agent_sessions::load_activity(session.pane_uuid);
             let state = match (&activity, alive) {
+                _ if agent_sessions::is_waiting(session.pane_uuid) => State::WaitingForMemory,
+                _ if paused.contains(&session.pane_uuid.to_string()) => State::Paused,
                 (_, None) => State::Unknown,
                 (Some(activity), _) => State::from_activity(&activity.event),
                 (None, _) => State::Running,
@@ -171,9 +185,11 @@ pub(super) fn run(args: &[String]) -> Result<String, String> {
         "read" => read(&flags),
         "send" => send(&flags),
         "stop" => stop(&flags),
+        "resume" => resume(&flags),
+        "start-anyway" => start_anyway(&flags),
         "start" | "new" => start(&flags),
         other => Err(format!(
-            "unknown agents command “{other}” (use accounts, list, running, read, send, stop or start)"
+            "unknown agents command “{other}” (use accounts, list, running, read, send, stop, resume, start-anyway or start)"
         )),
     }
 }
@@ -294,6 +310,12 @@ fn send(flags: &Flags) -> Result<String, String> {
     }
     let client = service().ok_or("Dragent's terminal service isn't running")?;
     let session = &agent.session;
+    if agent_sessions::is_waiting(session.pane_uuid) {
+        return Err(format!(
+            "{id} hasn't started: it waits for memory. Send it later, or `dragent agents start-anyway {id}` first.",
+            id = agent.id()
+        ));
+    }
     type_into_session(&client, session, &message, !flags.on("no-enter"))?;
     if flags.json {
         return Ok(pretty(serde_json::json!({ "id": agent.id(), "sent": true })));
@@ -355,6 +377,39 @@ fn stop(flags: &Flags) -> Result<String, String> {
         return Ok(agent.id());
     }
     Ok(format!("Stopped {} ({})", agent.session.provider, agent.id()))
+}
+
+/// `dragent agents resume`: let an agent paused for its memory run again.
+fn resume(flags: &Flags) -> Result<String, String> {
+    let agents = running_now();
+    let agent = find(&agents, reference(flags)?)?;
+    let client = service().ok_or("Dragent's terminal service isn't running")?;
+    client.resume_agent(&agent.session.pane_uuid.to_string())?;
+    if flags.json {
+        return Ok(pretty(serde_json::json!({ "id": agent.id(), "resumed": true })));
+    }
+    if flags.quiet {
+        return Ok(agent.id());
+    }
+    Ok(format!("Resumed {} ({})", agent.session.provider, agent.id()))
+}
+
+/// `dragent agents start-anyway`: start one that waits for memory now.
+fn start_anyway(flags: &Flags) -> Result<String, String> {
+    let agents = running_now();
+    let agent = find(&agents, reference(flags)?)?;
+    if !agent_sessions::is_waiting(agent.session.pane_uuid) {
+        return Err(format!("{} isn't waiting for memory.", agent.id()));
+    }
+    let client = service().ok_or("Dragent's terminal service isn't running")?;
+    client.start_anyway(&agent.session.pane_uuid.to_string())?;
+    if flags.json {
+        return Ok(pretty(serde_json::json!({ "id": agent.id(), "started": true })));
+    }
+    if flags.quiet {
+        return Ok(agent.id());
+    }
+    Ok(format!("Starting {} ({})", agent.session.provider, agent.id()))
 }
 
 /// Most of an agent's screen a handover carries.

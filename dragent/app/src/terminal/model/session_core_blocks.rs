@@ -25,7 +25,13 @@ impl super::session_core_types::TerminalSessionCore {
         let cols = size.cols as usize;
         Self {
             pending_effects: Vec::new(),
-            session: Emulator::new(rows, cols),
+            session: Emulator::with_scrollback(
+                rows,
+                cols,
+                crate::console::editor_settings::EditorSettings::global()
+                    .terminal
+                    .clamped_scrollback_lines(),
+            ),
             alt_ui: AltScreenState::default(),
             blocks: BlockList::new(),
             input_mode: InputMode::Idle,

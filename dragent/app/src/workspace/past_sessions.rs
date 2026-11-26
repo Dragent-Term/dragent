@@ -204,6 +204,14 @@ impl WorkspaceView {
             _ => None,
         };
         let new_tab_id = new_tab.id;
+        // A team seat this conversation held follows it to the new pane at
+        // once, so the team's news reaches it before it runs a command.
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let pane = new_tab.pane.pane_uuid(ctx).to_string();
+            let (provider, conversation) = (session.provider.clone(), session.id.clone());
+            crate::bg::detach(move || dragent_host::agent_sessions::announce_resume(&pane, None, &provider, &conversation));
+        }
         self.tabs.push(new_tab);
         self.active_tab_id = new_tab_id;
         if let Some(terminal) = terminal {

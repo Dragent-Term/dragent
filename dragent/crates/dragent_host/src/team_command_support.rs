@@ -1,6 +1,8 @@
 //! Environment and validation for the headless coordination CLI.
 use std::path::PathBuf;
-const SWITCHES: [&str; 14] = [
+const SWITCHES: [&str; 16] = [
+    "already-applied",
+    "take",
     "json",
     "text",
     "quiet",

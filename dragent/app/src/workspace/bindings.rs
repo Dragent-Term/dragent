@@ -104,6 +104,18 @@ pub fn register(ctx: &mut AppContext) {
         FixedBinding::new("cmdorctrl-v", TerminalAction::Paste, terminal_context),
     ]);
 
+    // Dev-only perf overlay toggle (native only): never registered in release
+    // or wasm builds, so it can't fire for users. `cmdorctrl-shift-O` is free
+    // (workflow palette is cmdorctrl-shift-P).
+    #[cfg(not(target_family="wasm"))]
+    if dragent_paths::is_dev() || cfg!(debug_assertions) {
+        ctx.register_fixed_bindings([FixedBinding::new(
+            "cmdorctrl-shift-O",
+            WorkspaceAction::TogglePerfOverlay,
+            context.clone(),
+        )]);
+    }
+
     apply_shortcut_overrides(ctx);
 }
 

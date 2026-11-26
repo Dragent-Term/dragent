@@ -127,6 +127,8 @@ fn runs_prepare_their_workspaces_and_record_the_outcome() {
     // package's own binary) for the temporary home.
     let exe = Path::new(env!("CARGO_BIN_EXE_dragent"));
     std::env::set_var("DRAGENT_HOST_EXE", exe);
+    // Stops the services this test starts, pass or fail.
+    let _services = dragent_host::testing::ServiceGuard::new();
     let host = (0..6)
         .find_map(|_| dragent_host::HostClient::ensure_host_with(exe).ok())
         .expect("host service starts");

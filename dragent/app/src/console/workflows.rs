@@ -180,10 +180,31 @@ impl WorkflowStore {
     }
 
     pub fn search(&self, query: &str) -> Vec<WorkflowMatch> {
-        if self.workflows.is_empty() {
-            return Vec::new();
-        }
         let q = query.trim().to_lowercase();
+        // Dev-only command-palette entry for the perf overlay (the workflow
+        // palette is labelled "Workflow / command palette"). Only matches
+        // perf/overlay/fps queries so release behaviour is untouched, and the
+        // accept path below toggles the overlay instead of running a command.
+        let mut dev_extra: Vec<WorkflowMatch> = Vec::new();
+        #[cfg(not(target_family = "wasm"))]
+        if (dragent_paths::is_dev() || cfg!(debug_assertions))
+            && !q.is_empty()
+            && (q.contains("perf") || q.contains("overlay") || q.contains("fps"))
+        {
+            dev_extra.push(WorkflowMatch {
+                workflow: Workflow {
+                    name: "Toggle perf overlay (dev)".to_string(),
+                    description: "Show/hide the frame-time + memory + input-latency overlay"
+                        .to_string(),
+                    command: "__dragent_toggle_perf_overlay__".to_string(),
+                    arguments: vec![],
+                },
+                score: 200.0,
+            });
+        }
+        if self.workflows.is_empty() {
+            return dev_extra;
+        }
         let mut matches: Vec<WorkflowMatch> = self
             .workflows
             .iter()
@@ -218,6 +239,8 @@ impl WorkflowStore {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        // Dev palette entry sorts first (score 200 beats any prefix match).
+        matches.splice(0..0, dev_extra);
         matches.truncate(12);
         matches
     }

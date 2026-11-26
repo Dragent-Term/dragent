@@ -23,6 +23,8 @@ fn host_bin() -> PathBuf {
 
 struct Isolated {
     _guard: std::sync::MutexGuard<'static, ()>,
+    /// Stops the services this test started, pass or fail.
+    services: dragent_host::testing::ServiceGuard,
     base: PathBuf,
     endpoint: PathBuf,
     db: PathBuf,
@@ -60,6 +62,7 @@ impl Isolated {
             }
         }
         Self {
+            services: dragent_host::testing::ServiceGuard::new(),
             _guard: guard,
             base,
             endpoint,
@@ -75,6 +78,7 @@ impl Isolated {
 
 impl Drop for Isolated {
     fn drop(&mut self) {
+        self.services.stop();
         if let Ok(client) = HostClient::connect_existing() {
             let _ = client.shutdown();
         }

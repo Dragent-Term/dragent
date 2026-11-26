@@ -369,6 +369,11 @@ mod windows_private {
     }
 }
 fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    write_private(path, &serde_json::to_vec_pretty(value).map_err(io_error)?)
+}
+
+/// Replace a file whole, readable by this account only.
+fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
     let mut opts = fs::OpenOptions::new();
     opts.write(true).create_new(true);
@@ -379,8 +384,7 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     }
     let result = (|| {
         let mut file = opts.open(&tmp).map_err(io_error)?;
-        file.write_all(&serde_json::to_vec_pretty(value).map_err(io_error)?)
-            .map_err(io_error)?;
+        file.write_all(bytes).map_err(io_error)?;
         file.sync_all().map_err(io_error)?;
         fs::rename(&tmp, path).map_err(io_error)
     })();
@@ -757,6 +761,116 @@ pub(crate) fn claude_key_pending(
     kind == CredentialKind::ApiKey && !api_key_file_present(&store_root.join(id.to_string()))
 }
 
+/// An API key on its way to the private account store. Never shown in debug
+/// output, and wiped when dropped.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ApiKey(String);
+
+impl ApiKey {
+    /// A key as the person typed or pasted it. Surrounding whitespace is
+    /// dropped; anything that can't be part of a key is refused.
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        let key = raw.trim();
+        if key.is_empty() {
+            return Err("Enter an API key".into());
+        }
+        if key.len() > 1024 || !key.chars().all(|c| c.is_ascii_graphic()) {
+            return Err("That doesn't look like an API key. Check for spaces or missing parts.".into());
+        }
+        Ok(Self(key.to_string()))
+    }
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl Drop for ApiKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.0.zeroize();
+    }
+}
+
+impl std::fmt::Debug for ApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[redacted]")
+    }
+}
+
+/// Add an API-key account with its key in one step: when the key can't be
+/// stored, no half-made account is left behind.
+pub fn add_with_key(provider: &str, label: &str, key: &ApiKey) -> Result<Profile, String> {
+    // Keys arrive over the host protocol too, so check them here as well.
+    let key = ApiKey::parse(key.expose())?;
+    let profile = Registry::update(|r| r.add(provider, label, CredentialKind::ApiKey))?;
+    if let Err(error) = save_key(profile.id, &key) {
+        let _ = Registry::update(|r| r.remove(profile.id));
+        let _ = fs::remove_dir_all(root().join(profile.id.to_string()));
+        return Err(error);
+    }
+    Ok(profile)
+}
+
+/// Store (or replace) an API-key account's key.
+pub fn save_key(id: Uuid, key: &ApiKey) -> Result<(), String> {
+    let key = ApiKey::parse(key.expose())?;
+    let registry = Registry::load()?;
+    let profile = registry
+        .profiles
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or("Account no longer exists")?;
+    if profile.kind != CredentialKind::ApiKey {
+        return Err("This account signs in with a subscription, not an API key".into());
+    }
+    match profile.provider.as_str() {
+        "claude" => write_private(&root().join(id.to_string()).join("api-key"), key.expose().as_bytes()),
+        "codex" => {
+            let binding = registry.resolve("codex", None, &Selection::Profile(id))?;
+            let mut command = native_command(&binding, Path::new("codex"))?;
+            command.args(["login", "--with-api-key"]);
+            if feed(command, key.expose().as_bytes())? {
+                Ok(())
+            } else {
+                Err("Codex didn't accept the API key".into())
+            }
+        }
+        _ => Err("API keys aren't available for this agent".into()),
+    }
+}
+
+/// Run a command with `input` on its stdin; whether it succeeded.
+fn feed(mut command: Command, input: &[u8]) -> Result<bool, String> {
+    use std::{
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "Agent CLI is unavailable on this host")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // A command that exits without reading reports through its status.
+        let _ = stdin.write_all(input);
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status.success()),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(30)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Saving the API key timed out".into());
+            }
+        }
+    }
+}
+
 /// One-line sign-in command the person runs in a terminal on the machine
 /// that owns the account. Dragent never sees a key or token: keys are typed
 /// into the terminal with echo off. `target` None is the machine's own
@@ -792,8 +906,8 @@ pub fn sign_in_command(
 /// profile dir arrives as `"$1"`, so these stay constant. They contain no
 /// single quotes and no backslashes — only double-quoted prompts — so the
 /// outer shell (bash, zsh, dash or fish) only ever quotes them once.
-const CLAUDE_API_KEY_POSIX_SCRIPT: &str = "printf %s \"Anthropic API key: \"; stty -echo 2>/dev/null; trap \"stty echo 2>/dev/null\" EXIT INT TERM; read -r K; stty echo 2>/dev/null; trap - EXIT INT TERM; echo; [ -n \"$K\" ] || { echo \"API key is empty; sign-in cancelled\" >&2; unset K; exit 1; }; umask 077; printf \"%s\" \"$K\" > \"$1/api-key\"; unset K; CLAUDE_CONFIG_DIR=\"$1\" claude auth status >/dev/null && echo Signed in";
-const CODEX_API_KEY_POSIX_SCRIPT: &str = "printf %s \"OpenAI API key: \"; stty -echo 2>/dev/null; trap \"stty echo 2>/dev/null\" EXIT INT TERM; read -r K; stty echo 2>/dev/null; trap - EXIT INT TERM; echo; [ -n \"$K\" ] || { echo \"API key is empty; sign-in cancelled\" >&2; unset K; exit 1; }; printf \"%s\" \"$K\" | CODEX_HOME=\"$1\" codex login --with-api-key; rc=$?; unset K; exit $rc";
+const CLAUDE_API_KEY_POSIX_SCRIPT: &str = "echo \"Type or paste your key, then press Enter. It stays hidden.\"; printf %s \"Anthropic API key (hidden): \"; stty -echo 2>/dev/null; trap \"stty echo 2>/dev/null\" EXIT INT TERM; read -r K; stty echo 2>/dev/null; trap - EXIT INT TERM; echo; [ -n \"$K\" ] || { echo \"API key is empty; sign-in cancelled\" >&2; unset K; exit 1; }; echo \"Received ${#K} characters.\"; umask 077; printf \"%s\" \"$K\" > \"$1/api-key\"; unset K; CLAUDE_CONFIG_DIR=\"$1\" claude auth status >/dev/null && echo Signed in";
+const CODEX_API_KEY_POSIX_SCRIPT: &str = "echo \"Type or paste your key, then press Enter. It stays hidden.\"; printf %s \"OpenAI API key (hidden): \"; stty -echo 2>/dev/null; trap \"stty echo 2>/dev/null\" EXIT INT TERM; read -r K; stty echo 2>/dev/null; trap - EXIT INT TERM; echo; [ -n \"$K\" ] || { echo \"API key is empty; sign-in cancelled\" >&2; unset K; exit 1; }; echo \"Received ${#K} characters.\"; printf \"%s\" \"$K\" | CODEX_HOME=\"$1\" codex login --with-api-key; rc=$?; unset K; exit $rc";
 
 pub(crate) fn sign_in_command_for_profile(
     provider: &str,
@@ -849,12 +963,12 @@ pub(crate) fn sign_in_command_for_profile(
         ("claude", CredentialKind::ApiKey, ShellKind::PowerShell) => {
             let key_path = powershell_quote(&dir.join("api-key").to_string_lossy());
             Ok(format!(
-                "& {{ $k = Read-Host 'Anthropic API key' -AsSecureString; $p = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($k)); if ([string]::IsNullOrEmpty($p)) {{ Write-Error 'API key is empty; sign-in cancelled'; return }}; Set-Content -NoNewline -LiteralPath {key_path} -Value $p; $p = $null; $k = $null; $prevClaudeConfigDir = $env:CLAUDE_CONFIG_DIR; $env:CLAUDE_CONFIG_DIR={dir_q}; claude auth status | Out-Null; $c = $LASTEXITCODE; if ($null -eq $prevClaudeConfigDir) {{ Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue }} else {{ $env:CLAUDE_CONFIG_DIR = $prevClaudeConfigDir }}; if ($c -eq 0) {{ echo Signed in }} else {{ Write-Error 'Sign-in failed' }} }}",
+                "& {{ $k = Read-Host 'Anthropic API key (type or paste, then press Enter)' -AsSecureString; $p = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($k)); if ([string]::IsNullOrEmpty($p)) {{ Write-Error 'API key is empty; sign-in cancelled'; return }}; Set-Content -NoNewline -LiteralPath {key_path} -Value $p; $p = $null; $k = $null; $prevClaudeConfigDir = $env:CLAUDE_CONFIG_DIR; $env:CLAUDE_CONFIG_DIR={dir_q}; claude auth status | Out-Null; $c = $LASTEXITCODE; if ($null -eq $prevClaudeConfigDir) {{ Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue }} else {{ $env:CLAUDE_CONFIG_DIR = $prevClaudeConfigDir }}; if ($c -eq 0) {{ echo Signed in }} else {{ Write-Error 'Sign-in failed' }} }}",
                 dir_q = powershell_quote(&dir_str),
             ))
         }
         ("codex", CredentialKind::ApiKey, ShellKind::PowerShell) => Ok(format!(
-            "& {{ $k = Read-Host 'OpenAI API key' -AsSecureString; $p = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($k)); if ([string]::IsNullOrEmpty($p)) {{ Write-Error 'API key is empty; sign-in cancelled'; return }}; $prevCodexHome = $env:CODEX_HOME; $env:CODEX_HOME={dir_q}; $p | codex login --with-api-key; $c = $LASTEXITCODE; if ($null -eq $prevCodexHome) {{ Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }} else {{ $env:CODEX_HOME = $prevCodexHome }}; $p = $null; $k = $null; if ($c -eq 0) {{ echo Signed in }} else {{ Write-Error 'Sign-in failed' }} }}",
+            "& {{ $k = Read-Host 'OpenAI API key (type or paste, then press Enter)' -AsSecureString; $p = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($k)); if ([string]::IsNullOrEmpty($p)) {{ Write-Error 'API key is empty; sign-in cancelled'; return }}; $prevCodexHome = $env:CODEX_HOME; $env:CODEX_HOME={dir_q}; $p | codex login --with-api-key; $c = $LASTEXITCODE; if ($null -eq $prevCodexHome) {{ Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }} else {{ $env:CODEX_HOME = $prevCodexHome }}; $p = $null; $k = $null; if ($c -eq 0) {{ echo Signed in }} else {{ Write-Error 'Sign-in failed' }} }}",
             dir_q = powershell_quote(&dir_str),
         )),
         _ => Err("Native sign-in unavailable".into()),
@@ -1399,7 +1513,7 @@ mod credential_tests {
         assert!(claude.ends_with(" }"), "script block: {claude}");
         assert!(!claude.contains("exit"), "no exit: {claude}");
         assert!(!claude.contains("return $c"), "no stray number: {claude}");
-        assert!(claude.contains("$k = Read-Host 'Anthropic API key' -AsSecureString"));
+        assert!(claude.contains("$k = Read-Host 'Anthropic API key (type or paste, then press Enter)' -AsSecureString"));
         assert!(claude.contains("[Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($k))"));
         assert!(claude.contains("Write-Error 'API key is empty; sign-in cancelled'; return"));
         assert!(claude.contains("Set-Content -NoNewline -LiteralPath"));
@@ -1426,7 +1540,7 @@ mod credential_tests {
         assert!(codex.ends_with(" }"), "script block: {codex}");
         assert!(!codex.contains("exit"), "no exit: {codex}");
         assert!(!codex.contains("return $c"), "no stray number: {codex}");
-        assert!(codex.contains("$k = Read-Host 'OpenAI API key' -AsSecureString"));
+        assert!(codex.contains("$k = Read-Host 'OpenAI API key (type or paste, then press Enter)' -AsSecureString"));
         assert!(codex.contains("$prevCodexHome = $env:CODEX_HOME; $env:CODEX_HOME='C:\\p\\abc'"));
         assert!(codex.contains("codex login --with-api-key"));
         assert!(codex.contains("Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue"));
@@ -1480,6 +1594,43 @@ mod credential_tests {
             .unwrap();
             assert!(ps.contains(&powershell_quote(raw)), "ps quoted: {ps}");
         }
+    }
+
+    #[test]
+    fn api_keys_are_cleaned_checked_and_never_shown() {
+        let key = ApiKey::parse("  sk-ant-test \n").unwrap();
+        assert_eq!(key.expose(), "sk-ant-test");
+        for bad in ["", "   ", "two words", "line\nbreak", "k\u{e9}y"] {
+            assert!(ApiKey::parse(bad).is_err(), "{bad:?}");
+        }
+        let request = crate::development::AccountsRequest::AddWithKey {
+            provider: "claude".into(),
+            label: "Work".into(),
+            key,
+        };
+        assert!(!format!("{request:?}").contains("sk-ant-test"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_key_reaches_the_command_and_its_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("dragent-key-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("api-key");
+        write_private(&path, b"sk-ant-old").unwrap();
+        write_private(&path, b"sk-ant-new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"sk-ant-new");
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "no temporary file left");
+
+        let mut matches = Command::new("sh");
+        matches.args(["-c", "[ \"$(cat)\" = sk-test ]"]);
+        assert!(feed(matches, b"sk-test").unwrap());
+        let mut refuses = Command::new("sh");
+        refuses.args(["-c", "cat >/dev/null; exit 1"]);
+        assert!(!feed(refuses, b"sk-test").unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

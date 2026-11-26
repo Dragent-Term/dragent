@@ -184,8 +184,7 @@ impl WorkspaceView {
                 }
                 // Sharing requires an account — prompt sign-in when signed out.
                 if !self.account_logged_in_cache {
-                    self.login_prompt_open = true;
-                    ctx.notify();
+                    self.open_login_prompt(ctx);
                     return;
                 }
                 // Ask what the participant should see first — everything already
@@ -315,8 +314,7 @@ impl WorkspaceView {
             }
             WorkspaceAction::CreatePortForward => {
                 if !self.account_logged_in_cache {
-                    self.login_prompt_open = true;
-                    ctx.notify();
+                    self.open_login_prompt(ctx);
                     return;
                 }
                 let port = self.ports_editor.read(ctx, |e: &InputEditor, _| {

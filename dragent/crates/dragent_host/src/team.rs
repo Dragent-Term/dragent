@@ -67,6 +67,15 @@ pub struct Member {
     /// The agent in it (`claude`, …).
     #[serde(default)]
     pub agent: Option<String>,
+    /// The agent's own conversation id, which stays the same when the
+    /// conversation is resumed in another pane: the seat follows it there.
+    /// Learned from the session's record once the agent reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
+    /// When it took this seat, in Unix milliseconds: a move planned before
+    /// then is stale and doesn't undo it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seated_ms: Option<i64>,
 }
 
 impl Member {
@@ -74,6 +83,35 @@ impl Member {
         (pane.is_some() && self.pane.as_deref() == pane)
             || (terminal.is_some() && self.terminal.as_deref() == terminal)
     }
+
+    /// The agent conversation `identity` sits in this seat: the same
+    /// conversation of the same agent. Unknown on either side never matches.
+    pub fn holds(&self, identity: &SessionIdentity) -> bool {
+        self.conversation.as_deref() == Some(identity.conversation.as_str())
+            && self.agent.as_deref() == Some(identity.agent.as_str())
+    }
+}
+
+/// Which agent conversation runs in a session: what follows a member when
+/// it's resumed in another pane.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionIdentity {
+    /// The agent's own conversation id.
+    pub conversation: String,
+    /// The agent's key (`claude`, `codex`, …).
+    pub agent: String,
+}
+
+/// How a member came to a new pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReseatReason {
+    /// Its conversation, resumed elsewhere, ran a team command.
+    Contact,
+    /// Dragent resumed its conversation in another pane.
+    Resume,
+    /// `team lead --take`.
+    Taken,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -502,6 +540,14 @@ pub enum Change {
         from: Option<String>,
         to: String,
     },
+    /// `party`'s agent moved to another pane (its conversation resumed
+    /// there, or it took its seat back): the team reaches it there now.
+    Reseated {
+        party: Party,
+        #[serde(default)]
+        pane: Option<String>,
+        reason: ReseatReason,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -579,6 +625,9 @@ pub struct CourierMark {
     /// The lead was told this worker stopped without finishing.
     #[serde(default)]
     pub stall_reported: bool,
+    /// What this worker held when the lead was last told it was paused.
+    #[serde(default)]
+    pub pause_reported: u64,
     /// When a wake was last requested for this party's sleeping agent.
     #[serde(default)]
     pub wake_requested_ms: i64,
@@ -1004,11 +1053,34 @@ pub enum TeamRequest {
         team: String,
     },
     /// Which team and role the terminal `pane`/`terminal` belongs to.
+    /// When nothing knows that terminal but the conversation running there
+    /// holds a seat (it was resumed in a new pane), the seat moves to it.
     Resolve {
         #[serde(default)]
         pane: Option<String>,
         #[serde(default)]
         terminal: Option<String>,
+        /// The conversation in that terminal. The host fills it in from
+        /// the session's record (whatever a client sends is replaced).
+        #[serde(default)]
+        identity: Option<SessionIdentity>,
+    },
+    /// Dragent resumed `identity` in `pane`: every seat its conversation
+    /// holds moves there, unless one was taken after `at_ms`.
+    Reseat {
+        pane: String,
+        #[serde(default)]
+        terminal: Option<String>,
+        identity: SessionIdentity,
+        /// When it was resumed (now when absent).
+        #[serde(default)]
+        at_ms: Option<i64>,
+    },
+    /// The session `lead` takes the lead's seat back (`team lead --take`);
+    /// the caller has been checked. The lead's model is kept.
+    TakeLead {
+        team: String,
+        lead: Member,
     },
     SetLead {
         team: String,
@@ -1311,12 +1383,15 @@ impl TeamRequest {
             Self::List { .. }
             | Self::Get { .. }
             | Self::Resolve { .. }
+            // Seats it moves are announced with `take_reseated`.
+            | Self::Reseat { .. }
             | Self::Wait { .. }
             | Self::Changes { .. } => None,
             // Marking messages read changes nothing anyone watches, and
             // nor does handing a lead its news.
             Self::Inbox { .. } | Self::TakeLeadNews { .. } => None,
             Self::SetLead { team, .. }
+            | Self::TakeLead { team, .. }
             | Self::SetLeadModel { team, .. }
             | Self::Stop { team }
             | Self::Forget { team }
@@ -1352,6 +1427,8 @@ pub enum TeamResponse {
     Message(Box<Message>),
     Messages(Vec<Message>),
     Resolved(Option<(String, Party)>),
+    /// Seats a `Reseat` moved: each team and whose seat.
+    Reseated(Vec<(String, Party)>),
     /// A lead's news, when there is some.
     News(Option<String>),
     /// What happened after `since`, and the revision to wait from next.
@@ -1431,9 +1508,34 @@ fn relabel_review_limits(team: &mut Team) {
     }
 }
 
+/// The member in `party`'s seat: the lead, or a task's worker.
+fn seat_of<'a>(team: &'a Team, party: &Party) -> Option<&'a Member> {
+    match party {
+        Party::Lead => team.lead.as_ref(),
+        Party::Task(id) => team.task(id)?.worker.as_ref(),
+        Party::User | Party::Dragent => None,
+    }
+}
+
+fn seat_of_mut<'a>(team: &'a mut Team, party: &Party) -> Option<&'a mut Member> {
+    match party {
+        Party::Lead => team.lead.as_mut(),
+        Party::Task(id) => team
+            .tasks
+            .iter_mut()
+            .find(|task| task.id == *id)?
+            .worker
+            .as_mut(),
+        Party::User | Party::Dragent => None,
+    }
+}
+
 pub struct TeamStore {
     pub(crate) dir: PathBuf,
     pub(crate) teams: HashMap<String, Team>,
+    /// Teams whose seats moved by a request that changes nothing else
+    /// (`Resolve`, `Reseat`), for the host to announce.
+    pub(crate) reseated: Vec<String>,
 }
 
 impl TeamStore {
@@ -1459,7 +1561,11 @@ impl TeamStore {
                 }
             }
         }
-        Self { dir, teams }
+        Self {
+            dir,
+            teams,
+            reseated: Vec::new(),
+        }
     }
 
     fn save(&self, team: &Team) -> Result<(), String> {
@@ -1490,7 +1596,7 @@ impl TeamStore {
         })
     }
 
-    pub(crate) fn team(&self, id: &str) -> Result<&Team, String> {
+    pub fn team(&self, id: &str) -> Result<&Team, String> {
         self.teams
             .get(id)
             .ok_or_else(|| format!("There's no team “{id}”."))
@@ -1509,6 +1615,156 @@ impl TeamStore {
         self.save(&team)?;
         self.teams.insert(team.id.clone(), team);
         Ok(output)
+    }
+
+    /// The team and role of the terminal `pane`/`terminal`: the unfinished
+    /// team that knows it, else the most recently active one.
+    fn resolve(&self, pane: Option<&str>, terminal: Option<&str>) -> Option<(String, Party)> {
+        let mut teams: Vec<&Team> = self.teams.values().collect();
+        teams.sort_by_key(|team| {
+            (
+                matches!(team.status, TeamStatus::Done | TeamStatus::Stopped),
+                std::cmp::Reverse(team.updated_at_ms),
+            )
+        });
+        teams.into_iter().find_map(|team| {
+            if team
+                .lead
+                .as_ref()
+                .is_some_and(|lead| lead.is(pane, terminal))
+            {
+                return Some((team.id.clone(), Party::Lead));
+            }
+            // A worker stays one after its task is done (to answer
+            // follow-ups), but its unfinished task comes first.
+            let mut worked: Vec<&Task> = team
+                .tasks
+                .iter()
+                .filter(|task| {
+                    task.worker
+                        .as_ref()
+                        .is_some_and(|worker| worker.is(pane, terminal))
+                })
+                .collect();
+            worked.sort_by_key(|task| {
+                (
+                    task.status.is_finished(),
+                    std::cmp::Reverse(task.updated_at_ms),
+                )
+            });
+            worked
+                .first()
+                .map(|task| (team.id.clone(), Party::Task(task.id.clone())))
+        })
+    }
+
+    /// `party`'s seat in `team` learns the conversation running in it
+    /// (`identity`, read from the session in `pane`), when it doesn't know
+    /// one yet. A seat's conversation is never replaced: the conversation
+    /// it was given to is what may follow it elsewhere.
+    pub(crate) fn learn_conversation(
+        &mut self,
+        team: &str,
+        party: &Party,
+        pane: Option<&str>,
+        identity: &SessionIdentity,
+    ) -> bool {
+        let fits = |member: &Member| {
+            member.conversation.is_none()
+                && pane.is_none_or(|pane| member.pane.as_deref() == Some(pane))
+                && member
+                    .agent
+                    .as_deref()
+                    .is_none_or(|agent| agent == identity.agent)
+        };
+        let Ok(current) = self.team(team) else {
+            return false;
+        };
+        if !seat_of(current, party).is_some_and(fits) {
+            return false;
+        }
+        self.update(team, |team| {
+            let member = seat_of_mut(team, party).ok_or("That seat is gone.")?;
+            if !fits(member) {
+                return Ok(false);
+            }
+            member.conversation = Some(identity.conversation.clone());
+            member.agent.get_or_insert_with(|| identity.agent.clone());
+            Ok(true)
+        })
+        .unwrap_or(false)
+    }
+
+    /// Move every seat `identity`'s conversation holds to `pane`/`terminal`
+    /// (where it runs now), each recorded as a change on its team. A seat
+    /// taken after `at_ms` stays: this move is older than it. Returns the
+    /// seats moved.
+    pub(crate) fn reseat(
+        &mut self,
+        pane: Option<&str>,
+        terminal: Option<&str>,
+        identity: &SessionIdentity,
+        at_ms: i64,
+        reason: ReseatReason,
+    ) -> Result<Vec<(String, Party)>, String> {
+        if pane.is_none() && terminal.is_none() {
+            return Ok(Vec::new());
+        }
+        let due = |member: &Member| {
+            member.holds(identity)
+                && (member.pane.as_deref() != pane || member.terminal.as_deref() != terminal)
+                && member.seated_ms.unwrap_or(0) <= at_ms
+        };
+        let mut ids: Vec<String> = self
+            .teams
+            .values()
+            .filter(|team| {
+                team.lead.as_ref().is_some_and(due)
+                    || team
+                        .tasks
+                        .iter()
+                        .any(|task| task.worker.as_ref().is_some_and(due))
+            })
+            .map(|team| team.id.clone())
+            .collect();
+        ids.sort();
+        let mut moved = Vec::new();
+        for id in ids {
+            let seats = self.update(&id, |team| {
+                let mut parties: Vec<Party> = Vec::new();
+                if team.lead.as_ref().is_some_and(due) {
+                    parties.push(Party::Lead);
+                }
+                parties.extend(
+                    team.tasks
+                        .iter()
+                        .filter(|task| task.worker.as_ref().is_some_and(due))
+                        .map(|task| Party::Task(task.id.clone())),
+                );
+                for party in &parties {
+                    let member = seat_of_mut(team, party).expect("found above");
+                    let new_pane = member.pane.as_deref() != pane;
+                    member.pane = pane.map(str::to_owned);
+                    member.terminal = terminal.map(str::to_owned);
+                    member.seated_ms = Some(at_ms);
+                    // The same pane in a new terminal (a restart) isn't news.
+                    if new_pane {
+                        team.change(Change::Reseated {
+                            party: party.clone(),
+                            pane: pane.map(str::to_owned),
+                            reason,
+                        });
+                    }
+                }
+                Ok(parties)
+            })?;
+            if !seats.is_empty() {
+                log::info!("[team] {id}: {} moved to pane {pane:?}", seats.iter().map(Party::label).collect::<Vec<_>>().join(", "));
+                self.reseated.push(id.clone());
+            }
+            moved.extend(seats.into_iter().map(|party| (id.clone(), party)));
+        }
+        Ok(moved)
     }
 
     pub fn execute(&mut self, request: TeamRequest) -> Result<TeamResponse, String> {
@@ -1572,53 +1828,73 @@ impl TeamStore {
             TeamRequest::Get { team } => {
                 Ok(TeamResponse::Team(Box::new(self.team(&team)?.clone())))
             }
-            TeamRequest::Resolve { pane, terminal } => {
-                let (pane, terminal) = (pane.as_deref(), terminal.as_deref());
+            TeamRequest::Resolve {
+                pane,
+                terminal,
+                identity,
+            } => {
                 if pane.is_none() && terminal.is_none() {
                     return Ok(TeamResponse::Resolved(None));
                 }
-                // The unfinished team that knows this terminal, else the
-                // most recently active one.
-                let mut teams: Vec<&Team> = self.teams.values().collect();
-                teams.sort_by_key(|team| {
-                    (
-                        matches!(team.status, TeamStatus::Done | TeamStatus::Stopped),
-                        std::cmp::Reverse(team.updated_at_ms),
-                    )
-                });
-                let found = teams.into_iter().find_map(|team| {
-                    if team
-                        .lead
-                        .as_ref()
-                        .is_some_and(|lead| lead.is(pane, terminal))
-                    {
-                        return Some((team.id.clone(), Party::Lead));
-                    }
-                    // A worker stays one after its task is done (to answer
-                    // follow-ups), but its unfinished task comes first.
-                    let mut worked: Vec<&Task> = team
-                        .tasks
-                        .iter()
-                        .filter(|task| {
-                            task.worker
-                                .as_ref()
-                                .is_some_and(|worker| worker.is(pane, terminal))
-                        })
-                        .collect();
-                    worked.sort_by_key(|task| {
-                        (
-                            task.status.is_finished(),
-                            std::cmp::Reverse(task.updated_at_ms),
-                        )
+                let found = self.resolve(pane.as_deref(), terminal.as_deref());
+                let Some(identity) = identity else {
+                    return Ok(TeamResponse::Resolved(found));
+                };
+                if let Some((team, party)) = &found {
+                    // Known by its terminal: learn its conversation, if the
+                    // seat doesn't know one yet.
+                    self.learn_conversation(team, party, pane.as_deref(), &identity);
+                    return Ok(TeamResponse::Resolved(found));
+                }
+                // Its conversation was resumed here: the seat follows it.
+                let moved = self.reseat(
+                    pane.as_deref(),
+                    terminal.as_deref(),
+                    &identity,
+                    now_ms(),
+                    ReseatReason::Contact,
+                )?;
+                if moved.is_empty() {
+                    return Ok(TeamResponse::Resolved(None));
+                }
+                Ok(TeamResponse::Resolved(
+                    self.resolve(pane.as_deref(), terminal.as_deref()),
+                ))
+            }
+            TeamRequest::Reseat {
+                pane,
+                terminal,
+                identity,
+                at_ms,
+            } => {
+                let moved = self.reseat(
+                    Some(&pane),
+                    terminal.as_deref(),
+                    &identity,
+                    at_ms.unwrap_or_else(now_ms),
+                    ReseatReason::Resume,
+                )?;
+                Ok(TeamResponse::Reseated(moved))
+            }
+            TeamRequest::TakeLead { team, lead } => {
+                let team = self.update(&team, |team| {
+                    let pane = lead.pane.clone();
+                    let mut lead = lead;
+                    lead.seated_ms = Some(now_ms());
+                    team.lead = Some(lead);
+                    team.change(Change::Reseated {
+                        party: Party::Lead,
+                        pane,
+                        reason: ReseatReason::Taken,
                     });
-                    worked
-                        .first()
-                        .map(|task| (team.id.clone(), Party::Task(task.id.clone())))
-                });
-                Ok(TeamResponse::Resolved(found))
+                    Ok(team.clone())
+                })?;
+                Ok(TeamResponse::Team(Box::new(team)))
             }
             TeamRequest::SetLead { team, lead, model } => {
                 let team = self.update(&team, |team| {
+                    let mut lead = lead;
+                    lead.seated_ms.get_or_insert_with(now_ms);
                     team.lead = Some(lead);
                     team.lead_model = model;
                     team.change(Change::Team {
@@ -2701,7 +2977,8 @@ pub(crate) fn concerns(event: &TeamEvent, tasks: &[String], party: Option<&Party
         | Change::Integrated { .. }
         | Change::PromptAnswered { .. }
         | Change::AgentsAdded { .. }
-        | Change::Reassigned { .. } => false,
+        | Change::Reassigned { .. }
+        | Change::Reseated { .. } => false,
         Change::QaNeeded => matches!(party, None | Some(Party::Lead)),
     }
 }
@@ -2727,12 +3004,90 @@ pub(crate) fn shared() -> &'static Shared {
 /// its timeout) without holding the store.
 #[cfg(not(target_family = "wasm"))]
 pub fn execute(request: TeamRequest) -> Result<TeamResponse, String> {
+    let request = match request {
+        // Who the caller is comes from its session's record, never from
+        // the caller's word.
+        TeamRequest::Resolve { pane, terminal, .. } => TeamRequest::Resolve {
+            identity: session_identity(pane.as_deref(), terminal.as_deref()),
+            pane,
+            terminal,
+        },
+        request => request,
+    };
     execute_in(shared(), &store_dir(), request)
+}
+
+/// The agent conversation running in the session `pane` (else the one in
+/// host terminal `terminal`), as its record knows it.
+#[cfg(not(target_family = "wasm"))]
+pub fn session_identity(pane: Option<&str>, terminal: Option<&str>) -> Option<SessionIdentity> {
+    let pane = match pane {
+        Some(pane) => uuid::Uuid::parse_str(pane).ok()?,
+        None => crate::agent_sessions::pane_for_terminal(terminal?)?,
+    };
+    let record = crate::agent_sessions::load(pane)?;
+    Some(SessionIdentity {
+        conversation: record.conversation_id.filter(|id| !id.is_empty())?,
+        agent: crate::team_command_support::agent_key(&record.provider).ok()?,
+    })
+}
+
+/// Teams whose seats moved since the last call, for the host to announce.
+#[cfg(not(target_family = "wasm"))]
+pub fn take_reseated() -> Vec<String> {
+    let mut guard = shared()
+        .store
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let mut teams = guard
+        .as_mut()
+        .map(|store| std::mem::take(&mut store.reseated))
+        .unwrap_or_default();
+    teams.sort();
+    teams.dedup();
+    teams
 }
 
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn store_dir() -> PathBuf {
     dragent_paths::organisation_dir().join("teams")
+}
+
+/// Whether any team is still at work (not done or stopped). Its courier runs
+/// in the host, so an idle host stays up while one is. Loads the store fresh
+/// from disk; meant for an about-once-a-minute check.
+#[cfg(not(target_family = "wasm"))]
+pub fn any_active_team() -> bool {
+    active_team_in(&store_dir())
+}
+
+/// A store or team file that can't be read right now counts as active: not
+/// being able to look is no reason to stop a team's host.
+#[cfg(not(target_family = "wasm"))]
+fn active_team_in(dir: &std::path::Path) -> bool {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => return error.kind() != std::io::ErrorKind::NotFound,
+    };
+    for entry in entries {
+        let Ok(entry) = entry else { return true };
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let active = match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<Team>(&bytes) {
+                Ok(team) => !matches!(team.status, TeamStatus::Done | TeamStatus::Stopped),
+                // Never readable by this build: its courier can't run here.
+                Err(_) => false,
+            },
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        };
+        if active {
+            return true;
+        }
+    }
+    false
 }
 
 /// Sessions the app's sleep sweep must not put to sleep: every team's lead
@@ -2845,6 +3200,35 @@ pub(crate) fn execute_in(
 mod tests {
 
     #[test]
+    fn team_records_from_before_seats_knew_their_conversation_still_load() {
+        let old = r#"{"id":"team-0a1b2c3d","title":"Old","project_root":"/w","status":"running",
+            "lead":{"pane":"p","terminal":"t","agent":"claude"},
+            "tasks":[{"id":"t1","title":"A","prompt":"B","kind":"work","status":"running",
+              "worker":{"pane":"w","terminal":null,"agent":"codex"},
+              "created_at_ms":1,"updated_at_ms":1}],
+            "created_at_ms":1,"updated_at_ms":1}"#;
+        let team: Team = serde_json::from_str(old).unwrap();
+        let lead = team.lead.clone().unwrap();
+        assert_eq!(lead.pane.as_deref(), Some("p"));
+        assert_eq!((lead.conversation.clone(), lead.seated_ms), (None, None));
+        assert!(team.tasks[0].worker.as_ref().unwrap().conversation.is_none());
+        // Written back, a seat without a conversation looks as it did.
+        let written = serde_json::to_value(&team).unwrap();
+        assert!(written["lead"].get("conversation").is_none());
+        // A seat with no known conversation is never taken by one.
+        assert!(!lead.holds(&SessionIdentity {
+            conversation: String::new(),
+            agent: "claude".into(),
+        }));
+        // And the store loads the file.
+        let dir = dir();
+        std::fs::create_dir_all(&dir.0).unwrap();
+        std::fs::write(dir.0.join("team-0a1b2c3d.json"), old).unwrap();
+        let store = TeamStore::open(dir.0.clone());
+        assert!(store.team("team-0a1b2c3d").is_ok());
+    }
+
+    #[test]
     fn areas_name_files_folders_and_patterns() {
         assert!(in_area("app/src/teams/", "app/src/teams/page.rs"));
         assert!(in_area("app/src/teams", "app/src/teams/page.rs"));
@@ -2890,6 +3274,7 @@ mod tests {
                     pane: Some("lead-pane".into()),
                     terminal: None,
                     agent: Some("claude".into()),
+                    ..Default::default()
                 }),
             })
             .unwrap()
@@ -2963,6 +3348,7 @@ mod tests {
                     pane: Some("lead-pane".into()),
                     terminal: None,
                     agent: Some("dragent".into()),
+                    ..Default::default()
                 },
                 model: Some("chosen-model".into()),
             })
@@ -3088,6 +3474,7 @@ mod tests {
                         pane: Some(format!("{id}-pane")),
                         terminal: None,
                         agent: Some("claude".into()),
+                        ..Default::default()
                     },
                 })
                 .unwrap();
@@ -3252,6 +3639,7 @@ mod tests {
                     pane: None,
                     terminal: Some("term-7".into()),
                     agent: None,
+                    ..Default::default()
                 },
             })
             .unwrap();
@@ -3260,6 +3648,7 @@ mod tests {
                 .execute(TeamRequest::Resolve {
                     pane: pane.map(str::to_string),
                     terminal: terminal.map(str::to_string),
+                    identity: None,
                 })
                 .unwrap()
             {
@@ -4149,6 +4538,7 @@ mod tests {
                     pane: Some("old-worker".into()),
                     terminal: None,
                     agent: Some("opencode".into()),
+                    ..Default::default()
                 },
             })
             .unwrap();
@@ -4221,6 +4611,7 @@ mod tests {
             store.execute(TeamRequest::Resolve {
                 pane: Some("old-worker".into()),
                 terminal: None,
+                identity: None,
             }).unwrap(),
             TeamResponse::Resolved(None)
         ));
@@ -4242,6 +4633,7 @@ mod tests {
                     pane: Some(lead.to_string()),
                     terminal: None,
                     agent: Some("claude".into()),
+                    ..Default::default()
                 },
                 model: None,
             })
@@ -4267,6 +4659,7 @@ mod tests {
                         pane: Some(pane.to_string()),
                         terminal: None,
                         agent: Some("claude".into()),
+                        ..Default::default()
                     },
                 })
                 .unwrap();
@@ -4300,6 +4693,7 @@ mod tests {
                     pane: Some(lead.to_string()),
                     terminal: None,
                     agent: Some("claude".into()),
+                    ..Default::default()
                 },
                 model: None,
             })
@@ -4322,6 +4716,7 @@ mod tests {
                     pane: Some(worker.to_string()),
                     terminal: None,
                     agent: Some("claude".into()),
+                    ..Default::default()
                 },
             })
             .unwrap();
@@ -4349,6 +4744,7 @@ mod tests {
                     pane: Some("lead-pane".into()),
                     terminal: None,
                     agent: Some("claude".into()),
+                    ..Default::default()
                 },
                 model: None,
             })

@@ -102,6 +102,9 @@ fn json_or_null(resp: ureq::Response) -> Result<serde_json::Value, ApiError> {
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
+/// A token answer arrived for a session that has ended meanwhile.
+const SESSION_CHANGED: &str = "the session changed while signing in";
+
 #[derive(Debug)]
 pub enum ApiError {
     /// Local mode (a Dev build with no server): the call was not sent.
@@ -394,6 +397,11 @@ impl ApiClient {
             // wipe the credentials and sign the user out right now. A network
             // error, by contrast, is transient — keep the session and retry later.
             if is_token_revoked_error(&e) {
+                // Only the session that asked: the person may have signed
+                // out, or in as someone else, while the server answered.
+                if !self.holds_refresh_token(&refresh_token) {
+                    return ApiError::Network(SESSION_CHANGED.into());
+                }
                 self.expire_session("refresh token revoked or expired");
                 return ApiError::NotAuthenticated;
             }
@@ -404,13 +412,46 @@ impl ApiClient {
             t.elapsed().as_millis()
         );
 
-        // Persist the rotated refresh token
-        let _ = crate::auth::save_refresh_token(&result.refresh_token);
+        self.store_exchange(&refresh_token, result, |token| {
+            let _ = match token {
+                Some(token) => crate::auth::save_refresh_token(token),
+                None => crate::auth::clear_refresh_token(),
+            };
+        })
+    }
+
+    /// Whether the session is still the one that held `token`.
+    fn holds_refresh_token(&self, token: &str) -> bool {
+        self.token_state.read().refresh_token.as_deref() == Some(token)
+    }
+
+    /// Adopt the answer to exchanging `used`, unless that session ended while
+    /// the server answered: storing its rotated token would sign the person
+    /// back in (or over the account they switched to) at the next launch.
+    /// `persist` writes the stored token (`None` clears it); a sign-in or
+    /// sign-out changes the token here before it changes the stored one, so
+    /// re-checking after the write always leaves the two agreeing.
+    fn store_exchange(
+        &self,
+        used: &str,
+        result: crate::auth::token_exchange::ExchangeResult,
+        persist: impl Fn(Option<&str>),
+    ) -> Result<String, ApiError> {
+        if !self.holds_refresh_token(used) {
+            return Err(ApiError::Network(SESSION_CHANGED.into()));
+        }
+        persist(Some(&result.refresh_token));
 
         let expires_in = (result.expires_in as u64).saturating_sub(30);
         let access_token = result.access_token.clone();
 
         let mut state = self.token_state.write();
+        if state.refresh_token.as_deref() != Some(used) {
+            let current = state.refresh_token.clone();
+            drop(state);
+            persist(current.as_deref());
+            return Err(ApiError::Network(SESSION_CHANGED.into()));
+        }
         state.refresh_token = Some(result.refresh_token);
         state.access_token = Some(result.access_token);
         state.access_token_expires_at =
@@ -1027,6 +1068,52 @@ fn is_token_revoked_error(msg: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exchanged() -> crate::auth::token_exchange::ExchangeResult {
+        crate::auth::token_exchange::ExchangeResult {
+            access_token: "access".into(),
+            refresh_token: "rotated".into(),
+            user_id: "u".into(),
+            expires_in: 3600,
+            first_name: None,
+            last_name: None,
+            avatar_url: None,
+        }
+    }
+
+    #[test]
+    fn a_late_exchange_never_brings_back_a_session_that_ended() {
+        let client = ApiClient::with_mode("http://127.0.0.1:9".into(), false);
+        let stored = std::cell::RefCell::new(Some("old".to_string()));
+        let persist = |token: Option<&str>| *stored.borrow_mut() = token.map(str::to_owned);
+
+        // Still the same session: the rotated token is adopted.
+        client.set_refresh_token("old".into());
+        assert!(client.store_exchange("old", exchanged(), persist).is_ok());
+        assert_eq!(stored.borrow().as_deref(), Some("rotated"));
+        assert!(client.holds_refresh_token("rotated"));
+
+        // Signed out before the answer.
+        client.clear();
+        persist(None);
+        assert!(client.store_exchange("old", exchanged(), persist).is_err());
+        assert_eq!(*stored.borrow(), None);
+        assert_eq!(client.current_refresh_token(), None);
+
+        // Signed in as someone else while the rotated token was written.
+        client.set_refresh_token("old".into());
+        let switched = std::cell::Cell::new(false);
+        let result = client.store_exchange("old", exchanged(), |token| {
+            if !switched.replace(true) {
+                client.set_refresh_token("other".into());
+                persist(Some("other"));
+            }
+            persist(token);
+        });
+        assert!(result.is_err());
+        assert_eq!(stored.borrow().as_deref(), Some("other"));
+        assert!(client.holds_refresh_token("other"));
+    }
 
     /// Local mode answers every verb without opening a connection: a
     /// listener standing in for the server must never see one.

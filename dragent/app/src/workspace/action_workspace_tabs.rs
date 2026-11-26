@@ -281,7 +281,8 @@ impl WorkspaceView {
                         if let Some(root) = roots.first() {
                             self.document_index_root = root.clone();
                         }
-                        self.left_panel_visible = !self.open_project_roots.is_empty();
+                        // The start screen keeps the sidebar, projects or not.
+                        self.left_panel_visible = true;
                     } else {
                         // Prefer the tab after the closed one, else the one before.
                         let closed_pos = self

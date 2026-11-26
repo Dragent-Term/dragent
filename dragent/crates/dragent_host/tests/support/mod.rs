@@ -69,6 +69,8 @@ fn kill_process(pid: i32) {
 
 pub struct Harness {
     pub dir: PathBuf,
+    /// Stops the services this test started, pass or fail.
+    services: dragent_host::testing::ServiceGuard,
     previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
     pub client: HostClient,
     pub workspace: String,
@@ -82,6 +84,8 @@ impl Harness {
         let mut previous = Vec::new();
         for (name, path) in [
             ("DRAGENT_HOME", dir.join("data")),
+            // Wins over DRAGENT_HOME in the Dev edition, which tests build.
+            ("DRAGENT_DEV_HOME", dir.join("data")),
             (dragent_host::ENDPOINT_FILE_ENV, dir.join("endpoint.json")),
             ("DRAGENT_WORKSPACE_DB", dir.join("workspace.sqlite")),
             // Agents' user-level hook configs (Droid, Muse) are written here,
@@ -106,6 +110,7 @@ impl Harness {
         unsafe {
             std::env::set_var(hooks_env, "1");
         }
+        let services = dragent_host::testing::ServiceGuard::new();
         let client = HostClient::ensure_host_with(&helper()).unwrap();
         let root = dir.to_str().unwrap();
         let workspace = client.create_local_workspace(root).unwrap();
@@ -115,6 +120,7 @@ impl Harness {
             .id;
         Self {
             dir,
+            services,
             previous,
             client,
             workspace,
@@ -199,6 +205,7 @@ impl Harness {
             .unwrap()
             .0
     }
+    #[track_caller]
     pub fn input(&self, terminal: &str, id: &str, token: &str) {
         self.client
             .send_terminal_input(&self.workspace, terminal, format!("{token}\n").as_bytes())
@@ -233,8 +240,8 @@ impl Harness {
 }
 impl Drop for Harness {
     fn drop(&mut self) {
-        let _ = self.client.shutdown();
-        std::thread::sleep(Duration::from_millis(200));
+        // Shutdown, then wait for (or kill) every service this test started.
+        self.services.stop();
         for (name, previous) in &self.previous {
             unsafe {
                 if let Some(v) = previous {
@@ -250,6 +257,7 @@ impl Drop for Harness {
 pub fn helper() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_dragent-host"))
 }
+#[track_caller]
 pub fn wait<T>(mut f: impl FnMut() -> Option<T>) -> T {
     // Generous: loaded CI runners take well over 15 s to start agents.
     let deadline = Instant::now() + Duration::from_secs(60);

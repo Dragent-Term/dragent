@@ -1,6 +1,8 @@
 mod account_store;
 mod action;
+mod agent_account_dialogs;
 pub(crate) mod agent_accounts;
+mod api_key_check;
 pub(crate) mod usage;
 mod app_settings;
 mod config;

@@ -6,6 +6,8 @@
 pub mod chunker;
 #[cfg(not(target_family = "wasm"))]
 pub mod embedder;
+#[cfg(not(target_family = "wasm"))]
+mod embed_cache;
 mod index_batch;
 mod index_embed;
 mod index_repos;
@@ -17,6 +19,8 @@ pub mod inverted;
 pub mod manager;
 #[cfg(not(target_family = "wasm"))]
 pub mod merkle;
+#[cfg(not(target_family = "wasm"))]
+pub mod repo_key;
 #[cfg(not(target_family = "wasm"))]
 pub mod snapshot;
 #[cfg(not(target_family = "wasm"))]
@@ -33,10 +37,11 @@ pub use manager::{
 #[cfg(not(target_family = "wasm"))]
 pub use {
     chunker::Chunker,
-    embedder::Embedder,
+    embedder::{EmbedText, Embedder},
     index_search::{HybridHit, RRF_K, reciprocal_rank_fusion, symbol_tokens},
     inverted::{InvertedIndex, SearchHit},
     merkle::{Fragment, MerkleNode, MerkleNodeType, MerkleTree},
+    repo_key::repo_index_key,
     snapshot::IndexSnapshot,
     store::{SearchResult, VectorStore},
     symbols::{Symbol, SymbolKind, extract_symbols},

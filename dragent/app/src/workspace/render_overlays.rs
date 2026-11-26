@@ -1060,17 +1060,23 @@ impl WorkspaceView {
                     self.prompt_install_error.as_deref(),
                     retry,
                     self.page_command.is_none(),
+                    self.account_sign_in,
                 );
                 let workspace_view_id = self.workspace_view_id;
+                // A sign-in stays until it's done or cancelled: a stray click
+                // beside it must not throw it away.
+                let held = self.account_sign_in.is_some();
                 let scrim = Container::new(Align::new(Empty::new().finish()).finish())
                     .with_background_color(ColorU::new(0, 0, 0, 150))
                     .finish();
                 let scrim = EventHandler::new(scrim)
                     .on_left_mouse_down(move |event_ctx, _app, _pos| {
-                        event_ctx.dispatch_typed_action_for(
-                            workspace_view_id,
-                            WorkspaceAction::ClosePromptAgentInstall,
-                        );
+                        if !held {
+                            event_ctx.dispatch_typed_action_for(
+                                workspace_view_id,
+                                WorkspaceAction::ClosePromptAgentInstall,
+                            );
+                        }
                         DispatchEventResult::StopPropagation
                     })
                     .finish();
@@ -1649,11 +1655,13 @@ impl WorkspaceView {
             root
         };
 
+        let root = self.overlay_agent_resources(root, &theme);
         let root = if self.agent_sleep_notice.is_some() {
             self.overlay_agent_sleep(root, &theme)
         } else {
             root
         };
+        let root = self.overlay_sleep_prompt(root, &theme);
 
         let root = if self.idle_warning_open {
             let modal = self.render_idle_warning_modal(&theme);
@@ -1780,13 +1788,19 @@ impl WorkspaceView {
 
         let root = if self.login_prompt_open {
             let auth = crate::auth::AuthManager::handle(app);
-            let pending_code = app.read_model(&auth, |a, _| a.pending_sign_in_code());
+            let (pending_code, problem) = app.read_model(&auth, |a, _| {
+                (
+                    a.pending_sign_in_code(),
+                    a.sign_in_problem().map(str::to_string),
+                )
+            });
             let prompt = super::auth_modals::render_login_prompt(
                 &theme,
                 self.ui_font,
                 self.workspace_view_id,
                 &self.new_tab_picker_mouse_states,
                 pending_code.as_deref(),
+                problem.as_deref(),
             );
             {
                 let mut stack = Stack::new().with_child(root);

@@ -31,6 +31,10 @@ mod wasm_stub;
 
 pub use ansi::strip_for_display;
 
+/// Set by test helpers on the Dragent services they start: the services
+/// close once this process id is gone. Shells never inherit it.
+pub const EXIT_WITH_PID_ENV: &str = "DRAGENT_EXIT_WITH_PID";
+
 /// Wait (up to `timeout`) for close-time kill escalations still running, so a
 /// process that exits right after closing its shells doesn't abandon them
 /// mid-chain. Returns whether they all finished. No-op off Unix.

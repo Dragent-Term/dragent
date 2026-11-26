@@ -42,9 +42,12 @@ pub enum SettingsEvent {
     AgentAccountLogin(uuid::Uuid),
     AgentAccountSignIn {
         machine_id: Option<String>,
+        provider: String,
         title: String,
         command: String,
     },
+    /// The account being signed in in the pop-up terminal is signed in.
+    AgentAccountSignedIn,
     AgentAccountError(String),
     Project(super::ProjectSettingsAction),
     /// A machine was added, edited, renamed, removed or (dis)connected.
@@ -1363,6 +1366,11 @@ impl View for SettingsView {
         } else { base };
         if let Some(modal) = (self.section == SettingsSection::Machines)
             .then(|| self.render_machine_modal(&theme, app))
+            .flatten()
+        {
+            Stack::new().with_child(base).with_child(modal).finish()
+        } else if let Some(modal) = (self.section == SettingsSection::AgentAccounts)
+            .then(|| self.render_account_dialog(&theme, app))
             .flatten()
         {
             Stack::new().with_child(base).with_child(modal).finish()

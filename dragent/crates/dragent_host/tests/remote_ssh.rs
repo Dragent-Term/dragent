@@ -680,6 +680,7 @@ fn assert_remote_coordination(client: &HostClient, root: &str) {
                 pane: Some(lead_pane.to_string()),
                 terminal: None,
                 agent: Some("claude".into()),
+                ..Default::default()
             }),
         })
         .unwrap()

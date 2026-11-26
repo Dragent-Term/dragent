@@ -12,6 +12,21 @@ pub fn render_about(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
     let ui_font = view.ui_font;
     let view_id = view.view_id;
     let version = env!("CARGO_PKG_VERSION");
+    // The Star button is nowhere once the person has starred it.
+    let offers_star = crate::community::state().offers_star();
+    let mut community_row = Flex::row()
+        .with_cross_axis_alignment(warpui::elements::CrossAxisAlignment::Center)
+        .with_spacing(8.0);
+    if offers_star {
+        community_row = community_row.with_child(crate::community::render_star_button(
+            theme,
+            ui_font,
+            crate::community::state(),
+            false,
+            view.hover("about_star"),
+            move |ectx| ectx.dispatch_typed_action_for(view_id, SettingsAction::StarOnGitHub),
+        ));
+    }
 
     Flex::column()
         .with_cross_axis_alignment(warpui::elements::CrossAxisAlignment::Stretch)
@@ -78,10 +93,14 @@ pub fn render_about(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
                     .with_spacing(10.0)
                     .with_child(
                         warpui::elements::Text::new(
-                            format!(
-                                "{} is open source (AGPL-3.0). A star helps other developers find it.",
-                                dragent_paths::app_name()
-                            ),
+                            if offers_star {
+                                format!(
+                                    "{} is open source (AGPL-3.0). A star helps other developers find it.",
+                                    dragent_paths::app_name()
+                                )
+                            } else {
+                                format!("{} is open source (AGPL-3.0).", dragent_paths::app_name())
+                            },
                             ui_font,
                             crate::theme::text_size(13.0),
                         )
@@ -89,17 +108,7 @@ pub fn render_about(view: &SettingsView, theme: &Theme) -> Box<dyn Element> {
                         .finish(),
                     )
                     .with_child(
-                        Flex::row()
-                            .with_cross_axis_alignment(warpui::elements::CrossAxisAlignment::Center)
-                            .with_spacing(8.0)
-                            .with_child(crate::community::render_star_button(
-                                theme,
-                                ui_font,
-                                crate::community::state(),
-                                false,
-                                view.hover("about_star"),
-                                move |ectx| ectx.dispatch_typed_action_for(view_id, SettingsAction::StarOnGitHub),
-                            ))
+                        community_row
                             .with_child(crate::community::render_x_button(
                                 theme,
                                 ui_font,

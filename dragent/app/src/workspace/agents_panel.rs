@@ -25,15 +25,19 @@ pub struct AgentRunRow {
     pub home_path: String,
 }
 
-/// Human state text for a host run: alive wins, then the exit code.
-pub fn run_state_text(alive: bool, exit: Option<i32>) -> String {
-    if alive {
-        return "Running".to_string();
-    }
-    match exit {
-        Some(0) => "Done".to_string(),
-        Some(code) => format!("Exited ({code})"),
-        None => "Ended".to_string(),
+/// A host run's state in words, with what it holds when known.
+pub fn run_state_text(state: &dragent_host::AgentRunState, memory_bytes: Option<u64>) -> String {
+    use dragent_host::AgentRunState;
+    let state = match state {
+        AgentRunState::Waiting => "Waiting for memory".to_string(),
+        AgentRunState::Paused => "Paused".to_string(),
+        AgentRunState::Running => "Running".to_string(),
+        AgentRunState::Exited { code: 0 } => return "Done".to_string(),
+        AgentRunState::Exited { code } => return format!("Exited ({code})"),
+    };
+    match memory_bytes {
+        Some(bytes) => format!("{state} · {}", super::agent_sleep::size_label(bytes)),
+        None => state,
     }
 }
 
@@ -229,10 +233,12 @@ mod tests {
 
     #[test]
     fn run_state_text_covers_alive_and_exit_shapes() {
-        assert_eq!(run_state_text(true, None), "Running");
-        assert_eq!(run_state_text(true, Some(1)), "Running");
-        assert_eq!(run_state_text(false, Some(0)), "Done");
-        assert_eq!(run_state_text(false, Some(2)), "Exited (2)");
-        assert_eq!(run_state_text(false, None), "Ended");
+        use dragent_host::AgentRunState::*;
+        assert_eq!(run_state_text(&Running, None), "Running");
+        assert_eq!(run_state_text(&Running, Some(512 << 20)), "Running · 512 MB");
+        assert_eq!(run_state_text(&Paused, Some(5 << 30)), "Paused · 5.0 GB");
+        assert_eq!(run_state_text(&Waiting, None), "Waiting for memory");
+        assert_eq!(run_state_text(&Exited { code: 0 }, Some(1)), "Done");
+        assert_eq!(run_state_text(&Exited { code: 2 }, None), "Exited (2)");
     }
 }

@@ -746,6 +746,16 @@ impl WorktreeManager {
             home.id.as_str()
         };
         remove_dir_guarded(path, expected_id, warnings);
+        // Its build folder goes with it, in the background: it can hold
+        // many gigabytes. The sweep finds it if this is cut short.
+        if let Some(org_dir) = self.worktrees_dir.parent().filter(|_| !path.exists()) {
+            let (org_dir, path) = (org_dir.to_path_buf(), path.to_path_buf());
+            std::thread::spawn(move || {
+                if let Err(error) = crate::build_cache::remove_for_worktree(&org_dir, &path) {
+                    log::warn!("[worktree] build folder of {}: {error}", path.display());
+                }
+            });
+        }
     }
 
     /// Resume tombstoned teardowns and prune stranded checkouts whose

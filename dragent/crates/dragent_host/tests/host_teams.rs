@@ -39,6 +39,8 @@ fn a_team_runs_through_the_host_and_survives_its_restart() {
         // SAFETY: this executable runs this one test.
         unsafe { std::env::set_var(name, path) };
     }
+    // Stops what this test starts, pass or fail.
+    let _services = dragent_host::testing::ServiceGuard::new();
     let client = HostClient::ensure_host_with(&host_bin()).expect("host should come up");
 
     let (changed, changes) = mpsc::channel();
@@ -62,6 +64,7 @@ fn a_team_runs_through_the_host_and_survives_its_restart() {
                     pane: None,
                     terminal: Some("lead-term".into()),
                     agent: Some("claude".into()),
+                    ..Default::default()
                 }),
             })
             .unwrap(),
@@ -88,6 +91,7 @@ fn a_team_runs_through_the_host_and_survives_its_restart() {
         .team(TeamRequest::Resolve {
             pane: None,
             terminal: Some("lead-term".into()),
+            identity: None,
         })
         .unwrap()
     {
@@ -129,6 +133,7 @@ fn a_team_runs_through_the_host_and_survives_its_restart() {
                 pane: None,
                 terminal: Some("worker-term".into()),
                 agent: Some("codex".into()),
+                ..Default::default()
             },
         })
         .unwrap();
@@ -229,6 +234,7 @@ fn a_team_runs_through_the_host_and_survives_its_restart() {
                 pane: Some("dragent-lead".into()),
                 terminal: None,
                 agent: Some(dragent_host::team::DRAGENT_AGENT.into()),
+                ..Default::default()
             },
             model: None,
         })

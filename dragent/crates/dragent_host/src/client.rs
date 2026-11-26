@@ -19,6 +19,129 @@ fn client_id() -> String {
 static START_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static DEFERRED_UPDATE: OnceLock<Mutex<Option<(String, String, Instant)>>> = OnceLock::new();
 const UPDATE_RETRY_DELAY: Duration = Duration::from_secs(300);
+/// A host this process found healthy (and current) this recently is reused
+/// without another ping. Restoring many terminals at launch asks for the host
+/// once per terminal; each used to ping it again, one after another.
+const HEALTHY_REUSE: Duration = Duration::from_secs(2);
+/// Endpoint token of the host last found healthy, the desired build it was
+/// healthy for, and when. The shortcut below may only skip the ping when the
+/// caller wants that same build: the executable on disk can change under the
+/// same path (a rebuild), so the identity — not the path — is remembered.
+static LAST_HEALTHY: Mutex<Option<(String, String, Instant)>> = Mutex::new(None);
+/// Called once, the first time this process reaches its local host.
+static CONNECTED_HOOK: OnceLock<fn()> = OnceLock::new();
+
+/// Register a function to call the first time this process reaches its
+/// local host (the app's startup timing uses it). Only the first
+/// registration counts.
+pub fn on_first_connect(hook: fn()) {
+    let _ = CONNECTED_HOOK.set(hook);
+}
+
+fn note_healthy(token: &str, desired: &str) {
+    if let Ok(mut last) = LAST_HEALTHY.lock() {
+        *last = Some((token.to_string(), desired.to_string(), Instant::now()));
+    }
+    if !CONNECTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        if let Some(hook) = CONNECTED_HOOK.get() {
+            hook();
+        }
+    }
+    start_presence_if_due();
+}
+
+/// Set once this process reached its host.
+static CONNECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Start the presence loop once it is both wanted and possible, whichever
+/// comes second.
+fn start_presence_if_due() {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static STARTED: AtomicBool = AtomicBool::new(false);
+        if PRESENCE_WANTED.load(Ordering::SeqCst)
+            && CONNECTED.load(Ordering::SeqCst)
+            && !STARTED.swap(true, Ordering::SeqCst)
+        {
+            start_presence();
+        }
+    }
+}
+
+/// Set by the app: hold a presence connection to the host for as long as
+/// this process lives (see [`hold_presence`]).
+static PRESENCE_WANTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// For the app: keep the local host up for as long as this process runs.
+///
+/// The host closes after a stretch with no client. Once this process first
+/// reaches its host, it holds one event stream open to it; when the stream
+/// ends (the host closed, crashed or was replaced by an update) it finds or
+/// starts the host again straight away, so an app never waits on a host that
+/// went away while it sat idle. Starts nothing before the app's own first
+/// contact with the host (launch never waits on it).
+pub fn hold_presence() {
+    PRESENCE_WANTED.store(true, std::sync::atomic::Ordering::SeqCst);
+    start_presence_if_due();
+}
+
+/// The presence loop: connect, hold, and on loss reconnect at once (backing
+/// off only while the host can't be started).
+#[cfg(not(target_family = "wasm"))]
+fn start_presence() {
+    let _ = std::thread::Builder::new()
+        .name("dragent-host-presence".into())
+        .spawn(|| {
+            let mut backoff = Duration::from_millis(100);
+            loop {
+                let started = Instant::now();
+                let held = HostClient::ensure_host().and_then(|client| client.hold_open());
+                match held {
+                    // Held until the host went away: look for it again now.
+                    Ok(()) if held_for_a_while(started.elapsed()) => {
+                        backoff = Duration::from_millis(100)
+                    }
+                    // A stream that ends as soon as it opens (a host that is
+                    // closing, or refuses it) must not be retried flat out.
+                    ended => {
+                        if let Err(error) = ended {
+                            log::debug!("host presence: {error}");
+                        }
+                        std::thread::sleep(backoff);
+                        backoff = (backoff * 2).min(Duration::from_secs(5));
+                    }
+                }
+            }
+        });
+}
+
+/// A presence stream that lasted this long had really been open.
+#[cfg(not(target_family = "wasm"))]
+fn held_for_a_while(held: Duration) -> bool {
+    held >= Duration::from_secs(1)
+}
+
+/// Whether the host with this endpoint token was found healthy just now for
+/// this same desired build. A rebuild on disk changes the desired identity,
+/// so a cached healthy check for another build must not skip the update.
+fn recently_healthy(token: &str, desired: &str, now: Instant) -> bool {
+    LAST_HEALTHY.lock().ok().is_some_and(|last| {
+        last.as_ref().is_some_and(|(seen, want, at)| {
+            seen == token && want == desired && now.saturating_duration_since(*at) < HEALTHY_REUSE
+        })
+    })
+}
+
+/// Forget the cached health of the host with this token (a request to it
+/// failed), so the next `ensure_host` pings it again.
+pub fn forget_healthy(token: &str) {
+    if let Ok(mut last) = LAST_HEALTHY.lock() {
+        if last.as_ref().is_some_and(|(seen, _, _)| seen == token) {
+            *last = None;
+        }
+    }
+}
 
 fn start_lock() -> &'static Mutex<()> {
     START_LOCK.get_or_init(|| Mutex::new(()))
@@ -111,7 +234,13 @@ impl HostClient {
     }
 
     fn rpc_with_timeout(&self, request: Request, timeout: Duration) -> Result<Response, String> {
-        discovery::rpc_with_timeout(&self.current_endpoint()?, &self.client_id, request, timeout)
+        let endpoint = self.current_endpoint()?;
+        let result = discovery::rpc_with_timeout(&endpoint, &self.client_id, request, timeout);
+        if result.as_ref().is_err_and(|e| e.starts_with("connect:")) {
+            // The host is gone: the next `ensure_host` must look again.
+            forget_healthy(&endpoint.token);
+        }
+        result
     }
 
     pub fn development(
@@ -223,10 +352,23 @@ impl HostClient {
             .lock()
             .map_err(|e| format!("spawn lock: {e}"))?;
         let client_id = client_id();
+        // One metadata stat: cheap next to a ping, and it changes when the
+        // file on disk is rebuilt under the same path.
+        let desired = super::build_identity::executable(exe).unwrap_or_default();
         if let Some(endpoint) = discovery::read_endpoint() {
+            if endpoint.version == PROTOCOL_VERSION
+                && recently_healthy(&endpoint.token, &desired, Instant::now())
+            {
+                return Ok(Self {
+                    endpoint,
+                    client_id,
+                    local_endpoint: Some(discovery::endpoint_path()),
+                    #[cfg(not(target_family = "wasm"))]
+                    remote: None,
+                });
+            }
             let compatible = endpoint.version == PROTOCOL_VERSION;
             let healthy = compatible && discovery::ping(&endpoint, &client_id);
-            let desired = super::build_identity::executable(exe).unwrap_or_default();
             let outdated = host_outdated(
                 &endpoint.build_id,
                 &desired,
@@ -243,6 +385,7 @@ impl HostClient {
                         && since.elapsed() < UPDATE_RETRY_DELAY
                 });
             if healthy && (!outdated || update_deferred) {
+                note_healthy(&endpoint.token, &desired);
                 return Ok(Self {
                     endpoint,
                     client_id,
@@ -296,7 +439,7 @@ impl HostClient {
                         *deferred_update
                             .lock()
                             .map_err(|e| format!("update lock: {e}"))? =
-                            Some((endpoint.token.clone(), desired, Instant::now()));
+                            Some((endpoint.token.clone(), desired.clone(), Instant::now()));
                         let reason = safe_restart.err().unwrap_or_else(|| {
                             "host did not exit after accepting the update".into()
                         });
@@ -315,11 +458,12 @@ impl HostClient {
                 }
             }
         }
-        spawn_host_process(exe)?;
+        let mut spawned = spawn_host_process(exe)?;
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(endpoint) = discovery::read_endpoint() {
                 if discovery::ping(&endpoint, &client_id) {
+                    note_healthy(&endpoint.token, &desired);
                     return Ok(Self {
                         endpoint,
                         client_id,
@@ -331,6 +475,12 @@ impl HostClient {
             }
             if std::time::Instant::now() > deadline {
                 return Err("host did not come up within 5s".to_string());
+            }
+            // A host that is just closing (idle, or for an update) still owns
+            // the endpoint for a moment and turns a new one away: try again.
+            if matches!(spawned.try_wait(), Ok(Some(_))) {
+                std::thread::sleep(Duration::from_millis(150));
+                spawned = spawn_host_process(exe)?;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -351,13 +501,20 @@ impl HostClient {
                 remote: None,
             })
         } else {
+            // Found gone: the next `ensure_host` must not reuse it.
+            forget_healthy(&endpoint.token);
             Err("host endpoint is stale".to_string())
         }
     }
 
     pub fn ping(&self) -> bool {
-        self.current_endpoint()
-            .is_ok_and(|endpoint| discovery::ping(&endpoint, &self.client_id))
+        self.current_endpoint().is_ok_and(|endpoint| {
+            let alive = discovery::ping(&endpoint, &self.client_id);
+            if !alive {
+                forget_healthy(&endpoint.token);
+            }
+            alive
+        })
     }
 
     pub fn host_info(&self) -> Result<HostInfo, String> {
@@ -1048,6 +1205,48 @@ impl HostClient {
         }
     }
 
+    /// Whether an agent may start now. The caller asks again while it waits.
+    pub fn agent_start(
+        &self,
+        ask: super::protocol::StartAsk,
+        timeout: Duration,
+    ) -> Result<super::protocol::StartAnswer, String> {
+        match self.rpc_with_timeout(Request::AskToStart(ask), timeout)? {
+            Response::StartAnswer(answer) => Ok(answer),
+            other => Err(format!("unexpected response: {other:?}")),
+        }
+    }
+
+    /// Start a waiting agent (its pane or terminal) now, whatever memory says.
+    pub fn start_anyway(&self, id: &str) -> Result<(), String> {
+        self.acked(Request::StartAnyway { id: id.to_string() })
+    }
+
+    /// A waiting start was called off.
+    pub fn leave_start_line(&self, id: &str) -> Result<(), String> {
+        self.acked(Request::LeaveStartLine { id: id.to_string() })
+    }
+
+    /// Let a paused agent (its pane or terminal) run again.
+    pub fn resume_agent(&self, id: &str) -> Result<(), String> {
+        self.acked(Request::ResumeAgent { id: id.to_string() })
+    }
+
+    /// Which agents wait or are paused, and what each one holds.
+    pub fn agent_resources(&self) -> Result<super::protocol::AgentResources, String> {
+        match self.rpc_with_timeout(Request::AgentResources, Duration::from_secs(3))? {
+            Response::AgentResources(resources) => Ok(resources),
+            other => Err(format!("unexpected response: {other:?}")),
+        }
+    }
+
+    fn acked(&self, request: Request) -> Result<(), String> {
+        match self.rpc(request)? {
+            Response::Ack => Ok(()),
+            other => Err(format!("unexpected response: {other:?}")),
+        }
+    }
+
     pub fn restore_plan(
         &self,
         workspace_id: &str,
@@ -1315,6 +1514,23 @@ impl HostClient {
     pub fn endpoint(&self) -> &ServiceEndpoint {
         &self.endpoint
     }
+
+    /// Hold an event stream open to the host until it ends. The host counts
+    /// it as a connected app and never closes for being idle meanwhile.
+    pub fn hold_open(&self) -> Result<(), String> {
+        let token = self.current_endpoint()?.token;
+        let held = self
+            .subscribe(|_| {})
+            .and_then(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| "presence stream panicked".to_string())
+            });
+        // The stream ended or never opened: the host may be gone, so the
+        // reconnect must look again rather than reuse it.
+        forget_healthy(&token);
+        held
+    }
 }
 
 /// One delta read of a terminal's output ring.
@@ -1336,7 +1552,7 @@ pub struct TerminalChunk {
 /// The host is otherwise detached with no terminal to write to.
 pub const HOST_LOG_FILE_ENV: &str = "DRAGENT_HOST_LOG_FILE";
 
-fn spawn_host_process(exe: &std::path::Path) -> Result<(), String> {
+fn spawn_host_process(exe: &std::path::Path) -> Result<std::process::Child, String> {
     let stderr = std::env::var_os(HOST_LOG_FILE_ENV)
         .and_then(|path| {
             std::fs::OpenOptions::new()
@@ -1354,8 +1570,7 @@ fn spawn_host_process(exe: &std::path::Path) -> Result<(), String> {
         .stdout(std::process::Stdio::null())
         .stderr(stderr)
         .spawn()
-        .map_err(|e| format!("spawn: {e}"))?;
-    Ok(())
+        .map_err(|e| format!("spawn: {e}"))
 }
 
 #[cfg(test)]
@@ -1376,5 +1591,41 @@ mod update_tests {
         assert!(!host_outdated("A", "", "B"));
         // Unknown identities must not accidentally exempt a legacy service.
         assert!(host_outdated("", "B", ""));
+    }
+}
+
+#[cfg(test)]
+mod health_cache_tests {
+    use super::*;
+
+    #[test]
+    fn a_host_found_healthy_is_reused_briefly_then_pinged_again() {
+        let token = "health-cache-test-token";
+        let build = "health-cache-test-build";
+        let now = Instant::now();
+        assert!(!recently_healthy(token, build, now));
+        note_healthy(token, build);
+        assert!(recently_healthy(token, build, Instant::now()));
+        assert!(
+            !recently_healthy("another-host", build, Instant::now()),
+            "only that host"
+        );
+        assert!(
+            !recently_healthy(token, "another-build", Instant::now()),
+            "only that build: a rebuild must not reuse the shortcut"
+        );
+        assert!(
+            !recently_healthy(
+                token,
+                build,
+                Instant::now() + HEALTHY_REUSE + Duration::from_millis(1)
+            ),
+            "stale after the reuse window"
+        );
+        forget_healthy(token);
+        assert!(
+            !recently_healthy(token, build, Instant::now()),
+            "a failed request forgets it"
+        );
     }
 }

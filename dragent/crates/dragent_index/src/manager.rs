@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -10,6 +10,9 @@ use super::embedder::Embedder;
 use super::inverted::InvertedIndex;
 use super::merkle::MerkleTree;
 use super::store::VectorStore;
+use crate::embed_cache::{EmbeddingCache, cache_path_for_repo};
+use crate::index_batch::normalize_root;
+use crate::repo_key::repo_index_key;
 
 // ── Thread priority ───────────────────────────────────────────────────────────
 
@@ -231,6 +234,10 @@ pub(crate) struct Inner {
     /// Roots (with their max_files budget) whose watchers were stopped when
     /// indexing was disabled — re-registered when it is enabled again.
     pub(crate) disabled_roots: Vec<(PathBuf, usize)>,
+    /// Shared content-hash embedding caches, one per repo (keyed like the
+    /// index itself would be — see `repo_key`). Worktrees keep their own
+    /// rows and watchers, but identical chunks embed once per repo.
+    pub(crate) embedding_caches: HashMap<PathBuf, Arc<EmbeddingCache>>,
 }
 
 impl super::manager::CodeIndexManager {
@@ -240,6 +247,7 @@ impl super::manager::CodeIndexManager {
                 repos: HashMap::new(),
                 registering: HashSet::new(),
                 disabled_roots: Vec::new(),
+                embedding_caches: HashMap::new(),
             }),
             embedder: LazyResource::new(),
             model_reaper_started: AtomicBool::new(false),
@@ -294,6 +302,26 @@ impl super::manager::CodeIndexManager {
 
     pub fn set_auto_index(&self, on: bool) {
         self.auto_index.store(on, Ordering::Relaxed);
+    }
+
+    /// Shared embedding cache for the repo containing `worktree` (keyed by
+    /// git common dir, so every worktree of the repo hits one cache).
+    /// Opened once and reused; a broken cache file degrades to an empty
+    /// memory cache rather than failing the batch.
+    pub(crate) fn embedding_cache(&'static self, worktree: &Path) -> Arc<EmbeddingCache> {
+        let key = repo_index_key(&normalize_root(worktree));
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(cache) = inner.embedding_caches.get(&key) {
+            return Arc::clone(cache);
+        }
+        let cache = Arc::new(
+            EmbeddingCache::open(&cache_path_for_repo(&key)).unwrap_or_else(|e| {
+                log::warn!("[index] embedding cache unavailable: {e} — embedding without reuse");
+                EmbeddingCache::open_memory()
+            }),
+        );
+        inner.embedding_caches.insert(key, Arc::clone(&cache));
+        cache
     }
 
     /// Whether walks honor `.gitignore`. Takes effect on the next (re)index;

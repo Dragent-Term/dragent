@@ -639,6 +639,8 @@ pub struct WorkspaceView {
     pub(crate) prompt_install_terminal: Option<ViewHandle<TerminalView>>,
     /// Interactive command shown over its originating page, never a workspace tab.
     pub(crate) page_command: Option<(String, String)>,
+    /// The agent being signed in in the pop-up terminal over Settings.
+    pub(crate) account_sign_in: Option<super::PromptAgent>,
     pub(crate) prompt_install_error: Option<String>,
     pub(crate) prompt_install_generation: u64,
     /// The install sheet's subject when it installs a tool on a machine
@@ -1080,8 +1082,11 @@ pub struct WorkspaceView {
     /// "Put N idle agents to sleep" notice, and its epoch for the timeout.
     pub(crate) agent_sleep_notice: Option<String>,
     pub(crate) agent_sleep_notice_epoch: u64,
-    /// An agent start held while memory is critical, awaiting an answer.
-    /// The held start is running now: skip the memory check once.
+    /// "Put these idle agents to sleep?", while it is asked.
+    pub(crate) agent_sleep_prompt: Option<super::agent_sleep::SleepPrompt>,
+    pub(crate) agent_sleep_scroll: warpui::elements::ClippedScrollStateHandle,
+    /// Agents that wait for memory or are paused, and what each one holds.
+    pub(crate) agent_resources: super::agent_resources::AgentResources,
     /// Cached share snapshot, refreshed on `SessionManagerEvent::Changed`.
     pub(crate) share_snapshot: share_sheet::ShareSnapshot,
     /// Whether the "sign in to share" prompt is visible.

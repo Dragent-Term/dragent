@@ -294,6 +294,9 @@ fn apply_shell_environment(cmd: &mut CommandBuilder, shell: &str) {
     for key in dragent_paths::PTY_HANDOFF_VARS {
         cmd.env_remove(key);
     }
+    // A test's services close when the test process ends; a shell (and
+    // anything started from it) must never inherit that.
+    cmd.env_remove(crate::EXIT_WITH_PID_ENV);
     cmd.env("TERM", "xterm-256color");
     // We paint 24-bit colour. Without this, apps round their colours to the
     // 256-colour table: Claude Code's #f8f8f2 text arrives as pure white.

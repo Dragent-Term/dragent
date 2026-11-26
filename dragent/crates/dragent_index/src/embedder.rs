@@ -31,6 +31,25 @@ pub struct Embedder {
     model: TextEmbedding,
 }
 
+/// Minimal embedding surface consumed by the indexing batches. The production
+/// [`Embedder`] implements it; tests inject a fake that counts calls, proving
+/// a second worktree of the same repo re-embeds nothing unchanged.
+pub trait EmbedText {
+    fn embed_texts(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>>;
+}
+
+impl EmbedText for Embedder {
+    fn embed_texts(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        self.embed(texts)
+    }
+}
+
+impl EmbedText for dragent_resource_lifecycle::ResourceLease<Embedder> {
+    fn embed_texts(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        self.embed(texts)
+    }
+}
+
 impl Embedder {
     /// Load the embedding model (downloads to the model cache dir on first use).
     pub fn load() -> Result<Self> {

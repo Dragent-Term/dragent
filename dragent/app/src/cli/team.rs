@@ -226,6 +226,7 @@ pub(crate) fn led_by(pane: &str) -> Option<Team> {
         .team(TeamRequest::Resolve {
             pane: Some(pane.to_string()),
             terminal: None,
+            identity: None,
         })
         .ok()?
     else {
@@ -465,6 +466,7 @@ pub(crate) fn set_lead(
                 pane: Some(pane.to_string()),
                 terminal: None,
                 agent: Some(agent.to_string()),
+                ..Default::default()
             },
             model: model.map(str::to_string),
         })
@@ -525,6 +527,9 @@ mod tests {
         prompting: Vec<String>,
         /// The app isn't open.
         closed: bool,
+        /// The agent conversation running in each pane, as its session
+        /// record knows it (the host reads the records).
+        identities: std::collections::HashMap<String, dragent_host::team::SessionIdentity>,
     }
 
     impl Fake {
@@ -542,6 +547,7 @@ mod tests {
                 real_git: false,
                 prompting: Vec::new(),
                 closed: false,
+                identities: Default::default(),
             }
         }
 
@@ -559,7 +565,23 @@ mod tests {
 
     impl Services for Fake {
         fn team(&mut self, request: TeamRequest) -> Result<TeamResponse, String> {
+            // As the host does: who the caller is comes from its session.
+            let request = match request {
+                TeamRequest::Resolve { pane, terminal, .. } => TeamRequest::Resolve {
+                    identity: pane.as_ref().and_then(|pane| self.identities.get(pane)).cloned(),
+                    pane,
+                    terminal,
+                },
+                request => request,
+            };
             self.store.execute(request)
+        }
+        fn identity(
+            &mut self,
+            pane: Option<&str>,
+            _terminal: Option<&str>,
+        ) -> Option<dragent_host::team::SessionIdentity> {
+            self.identities.get(pane?).cloned()
         }
         fn app_open(&mut self) -> Result<(), String> {
             if self.closed {
@@ -784,6 +806,173 @@ mod tests {
     }
 
     /// A team led from `lead-pane`: t1 API, t2 Page after it, t3 a review of t1.
+    fn conversation(id: &str) -> dragent_host::team::SessionIdentity {
+        dragent_host::team::SessionIdentity {
+            conversation: id.into(),
+            agent: "claude".into(),
+        }
+    }
+
+    /// A planned team whose lead runs conversation `lead-conv`, which the
+    /// team learned from the lead's first command.
+    fn planned_with_conversation(dir: &Scratch) -> (Fake, String) {
+        let (mut host, team) = planned(dir);
+        host.identities.insert("lead-pane".into(), conversation("lead-conv"));
+        call_with("team_status", &json!({"team": team}), &lead(), &mut host).unwrap();
+        let seat = host.store.team(&team).unwrap().lead.clone().unwrap();
+        assert_eq!(seat.conversation.as_deref(), Some("lead-conv"));
+        assert_eq!(seat.agent.as_deref(), Some("claude"));
+        (host, team)
+    }
+
+    fn resumed_lead() -> Caller {
+        Caller {
+            pane: Some("lead-pane-2".into()),
+            terminal: Some("term-lead-2".into()),
+            agent: true,
+            mcp: false,
+        }
+    }
+
+    #[test]
+    fn a_lead_resumed_in_a_new_pane_still_leads() {
+        let dir = scratch();
+        let (mut host, team) = planned_with_conversation(&dir);
+        host.identities.insert("lead-pane-2".into(), conversation("lead-conv"));
+        // A lead-only command from the new pane works…
+        let edited = call_with(
+            "task_edit",
+            &json!({"team": team, "task": "t2", "title": "Invite form"}),
+            &resumed_lead(),
+            &mut host,
+        )
+        .unwrap();
+        assert_eq!(edited["title"], "Invite form", "{edited}");
+        // …and the seat moved there, on the team's record.
+        let current = host.store.team(&team).unwrap();
+        let seat = current.lead.clone().unwrap();
+        assert_eq!(seat.pane.as_deref(), Some("lead-pane-2"));
+        assert_eq!(seat.terminal.as_deref(), Some("term-lead-2"));
+        assert!(current.events.iter().any(|event| matches!(
+            &event.change,
+            Change::Reseated { party: Party::Lead, pane: Some(pane), .. } if pane == "lead-pane-2"
+        )));
+        // The old pane, now running another conversation, no longer leads.
+        host.identities.insert("lead-pane".into(), conversation("new-chat"));
+        assert!(call_with(
+            "task_edit",
+            &json!({"team": team, "task": "t2", "title": "Old"}),
+            &lead(),
+            &mut host,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn another_conversation_in_a_new_pane_cannot_take_the_lead() {
+        let dir = scratch();
+        let (mut host, team) = planned_with_conversation(&dir);
+        host.identities.insert("lead-pane-2".into(), conversation("other-conv"));
+        let refused = call_with(
+            "task_edit",
+            &json!({"team": team, "task": "t2", "title": "Mine now"}),
+            &resumed_lead(),
+            &mut host,
+        )
+        .unwrap_err();
+        assert!(refused.contains("can only look"), "{refused}");
+        // The same conversation of another agent doesn't either.
+        host.identities.insert(
+            "lead-pane-2".into(),
+            dragent_host::team::SessionIdentity {
+                conversation: "lead-conv".into(),
+                agent: "codex".into(),
+            },
+        );
+        assert!(call_with(
+            "task_edit",
+            &json!({"team": team, "task": "t2", "title": "Mine now"}),
+            &resumed_lead(),
+            &mut host,
+        )
+        .is_err());
+        // A session with no known conversation never does.
+        host.identities.remove("lead-pane-2");
+        assert!(call_with("task_edit", &json!({"team": team, "task": "t2", "title": "x"}), &resumed_lead(), &mut host).is_err());
+        let current = host.store.team(&team).unwrap();
+        assert_eq!(current.lead.as_ref().unwrap().pane.as_deref(), Some("lead-pane"));
+        assert!(!current.events.iter().any(|event| matches!(event.change, Change::Reseated { .. })));
+    }
+
+    #[test]
+    fn a_worker_resumed_in_a_new_pane_still_reports_on_its_task() {
+        let dir = scratch();
+        let (mut host, team) = planned_with_conversation(&dir);
+        host.will_start("worker-1", "/work/invite-api", Some("invite-api-t1"));
+        call_with("task_start", &json!({"team": team, "tasks": ["t1"]}), &lead(), &mut host).unwrap();
+        host.branches.insert("/work/invite-api".into(), "invite-api-t1".into());
+        // The worker's first command teaches the team its conversation.
+        host.identities.insert("worker-1".into(), conversation("worker-conv"));
+        call_with("msg_inbox", &json!({}), &agent_in("worker-1"), &mut host).unwrap();
+        // Resumed in a new pane, it still finishes its own task.
+        host.identities.insert("worker-1b".into(), conversation("worker-conv"));
+        let done = call_with(
+            "task_done",
+            &json!({"summary": "POST /invites works; tests pass"}),
+            &agent_in("worker-1b"),
+            &mut host,
+        )
+        .unwrap();
+        assert_eq!(done["id"], "t1", "{done}");
+        let current = host.store.team(&team).unwrap();
+        let task = current.task("t1").unwrap();
+        assert_eq!(task.status, TaskStatus::Done);
+        assert_eq!(task.worker.as_ref().unwrap().pane.as_deref(), Some("worker-1b"));
+    }
+
+    #[test]
+    fn team_lead_take_is_for_the_leads_own_conversation_or_the_person() {
+        let dir = scratch();
+        let (mut host, team) = planned_with_conversation(&dir);
+        // Another agent's conversation is refused, with what the person can do.
+        host.identities.insert("intruder".into(), conversation("other-conv"));
+        let refused = call_with("team_take_lead", &json!({"team": team}), &agent_in("intruder"), &mut host)
+            .unwrap_err();
+        assert!(
+            refused.contains(&format!("dragent team lead --take --team {team} --pane intruder")),
+            "{refused}"
+        );
+        assert_eq!(host.store.team(&team).unwrap().lead.as_ref().unwrap().pane.as_deref(), Some("lead-pane"));
+        // The lead's own conversation in a new pane takes it (by contact
+        // already; the command then says so).
+        host.identities.insert("lead-pane-2".into(), conversation("lead-conv"));
+        let taken = call_with("team_take_lead", &json!({"team": team}), &resumed_lead(), &mut host).unwrap();
+        assert_eq!(taken["taken"], false, "{taken}");
+        assert_eq!(host.store.team(&team).unwrap().lead.as_ref().unwrap().pane.as_deref(), Some("lead-pane-2"));
+        // The person may seat any session.
+        let taken = call_with(
+            "team_take_lead",
+            &json!({"team": team, "pane": "person-choice"}),
+            &person(),
+            &mut host,
+        )
+        .unwrap();
+        assert_eq!(taken["taken"], true, "{taken}");
+        let current = host.store.team(&team).unwrap();
+        let seat = current.lead.clone().unwrap();
+        assert_eq!(seat.pane.as_deref(), Some("person-choice"));
+        assert_eq!(seat.agent.as_deref(), Some("claude"), "keeps the lead's agent");
+        assert!(current.events.iter().any(|event| matches!(
+            event.change,
+            Change::Reseated { reason: dragent_host::team::ReseatReason::Taken, .. }
+        )));
+        // `team lead --take` on the command line asks for this tool.
+        let flags = Flags::parse(&["lead".into(), "--take".into(), "--team".into(), team.clone()]).unwrap();
+        let parsed = parse("team", &flags).unwrap().unwrap();
+        assert_eq!(parsed.tool, "team_take_lead");
+        assert_eq!(parsed.arguments["team"], json!(team));
+    }
+
     fn planned(dir: &Scratch) -> (Fake, String) {
         let mut host = Fake::new(TeamStore::open(dir.0.join("teams")));
         let project = dir.0.join("project").display().to_string();
@@ -1421,6 +1610,93 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().starts_with("dragent-"))
             .count();
         assert_eq!(leftovers, 0, "scratch index and patches are removed");
+    }
+
+    #[test]
+    fn work_already_in_the_checkout_is_recorded_not_reapplied() {
+        let dir = scratch();
+        let project = dir.0.join("project");
+        git(&project, &["init", "-q", "-b", "main"]);
+        std::fs::write(project.join("a.txt"), "one\n").unwrap();
+        git(&project, &["add", "a.txt"]);
+        git(&project, &["commit", "-q", "-m", "first"]);
+        let mut host = plan_of(
+            &dir,
+            &[
+                json!({"title": "Both files", "prompt": "Add x and y"}),
+                json!({"title": "Just x", "prompt": "Add x"}),
+                json!({"title": "x and z", "prompt": "Add x and z"}),
+            ],
+        );
+        host.real_git = true;
+        let worktree = |n: u32| dir.0.join(format!("wt{n}"));
+        for n in 1..=3 {
+            host.will_start(&format!("pane-{n}"), &worktree(n).display().to_string(), Some(&format!("b-t{n}")));
+        }
+        call_with("task_start", &json!({}), &lead(), &mut host).unwrap();
+        let base = match &host.asked[0] {
+            requests::Request::CreateWorkspace { base_branch, .. } => base_branch.clone().unwrap(),
+            other => panic!("{other:?}"),
+        };
+        let files: [&[(&str, &str)]; 3] = [
+            &[("x.txt", "x\n"), ("y.txt", "y\n")],
+            &[("x.txt", "x\n")],
+            &[("x.txt", "x\n"), ("z.txt", "z\n")],
+        ];
+        for (n, written) in (1..=3).zip(files) {
+            let path = worktree(n).display().to_string();
+            git(&project, &["worktree", "add", "-q", "-b", &format!("b-t{n}"), &path, &base]);
+            for (name, text) in written {
+                std::fs::write(worktree(n).join(name), text).unwrap();
+            }
+            git(&worktree(n), &["add", "-A"]);
+            git(&worktree(n), &["commit", "-q", "-m", "work"]);
+            call_with("task_done", &json!({"summary": "Done"}), &agent_in(&format!("pane-{n}")), &mut host)
+                .unwrap();
+        }
+        call_with("task_integrate", &json!({"tasks": ["t1"]}), &lead(), &mut host).unwrap();
+
+        // --already-applied is refused while some of t3's changes are missing.
+        let refused = call_with(
+            "task_integrate",
+            &json!({"tasks": ["t3"], "already_applied": true}),
+            &lead(),
+            &mut host,
+        )
+        .unwrap_err();
+        let failure = dragent_host::outcome::Failure::from_error(&refused);
+        assert_eq!(failure.code, "not_already_applied", "{refused}");
+        assert!(failure.message.contains("z.txt"), "{refused}");
+        assert!(!project.join("z.txt").exists());
+
+        // t2's change came in with t1: noticed, recorded, nothing touched.
+        let done = call_with("task_integrate", &json!({"tasks": ["t2"]}), &lead(), &mut host).unwrap();
+        assert!(done["integrated"][0]["note"].as_str().unwrap().contains("already in the checkout"), "{done}");
+        let t2 = call_with("task_show", &json!({"task": "t2"}), &lead(), &mut host).unwrap();
+        assert_eq!(t2["stage"], "integrated");
+        assert_eq!(std::fs::read_to_string(project.join("x.txt")).unwrap(), "x\n");
+
+        // t3's is only partly there: still a conflict, naming the file.
+        let refused = call_with("task_integrate", &json!({"tasks": ["t3"]}), &lead(), &mut host).unwrap_err();
+        let failure = dragent_host::outcome::Failure::from_error(&refused);
+        assert_eq!(failure.code, "integration_conflict", "{refused}");
+        assert!(failure.message.contains("x.txt"), "{refused}");
+        assert!(!project.join("z.txt").exists());
+
+        // Once it's all there, --already-applied records it.
+        std::fs::write(project.join("z.txt"), "z\n").unwrap();
+        let done = call_with(
+            "task_integrate",
+            &json!({"tasks": ["t3"], "already_applied": true}),
+            &lead(),
+            &mut host,
+        )
+        .unwrap();
+        assert!(done["integrated"][0]["note"].is_string(), "{done}");
+        // The command line asks for it with --already-applied.
+        let flags = Flags::parse(&["integrate".into(), "t3".into(), "--already-applied".into()]).unwrap();
+        let parsed = parse("tasks", &flags).unwrap().unwrap();
+        assert_eq!(parsed.arguments["already_applied"], json!(true));
     }
 
     #[test]
@@ -2349,6 +2625,7 @@ mod tests {
                 pane: None,
                 terminal: Some("term-worker".into()),
                 agent: Some("claude".into()),
+                ..Default::default()
             },
         })
         .unwrap();

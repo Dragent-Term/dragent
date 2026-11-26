@@ -116,8 +116,13 @@ while [ $# -gt 0 ]; do
       done
       break
       ;;
-    --*)
-      echo "scripts/dev.sh: unknown option: $1 (see --help)" >&2
+    -*)
+      echo "scripts/dev.sh: unknown option: $1 (see --help; app options go after --)" >&2
+      exit 1
+      ;;
+    account|server|fresh|release-profile)
+      # A forgotten "--" would otherwise start local mode without a word.
+      echo "scripts/dev.sh: did you mean --$1? (app arguments go after --)" >&2
       exit 1
       ;;
     *)

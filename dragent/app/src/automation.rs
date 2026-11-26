@@ -232,6 +232,11 @@ fn handle(
             let Some(text) = req.get("text").and_then(|t| t.as_str()) else {
                 return json!({"ok": false, "error": "run requires text"});
             };
+            // Benchmark hook (DRAGENT_BENCH_INPUT=1, dev only): command
+            // submission is the key-input-equivalent event for latency timing.
+            // Native only: bench is not compiled for wasm.
+            #[cfg(not(target_family = "wasm"))]
+            crate::bench::note_key_received();
             // Same submission path as the input bar on Windows: Ctrl-U clears
             // any stray line state, then the command and CR.
             writer.write(b"\x15");

@@ -34,6 +34,7 @@ const RESUMABLE: &[&str] = &[
     "muse",
 ];
 
+#[track_caller]
 fn ready_pids(h: &Harness, terminal: &str) -> (i32, i32) {
     let text = wait(|| {
         let t = h.output(terminal);
@@ -108,8 +109,20 @@ fn launch_command(h: &Harness, pane: Uuid, command: &str) -> String {
         .id
 }
 
+#[track_caller]
 fn used(pane: Uuid) -> agent_sessions::AgentSession {
-    wait(|| agent_sessions::load(pane).filter(|r| r.used))
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let record = agent_sessions::load(pane);
+        if let Some(record) = record.clone().filter(|r| r.used) {
+            return record;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the submitted prompt was not recorded: {record:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
 }
 
 #[test]

@@ -41,6 +41,13 @@ pub const CURSOR_BLINK_RATE_MAX_MS: u32 = 2000;
 pub const AUTO_SAVE_DELAY_MIN_MS: u32 = 100;
 pub const AUTO_SAVE_DELAY_MAX_MS: u32 = 10000;
 
+// Scrollback bounds live in `dragent_terminal` (single source of truth — the
+// grid enforces the same limits); re-exported here for settings UI + tests.
+pub use dragent_terminal::{
+    SCROLLBACK_DEFAULT_LINES as SCROLLBACK_LINES_DEFAULT,
+    SCROLLBACK_MAX_LINES as SCROLLBACK_LINES_MAX, SCROLLBACK_MIN_LINES as SCROLLBACK_LINES_MIN,
+};
+
 /// How macOS Option keys act in the terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -144,6 +151,11 @@ pub struct TerminalPrefs {
     /// `None` = platform default (Linux pastes, elsewhere not).
     #[serde(default)]
     pub middle_click_paste: Option<bool>,
+    /// Kept terminal history, in lines. There is no unlimited mode: values
+    /// clamp to `[SCROLLBACK_LINES_MIN, SCROLLBACK_LINES_MAX]`, and a stored
+    /// `0` (the legacy unlimited marker) loads as the default.
+    #[serde(default = "default_scrollback_lines")]
+    pub scrollback_lines: usize,
 }
 
 fn default_font_size() -> f32 {
@@ -168,6 +180,10 @@ fn default_auto_save_delay_ms() -> u32 {
     1000
 }
 
+fn default_scrollback_lines() -> usize {
+    SCROLLBACK_LINES_DEFAULT
+}
+
 impl Default for TerminalPrefs {
     fn default() -> Self {
         Self {
@@ -185,6 +201,7 @@ impl Default for TerminalPrefs {
             copy_trims_gutter: true,
             word_separator: None,
             middle_click_paste: None,
+            scrollback_lines: default_scrollback_lines(),
         }
     }
 }
@@ -211,6 +228,17 @@ impl TerminalPrefs {
         match self.middle_click_paste {
             Some(v) => v,
             None => cfg!(target_os = "linux"),
+        }
+    }
+
+    /// Effective scrollback cap, in lines. A stored `0` (legacy unlimited)
+    /// loads as the default; anything else clamps to the mandatory bounds.
+    pub fn clamped_scrollback_lines(&self) -> usize {
+        if self.scrollback_lines == 0 {
+            SCROLLBACK_LINES_DEFAULT
+        } else {
+            self.scrollback_lines
+                .clamp(SCROLLBACK_LINES_MIN, SCROLLBACK_LINES_MAX)
         }
     }
 
@@ -405,6 +433,37 @@ impl EditorSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_prefs_scrollback_cap() {
+        // Fresh default is 10,000 — and legacy files without the key agree.
+        assert_eq!(TerminalPrefs::default().scrollback_lines, 10_000);
+        let legacy: EditorSettings = serde_json::from_str(r#"{"vim_mode_enabled":true}"#).unwrap();
+        assert_eq!(legacy.terminal.clamped_scrollback_lines(), 10_000);
+        // A stored 0 (legacy unlimited marker) loads as the default.
+        let zero: EditorSettings =
+            serde_json::from_str(r#"{"terminal":{"scrollback_lines":0}}"#).unwrap();
+        assert_eq!(zero.terminal.scrollback_lines, 0);
+        assert_eq!(zero.terminal.clamped_scrollback_lines(), 10_000);
+        // Anything else clamps to the mandatory [1_000, 200_000].
+        let mut p = TerminalPrefs::default();
+        p.scrollback_lines = 500;
+        assert_eq!(p.clamped_scrollback_lines(), 1_000);
+        p.scrollback_lines = 1_000;
+        assert_eq!(p.clamped_scrollback_lines(), 1_000);
+        p.scrollback_lines = 50_000;
+        assert_eq!(p.clamped_scrollback_lines(), 50_000);
+        p.scrollback_lines = 200_000;
+        assert_eq!(p.clamped_scrollback_lines(), 200_000);
+        p.scrollback_lines = 999_999;
+        assert_eq!(p.clamped_scrollback_lines(), 200_000);
+        // Round-trips through JSON.
+        p.scrollback_lines = 25_000;
+        let json = serde_json::to_string(&p).unwrap();
+        let back: TerminalPrefs = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.scrollback_lines, 25_000);
+        assert_eq!(back.clamped_scrollback_lines(), 25_000);
+    }
 
     #[test]
     fn terminal_prefs_default_from_legacy_json() {

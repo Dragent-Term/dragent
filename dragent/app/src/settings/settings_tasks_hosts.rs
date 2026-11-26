@@ -41,6 +41,10 @@ pub enum TaskHostAction {
     RemoveRoutingDisabled(String),
     ToggleRoutingDisabledTarget(String),
     ToggleProbeSkippedTarget(String),
+    /// Save the cap on agents and the memory limit; empty means none.
+    SaveResourceLimits,
+    /// Remove both.
+    ClearResourceLimits,
 }
 
 fn task_act(action: TaskHostAction) -> SettingsAction {
@@ -55,11 +59,99 @@ pub struct TaskHostState {
     pub display_label_editor: ViewHandle<InputEditor>,
     pub worktree_location_editor: ViewHandle<InputEditor>,
     pub routing_disabled_editor: ViewHandle<InputEditor>,
+    pub max_agents_editor: ViewHandle<InputEditor>,
+    pub memory_limit_editor: ViewHandle<InputEditor>,
     pub repo_draft: String,
     pub team_draft: String,
     pub display_label_draft: String,
     pub worktree_location_draft: String,
     pub routing_disabled_draft: String,
+    pub max_agents_draft: String,
+    pub memory_limit_draft: String,
+    /// Why the limits couldn't be saved, or that they were.
+    pub limits_note: Option<String>,
+}
+
+/// [`make_editor`] holding `text`.
+fn limit_editor(
+    ctx: &mut ViewContext<SettingsView>,
+    ui: FamilyId,
+    theme: Theme,
+    placeholder: &str,
+    key: &str,
+    text: &str,
+    update: fn(&mut TaskHostState, String),
+) -> ViewHandle<InputEditor> {
+    let editor = make_editor(ctx, ui, theme, placeholder, key, update);
+    ctx.update_view(&editor, |editor, ctx| editor.set_text(text, ctx));
+    editor
+}
+
+const GB: f64 = (1u64 << 30) as f64;
+
+/// The limits as typed: agents at once, and bytes an agent may hold. Empty
+/// is none.
+fn limits_from(agents: &str, memory: &str) -> Result<(Option<usize>, Option<u64>), String> {
+    let (agents, memory) = (agents.trim(), memory.trim());
+    let agents = match agents {
+        "" => None,
+        _ => match agents.parse::<usize>() {
+            Ok(n) if n > 0 => Some(n),
+            _ => return Err("How many agents at once? Give a whole number, or leave it empty.".into()),
+        },
+    };
+    let memory = match memory {
+        "" => None,
+        _ => match memory.replace(',', ".").parse::<f64>() {
+            Ok(gb) if (0.25..=4096.0).contains(&gb) => Some((gb * GB) as u64),
+            _ => return Err("How much memory per agent? Give GB (0.25 or more), or leave it empty.".into()),
+        },
+    };
+    Ok((agents, memory))
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn save_limits((max_agents, agent_memory_limit_bytes): (Option<usize>, Option<u64>)) -> Result<(), String> {
+    dragent_host::resources::ResourceLimits { max_agents, agent_memory_limit_bytes }
+        .save(&dragent_paths::organisation_dir())
+}
+
+#[cfg(target_family = "wasm")]
+fn save_limits(_limits: (Option<usize>, Option<u64>)) -> Result<(), String> {
+    Ok(())
+}
+
+/// The limits that are set, as their fields show them.
+#[cfg(not(target_family = "wasm"))]
+fn saved_limits() -> (String, String) {
+    let limits = dragent_host::resources::ResourceLimits::load(&dragent_paths::organisation_dir());
+    (
+        limits.max_agents().map(|n| n.to_string()).unwrap_or_default(),
+        limits
+            .agent_memory_limit()
+            .map(|bytes| format!("{}", (bytes as f64 / GB * 100.0).round() / 100.0))
+            .unwrap_or_default(),
+    )
+}
+
+#[cfg(target_family = "wasm")]
+fn saved_limits() -> (String, String) {
+    Default::default()
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    #[test]
+    fn limits_are_read_as_typed_and_nonsense_is_said_rather_than_dropped() {
+        assert_eq!(limits_from("", " "), Ok((None, None)));
+        assert_eq!(limits_from("6", "2.5"), Ok((Some(6), Some((2.5 * GB) as u64))));
+        assert_eq!(limits_from("", "1,5"), Ok((None, Some((1.5 * GB) as u64))));
+        for (agents, memory) in [("0", ""), ("many", ""), ("-1", ""), ("", "0"), ("", "x"), ("", "NaN")] {
+            assert!(limits_from(agents, memory).is_err(), "{agents} {memory}");
+        }
+    }
 }
 
 fn make_editor(
@@ -96,6 +188,7 @@ fn make_editor(
 
 impl TaskHostState {
     pub fn new(ctx: &mut ViewContext<SettingsView>, ui: FamilyId, theme: Theme) -> Self {
+        let (max_agents, memory) = saved_limits();
         Self {
             repo_add_editor: make_editor(ctx, ui, theme, "owner/repo", "repo_add", |s, t| {
                 s.repo_draft = t
@@ -127,11 +220,20 @@ impl TaskHostState {
                 "routing_disabled",
                 |s, t| s.routing_disabled_draft = t,
             ),
+            max_agents_editor: limit_editor(ctx, ui, theme, "No cap", "max_agents", &max_agents, |s, t| {
+                s.max_agents_draft = t
+            }),
+            memory_limit_editor: limit_editor(ctx, ui, theme, "GB per agent", "memory_limit", &memory, |s, t| {
+                s.memory_limit_draft = t
+            }),
             repo_draft: String::new(),
             team_draft: String::new(),
             display_label_draft: String::new(),
             worktree_location_draft: String::new(),
             routing_disabled_draft: String::new(),
+            max_agents_draft: max_agents,
+            memory_limit_draft: memory,
+            limits_note: None,
         }
     }
 
@@ -143,6 +245,8 @@ impl TaskHostState {
             &self.display_label_editor,
             &self.worktree_location_editor,
             &self.routing_disabled_editor,
+            &self.max_agents_editor,
+            &self.memory_limit_editor,
         ] {
             let editor = editor.clone();
             ctx.update_view(&editor, |e, c| {
@@ -374,6 +478,28 @@ impl SettingsView {
                 self.app_settings.hosts.toggle_probe_skipped(target);
                 self.app_settings.save();
                 ctx.emit(SettingsEvent::AppSettingsChanged);
+            }
+            TaskHostAction::SaveResourceLimits => {
+                let saved = limits_from(
+                    &self.task_hosts.max_agents_draft,
+                    &self.task_hosts.memory_limit_draft,
+                )
+                .and_then(save_limits);
+                self.task_hosts.limits_note = Some(match saved {
+                    Ok(()) => "Saved.".into(),
+                    Err(error) => error,
+                });
+            }
+            TaskHostAction::ClearResourceLimits => {
+                self.task_hosts.limits_note = save_limits((None, None)).err();
+                self.task_hosts.max_agents_draft.clear();
+                self.task_hosts.memory_limit_draft.clear();
+                for editor in [
+                    self.task_hosts.max_agents_editor.clone(),
+                    self.task_hosts.memory_limit_editor.clone(),
+                ] {
+                    ctx.update_view(&editor, |editor, ctx| editor.set_text("", ctx));
+                }
             }
         }
         ctx.notify();
@@ -788,6 +914,37 @@ pub fn render_host_settings_card(
         .with_spacing(12.0)
         .with_child(mui::eyebrow(ui, theme, "Hosts"))
         .with_child(card_rows(theme, host_rows));
+
+    // Native only: the web viewer runs no agents.
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let caption = view.task_hosts.limits_note.clone().unwrap_or_else(|| {
+            "Left empty, any number of agents start; new ones wait only while memory is critically low. \
+             An agent over the memory limit is paused until you resume it; with no limit set, only one \
+             that takes over a quarter of the memory while it is critically low."
+                .into()
+        });
+        let save = small_add_button(view, theme, "resources-save", "Save", TaskHostAction::SaveResourceLimits);
+        let clear = small_add_button(view, theme, "resources-clear", "Clear", TaskHostAction::ClearResourceLimits);
+        let editors = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(8.0)
+            .with_child(Expanded::new(1.0, text_input(view, theme, &view.task_hosts.max_agents_editor)).finish())
+            .with_child(Expanded::new(1.0, text_input(view, theme, &view.task_hosts.memory_limit_editor)).finish())
+            .with_child(save)
+            .with_child(clear)
+            .finish();
+        let mut resource_rows = vec![padded(mui::settings_row(
+            ui,
+            theme,
+            "Agents at once · memory limit per agent (GB)",
+            vec![],
+            Some(mui::text(ui, caption, 12.0, theme.sub_text())),
+            None,
+        ))];
+        resource_rows.push(editors);
+        column = column.with_child(setting_group(theme, ui, "Resources", vec![mui::list_card(theme, resource_rows)]));
+    }
 
     // SSH workspace routing.
     let mut routing_rows = vec![toggle_row(

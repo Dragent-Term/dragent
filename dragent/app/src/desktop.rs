@@ -89,6 +89,15 @@ mod big_alloc_trace {
     }
 }
 
+// Experimental allocator swap, off by default (`--features mimalloc`): the
+// binary links exactly one global allocator, so the tracer is compiled out
+// while mimalloc is in. This module is native-only; the wasm viewer never
+// sets the feature.
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(not(feature = "mimalloc"))]
 #[global_allocator]
 static GLOBAL: big_alloc_trace::TracingAlloc = big_alloc_trace::TracingAlloc;
 
@@ -407,6 +416,12 @@ pub fn run() -> Result<()> {
 
     big_alloc_trace::init();
     init_logging();
+    // Dev-only benchmark hooks (scripts/bench): startup timer, --bench-mem
+    // 5 s memory logger. No-ops unless the dev build is asked for them.
+    crate::bench::note_process_start();
+    crate::bench::maybe_start_mem_logger();
+    crate::bench::install_frame_hook();
+    crate::perf_overlay::maybe_autostart();
     init_tls_provider();
     // If an update was downloaded on a previous run, hand off to its installer
     // now (silently upgrades in place and relaunches) — before any UI exists.
@@ -464,6 +479,14 @@ pub fn run() -> Result<()> {
             manager.set_enabled(false);
         }
     }
+    crate::startup_timing::mark(crate::startup_timing::Phase::Settings);
+    // The host service's first answer, whichever caller reaches it first.
+    dragent_host::client::on_first_connect(|| {
+        crate::startup_timing::mark(crate::startup_timing::Phase::Host)
+    });
+    // Keep the host up while the app runs; it closes by itself when idle
+    // with no app, and this brings it straight back if it goes away.
+    dragent_host::client::hold_presence();
 
     // NOTE: no token pre-warm here — deliberately. The server ROTATES refresh
     // tokens on every exchange and revokes the whole token family if a revoked
@@ -657,6 +680,9 @@ pub fn run() -> Result<()> {
             let options = crate::window_frame::launch_options(ctx);
             let (window_id, _) = ctx.add_window(options, root_view::RootView::new);
             crate::window_frame::set_main_window(window_id);
+            crate::startup_timing::mark(crate::startup_timing::Phase::Window);
+            // Benchmark hook: process-launch → first-window timing (dev only).
+            crate::bench::note_window_open();
         }
     });
 

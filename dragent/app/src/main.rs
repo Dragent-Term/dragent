@@ -6,6 +6,19 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() -> anyhow::Result<()> {
+    // Startup timing counts from here (see `startup_timing`).
+    dragent::startup_timing::process_started();
+    // Benchmark timing starts at process launch (dev-only hooks in bench.rs;
+    // native only: bench is not compiled for wasm).
+    #[cfg(not(target_family = "wasm"))]
+    {
+        dragent::bench::note_process_start();
+        // Headless startup probe for scripts/bench (dev builds only): prints
+        // the `[bench] startup …` line and exits before any UI boots.
+        if dragent::bench::probe_startup_and_exit() {
+            return Ok(());
+        }
+    }
     // Started from a Dragent terminal, this process inherits that terminal's
     // daemon hand-off variables. Only the PTY daemon, which its predecessor
     // or supervisor starts with them, may act on them; anyone else would

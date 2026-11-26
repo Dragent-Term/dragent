@@ -18,9 +18,19 @@ pub mod agent_history;
 #[cfg(not(target_family = "wasm"))]
 pub mod browser_cookies;
 #[cfg(not(target_family = "wasm"))]
+pub mod build_cache;
+#[cfg(not(target_family = "wasm"))]
+pub mod build_slots;
+#[cfg(not(target_family = "wasm"))]
 pub mod token_usage;
 #[cfg(not(target_family = "wasm"))]
 pub mod agent_user_hooks;
+#[cfg(not(target_family = "wasm"))]
+pub mod agent_memory;
+#[cfg(not(target_family = "wasm"))]
+pub mod start_gate;
+#[cfg(not(target_family = "wasm"))]
+pub mod start_wait;
 #[cfg(not(target_family = "wasm"))]
 pub mod agent_quiet;
 pub mod agent_sessions;
@@ -56,7 +66,13 @@ pub mod scheduler;
 pub mod screen_protocol;
 pub mod server;
 #[cfg(not(target_family = "wasm"))]
+pub mod service_lifecycle;
+#[cfg(not(target_family = "wasm"))]
 pub mod stale;
+#[cfg(not(target_family = "wasm"))]
+pub mod strays;
+#[cfg(not(target_family = "wasm"))]
+pub mod testing;
 #[cfg(not(target_family = "wasm"))]
 mod terminal_screen;
 pub mod team;

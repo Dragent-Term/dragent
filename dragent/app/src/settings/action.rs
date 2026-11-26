@@ -284,6 +284,9 @@ pub enum SettingsAction {
     SetWordSeparator(Option<String>),
     /// Toggle middle-click paste (None = platform default).
     ToggleMiddleClickPaste,
+    /// Kept terminal history, in lines. Always bounded: values outside
+    /// 1,000–200,000 clamp, and a legacy stored `0` loads as the default.
+    SetScrollbackLines(usize),
     // ── Editor behavior ─────────────────────────────────────
     ToggleAutoSave,
     /// Debounced autosave delay in ms (clamped 100–10000).

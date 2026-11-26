@@ -858,11 +858,16 @@ fn companion_real_daemon_input_to_host_event_latency() {
         base: std::path::PathBuf,
         env: Vec<(&'static str, Option<std::ffi::OsString>)>,
         client: Option<HostClient>,
+        services: Option<dragent_host::testing::ServiceGuard>,
     }
     impl Drop for Cleanup {
         fn drop(&mut self) {
             if let Some(client) = &self.client {
                 let _ = client.shutdown();
+            }
+            // Wait for (or kill) every service this test started.
+            if let Some(services) = &mut self.services {
+                services.stop();
             }
             for (name, value) in &self.env {
                 if let Some(value) = value {
@@ -878,6 +883,7 @@ fn companion_real_daemon_input_to_host_event_latency() {
         base: base.clone(),
         env: vec![],
         client: None,
+        services: None,
     };
     for (name, path) in [
         (dragent_host::ENDPOINT_FILE_ENV, base.join("endpoint.json")),
@@ -888,6 +894,7 @@ fn companion_real_daemon_input_to_host_event_latency() {
         cleanup.env.push((name, std::env::var_os(name)));
         std::env::set_var(name, path);
     }
+    cleanup.services = Some(dragent_host::testing::ServiceGuard::new());
     let client = HostClient::ensure_host_with(std::path::Path::new(&executable)).unwrap();
     cleanup.client = Some(client.clone());
     let home = client

@@ -285,6 +285,7 @@ impl TypedActionView for WorkspaceView {
             | WorkspaceAction::OpenPromptAgentInstall { .. }
             | WorkspaceAction::OpenCustomAgentInstall { .. }
             | WorkspaceAction::ClosePromptAgentInstall
+            | WorkspaceAction::FocusPopupTerminal
             | WorkspaceAction::CheckPromptAgentInstall
             | WorkspaceAction::RetryRemoteToolElevated => self.handle_projects_action(action, ctx),
             WorkspaceAction::ToggleLayoutMenu
@@ -702,6 +703,19 @@ impl TypedActionView for WorkspaceView {
             | WorkspaceAction::FocusAgentRun { .. }
             | WorkspaceAction::StopAgentRun { .. }
             | WorkspaceAction::CloseAgentsPanel => self.handle_agents_action(action, ctx),
+            WorkspaceAction::TogglePerfOverlay => {
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    crate::perf_overlay::toggle();
+                }
+                ctx.notify();
+            }
+            WorkspaceAction::ToggleSleepAgent { .. }
+            | WorkspaceAction::ConfirmSleepAgents
+            | WorkspaceAction::KeepAgentsAwake => self.handle_sleep_prompt_action(action, ctx),
+            WorkspaceAction::StartAgentAnyway { .. }
+            | WorkspaceAction::ResumeAgent { .. }
+            | WorkspaceAction::StopHeldAgent { .. } => self.handle_agent_resources_action(action, ctx),
         }
         if self.project_start_visible {
             self.sync_pane_activity(ctx);

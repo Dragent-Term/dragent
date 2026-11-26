@@ -426,6 +426,7 @@ impl View for Popup {
             None,
             false,
             false,
+            None,
         );
         warpui::elements::EventHandler::new(warpui::elements::Align::new(modal).finish())
             .on_left_mouse_down(|event_ctx, _, _| {
@@ -484,36 +485,40 @@ fn a_click_in_the_popup_terminal_keeps_the_keyboard_there() {
         assert!(terminal.read(&app, |view, app| view.pane_has_focus(app)));
         rebuild(&mut app);
 
-        let inside = presenter
+        let body = presenter
             .borrow()
             .position_cache()
             .get_position("popup_terminal")
-            .unwrap()
-            .center();
-        app.update(|ctx| {
-            let event = warpui_core::Event::LeftMouseDown {
-                position: inside,
-                modifiers: Default::default(),
-                click_count: 1,
-                is_first_mouse: false,
-            };
-            let result = presenter.borrow_mut().dispatch_event(event, ctx);
-            for dispatched in result.actions {
-                if let warpui_core::presenter::DispatchedActionKind::Typed(action) =
-                    dispatched.kind
-                {
-                    ctx.dispatch_typed_action_for_view(
-                        window,
-                        dispatched.view_id,
-                        action.as_ref(),
-                    );
+            .unwrap();
+        // The sheet's heading, above the terminal: no control takes a click
+        // there, so it used to reach the page's handler. And the terminal.
+        let heading = Vector2F::new(body.center().x(), body.origin().y() - 20.0);
+        for (place, position) in [("heading", heading), ("terminal", body.center())] {
+            app.update(|ctx| {
+                let event = warpui_core::Event::LeftMouseDown {
+                    position,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    is_first_mouse: false,
+                };
+                let result = presenter.borrow_mut().dispatch_event(event, ctx);
+                for dispatched in result.actions {
+                    if let warpui_core::presenter::DispatchedActionKind::Typed(action) =
+                        dispatched.kind
+                    {
+                        ctx.dispatch_typed_action_for_view(
+                            window,
+                            dispatched.view_id,
+                            action.as_ref(),
+                        );
+                    }
                 }
-            }
-        });
-        assert!(
-            terminal.read(&app, |view, app| view.pane_has_focus(app)),
-            "a click in the pop-up terminal gave the keyboard back to the page"
-        );
+            });
+            assert!(
+                terminal.read(&app, |view, app| view.pane_has_focus(app)),
+                "a click on the pop-up's {place} gave the keyboard back to the page"
+            );
+        }
     });
 }
 

@@ -84,6 +84,22 @@ pub fn build_launch(config: &AgentConfig, prompt: &str) -> String {
     shell
 }
 
+/// `launch` behind a wait for memory in its own terminal. One line joined to
+/// `launch`'s first, so a prompt it carries below still belongs to it.
+pub fn hold_launch(helper: &Path, label: &str, launch: &str) -> String {
+    let helper = helper.to_string_lossy();
+    let org = dragent_paths::organisation_arg();
+    let wait = crate::agent_sessions::WAIT_ARG;
+    if cfg!(windows) {
+        let quote = |text: &str| crate::agent_sessions::quote(text, "pwsh");
+        let (helper, label, org) = (quote(&helper), quote(label), quote(&org));
+        format!("& {helper} {wait} {label} {org}; if ($LASTEXITCODE -eq 0) {{ {launch} }}")
+    } else {
+        let (helper, label, org) = (shell_quote(&helper), shell_quote(label), shell_quote(&org));
+        format!("{helper} {wait} {label} {org} && {launch}")
+    }
+}
+
 /// Merge per-launch overrides over a resolved config: non-blank command
 /// replaces, extra args append, `model` appends `--model <value>`, env
 /// entries overlay. The id/preset/order survive untouched.
@@ -319,6 +335,7 @@ pub fn describe_run(session: &TerminalSession, meta: &RunMeta) -> AgentRun {
         state: AgentRunState::Running,
         started_at: meta.started_at,
         output: String::new(),
+        memory_bytes: None,
         instance_id: meta.instance_id.clone(),
         lease_id: meta.lease_id.clone(),
     }

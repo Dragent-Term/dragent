@@ -14,8 +14,8 @@
 //! session for everyone else.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 /// Queued bytes per subscriber that pause the session's PTY reads.
@@ -107,13 +107,29 @@ impl Subscriber {
         Some(delivery)
     }
 
-    /// Everything queued has been handed to the writer.
-    fn is_drained(&self) -> bool {
-        self.outbox
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .queue
-            .is_empty()
+    /// Everything queued was handed to the writer, after having been
+    /// congested.
+    fn drained_while_congested(&self) -> bool {
+        let outbox = self.outbox.lock().unwrap_or_else(|p| p.into_inner());
+        outbox.queue.is_empty() && outbox.congested_since.is_some()
+    }
+
+    /// Give up on delivering what is queued: end with `Closed` at once.
+    fn drop_backlog(&self) {
+        let mut outbox = self.outbox.lock().unwrap_or_else(|p| p.into_inner());
+        // A session that ended meanwhile already queued its final delivery;
+        // losing it would leave the reader waiting for ever.
+        let last = if outbox.ended {
+            outbox.queue.pop_back()
+        } else {
+            Some(Delivery::Closed)
+        };
+        outbox.queue.clear();
+        outbox.queue.extend(last);
+        outbox.queued_bytes = 0;
+        outbox.congested_since = None;
+        outbox.ended = true;
+        self.ready.notify_all();
     }
 
     fn congested_for(&self) -> Option<Duration> {
@@ -132,84 +148,125 @@ impl Subscriber {
     }
 }
 
-/// Pause/resume hook onto the session's PTY reader.
+/// Pause/resume hook onto the session's PTY reader. Called under the
+/// fan-out's lock so calls arrive in the order the state changed; it must not
+/// block or call back into the fan-out.
 pub type PauseHook = Box<dyn Fn(bool) + Send + Sync>;
+
+/// Everything that decides whether the PTY is read, under one lock. Deciding
+/// and applying in separate steps loses a wake-up: a reader that drains
+/// between "queue is congested" and "paused" would find nothing to resume,
+/// and the program would then wait for ever on a reader that kept up.
+#[derive(Default)]
+struct State {
+    subscribers: Vec<Arc<Subscriber>>,
+    /// What the hook was last told.
+    paused: bool,
+    /// Reading is stopped for an upgrade handoff, whatever subscribers do.
+    held: bool,
+    /// A thread is watching for stuck subscribers.
+    watching: bool,
+    /// Set once the PTY exists (the feed runs before the handle does).
+    pause_hook: Option<PauseHook>,
+    /// Final delivery once the session ended, for late subscribers.
+    finished: Option<Delivery>,
+}
+
+impl State {
+    fn congested(&self) -> bool {
+        self.subscribers.iter().any(|s| s.congested_for().is_some())
+    }
+
+    fn call_hook(&self) {
+        if let Some(hook) = &self.pause_hook {
+            hook(self.paused);
+        }
+    }
+
+    /// Bring the PTY's pause in line with the subscribers.
+    fn update(&mut self) {
+        let paused = self.held || self.congested();
+        if paused != self.paused {
+            self.paused = paused;
+            self.call_hook();
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Fanout {
-    subscribers: Mutex<Vec<Arc<Subscriber>>>,
+    state: Mutex<State>,
     next_id: AtomicU64,
-    paused: AtomicBool,
-    /// Set once the PTY exists (the feed runs before the handle does).
-    pause_hook: OnceLock<PauseHook>,
-    /// Final delivery once the session ended, for late subscribers.
-    finished: Mutex<Option<Delivery>>,
 }
 
 impl Fanout {
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Connect the PTY. Output published before this may already have
+    /// congested a subscriber, so the current state is applied at once.
     pub fn set_pause_hook(&self, hook: PauseHook) {
-        let _ = self.pause_hook.set(hook);
-    }
-
-    fn set_paused(&self, paused: bool) {
-        if self.paused.swap(paused, Ordering::SeqCst) != paused {
-            if let Some(hook) = self.pause_hook.get() {
-                hook(paused);
+        let mut state = self.state();
+        if state.pause_hook.is_none() {
+            state.pause_hook = Some(hook);
+            if state.paused {
+                state.call_hook();
             }
         }
     }
 
-    /// Re-send the current pause state to the PTY (after something else,
-    /// such as an abandoned handoff, changed the reader's pause directly).
-    pub fn reapply_pause(&self) {
-        if self.paused.load(Ordering::SeqCst) {
-            if let Some(hook) = self.pause_hook.get() {
-                hook(true);
-            }
-        }
+    /// Stop (or allow again) reading the PTY for an upgrade handoff. While
+    /// held, a subscriber that drains must not resume reading: output read
+    /// after the handoff snapshot would reach neither service's successor
+    /// state. Always re-sends the state to the PTY.
+    pub fn hold(&self, held: bool) {
+        let mut state = self.state();
+        state.held = held;
+        state.paused = held || state.congested();
+        state.call_hook();
     }
 
     /// Register a subscriber whose queue starts with `catch_up` (replayed
     /// output). Call while holding the replay-ring lock that `publish` also
     /// runs under, so replay and live output can neither overlap nor gap.
-    pub fn subscribe(&self, catch_up: Option<Delivery>) -> Arc<Subscriber> {
+    pub fn subscribe(self: &Arc<Self>, catch_up: Option<Delivery>) -> Arc<Subscriber> {
         self.subscribe_frames(catch_up.into_iter().collect(), false)
     }
 
-    pub fn subscribe_frames(&self, catch_up: Vec<Delivery>, operations: bool) -> Arc<Subscriber> {
+    pub fn subscribe_frames(
+        self: &Arc<Self>,
+        catch_up: Vec<Delivery>,
+        operations: bool,
+    ) -> Arc<Subscriber> {
         let subscriber = Arc::new(Subscriber {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
             operations,
             outbox: Mutex::new(Outbox::default()),
             ready: Condvar::new(),
         });
+        let mut state = self.state();
         for delivery in catch_up {
             subscriber.push(delivery);
         }
-        let finished = self
-            .finished
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone();
-        match finished {
+        match state.finished.clone() {
             Some(end) => {
                 subscriber.push(end);
             }
-            None => self
-                .subscribers
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .push(subscriber.clone()),
+            None => {
+                state.subscribers.push(subscriber.clone());
+                // A large replay alone can congest it.
+                state.update();
+                self.watch_stuck(&mut state);
+            }
         }
         subscriber
     }
 
-    pub fn unsubscribe(self: &Arc<Self>, subscriber: &Subscriber) {
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .retain(|s| s.id != subscriber.id);
-        self.resume_if_clear();
+    pub fn unsubscribe(&self, subscriber: &Subscriber) {
+        let mut state = self.state();
+        state.subscribers.retain(|s| s.id != subscriber.id);
+        state.update();
     }
 
     /// Fan one chunk out to every subscriber (run under the ring lock).
@@ -230,13 +287,9 @@ impl Fanout {
         if bytes.is_empty() {
             return;
         }
+        let mut state = self.state();
         let mut congested = false;
-        for subscriber in self
-            .subscribers
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .iter()
-        {
+        for subscriber in &state.subscribers {
             let delivery = if subscriber.operations {
                 let Some(frame) = frame else { continue };
                 Delivery::Operations(frame.clone())
@@ -248,38 +301,35 @@ impl Fanout {
             };
             congested |= subscriber.push(delivery);
         }
-        if congested && !self.paused.load(Ordering::SeqCst) {
-            self.set_paused(true);
-            self.watch_stuck();
+        if congested {
+            state.update();
+            self.watch_stuck(&mut state);
         }
     }
 
-    /// The writer drained a subscriber's queue: that subscriber is no longer
-    /// holding the session paused.
-    pub fn on_drained(self: &Arc<Self>, subscriber: &Subscriber) {
-        if subscriber.is_drained() {
-            subscriber.clear_congestion();
-            self.resume_if_clear();
-        }
-    }
-
-    fn resume_if_clear(&self) {
-        if !self.paused.load(Ordering::SeqCst) {
+    /// The writer handed a delivery to the socket: once its queue is empty,
+    /// that subscriber is no longer holding the session paused.
+    pub fn on_drained(&self, subscriber: &Subscriber) {
+        // The common case takes only the subscriber's own lock. Output queued
+        // after this look brings the writer back here.
+        if !subscriber.drained_while_congested() {
             return;
         }
-        let any_congested = self
-            .subscribers
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .iter()
-            .any(|s| s.congested_for().is_some());
-        if !any_congested {
-            self.set_paused(false);
+        let mut state = self.state();
+        // Deliveries are only queued under the state lock, so nothing can
+        // congest it again between this check and the update.
+        if subscriber.drained_while_congested() {
+            subscriber.clear_congestion();
+            state.update();
         }
     }
 
-    /// While paused, drop subscribers congested past the timeout.
-    fn watch_stuck(self: &Arc<Self>) {
+    /// While anyone is congested, drop whoever stays so past the timeout.
+    fn watch_stuck(self: &Arc<Self>, state: &mut State) {
+        if state.watching || !state.congested() {
+            return;
+        }
+        state.watching = true;
         let fanout = Arc::downgrade(self);
         let timeout = stuck_timeout();
         std::thread::spawn(move || loop {
@@ -289,13 +339,9 @@ impl Fanout {
             let Some(fanout) = fanout.upgrade() else {
                 return;
             };
-            if !fanout.paused.load(Ordering::SeqCst) {
-                return;
-            }
-            let stuck: Vec<Arc<Subscriber>> = fanout
+            let mut state = fanout.state();
+            let stuck: Vec<Arc<Subscriber>> = state
                 .subscribers
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
                 .iter()
                 .filter(|s| s.congested_for().is_some_and(|d| d >= timeout))
                 .cloned()
@@ -305,14 +351,13 @@ impl Fanout {
                     "terminal subscriber {} stayed congested for {timeout:?}; dropping it",
                     subscriber.id
                 );
-                {
-                    let mut outbox = subscriber.outbox.lock().unwrap_or_else(|p| p.into_inner());
-                    outbox.queue.clear();
-                    outbox.queued_bytes = 0;
-                    outbox.congested_since = None;
-                }
-                subscriber.push(Delivery::Closed);
-                fanout.unsubscribe(&subscriber);
+                subscriber.drop_backlog();
+                state.subscribers.retain(|s| s.id != subscriber.id);
+            }
+            state.update();
+            if !state.congested() {
+                state.watching = false;
+                return;
             }
         });
     }
@@ -320,13 +365,12 @@ impl Fanout {
     /// The session ended: deliver `end` (exit or close) to every subscriber
     /// and to anyone subscribing later.
     pub fn finish(&self, end: Delivery) {
-        *self.finished.lock().unwrap_or_else(|p| p.into_inner()) = Some(end.clone());
-        let subscribers =
-            std::mem::take(&mut *self.subscribers.lock().unwrap_or_else(|p| p.into_inner()));
-        for subscriber in subscribers {
+        let mut state = self.state();
+        state.finished = Some(end.clone());
+        for subscriber in std::mem::take(&mut state.subscribers) {
             subscriber.push(end.clone());
         }
-        self.paused.store(false, Ordering::SeqCst);
+        state.paused = false;
     }
 }
 
@@ -438,6 +482,134 @@ mod tests {
         fanout.publish(0, &vec![b'x'; OUTBOUND_PAUSE_BYTES + 1]);
         assert_eq!(*calls.lock().unwrap(), vec![true]);
         fanout.unsubscribe(&sub);
+        assert_eq!(*calls.lock().unwrap(), vec![true, false]);
+    }
+
+    /// A hook whose PTY state can be asserted, and which lets a test run
+    /// something while a call to it is still being applied.
+    fn hooked(during: impl Fn(bool) + Send + Sync + 'static) -> (Arc<Fanout>, Arc<Mutex<bool>>) {
+        let fanout = Arc::new(Fanout::default());
+        let pty = Arc::new(Mutex::new(false));
+        let applied = pty.clone();
+        fanout.set_pause_hook(Box::new(move |paused| {
+            during(paused);
+            *applied.lock().unwrap() = paused;
+        }));
+        (fanout, pty)
+    }
+
+    /// The reader drains while the publisher is still queueing: the pause
+    /// that follows must not outlive the congestion that caused it.
+    #[test]
+    fn draining_during_a_publish_never_leaves_the_session_paused() {
+        let (fanout, calls) = recording_fanout();
+        let quick = fanout.subscribe(None);
+        let other = fanout.subscribe(None);
+        // The publisher queues for `quick`, then waits here for `other`
+        // (already ended: it takes no output and congests nothing).
+        let mut gate = other.outbox.lock().unwrap();
+        gate.ended = true;
+        let publisher = {
+            let fanout = fanout.clone();
+            std::thread::spawn(move || fanout.publish(0, &vec![b'x'; OUTBOUND_PAUSE_BYTES + 1]))
+        };
+        let delivered = quick.next(Duration::from_secs(5));
+        assert!(matches!(delivered, Some(Delivery::Data { .. })));
+        let drainer = {
+            let (fanout, quick) = (fanout.clone(), quick.clone());
+            std::thread::spawn(move || fanout.on_drained(&quick))
+        };
+        // Give the drain every chance to get in before the pause is decided.
+        std::thread::sleep(Duration::from_millis(200));
+        drop(gate);
+        publisher.join().unwrap();
+        drainer.join().unwrap();
+        assert_ne!(calls.lock().unwrap().last(), Some(&true), "left paused");
+    }
+
+    /// A resume decided after a pause must also reach the PTY after it.
+    #[test]
+    fn a_resume_never_overtakes_the_pause_before_it() {
+        let (entered, pausing) = std::sync::mpsc::channel();
+        let (resumed, seen) = std::sync::mpsc::channel::<()>();
+        let (entered, seen) = (Mutex::new(entered), Mutex::new(seen));
+        let (fanout, pty) = hooked(move |paused| {
+            if paused {
+                entered.lock().unwrap().send(()).unwrap();
+                // Hold the pause back until a resume got ahead, if one can.
+                let _ = seen
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_millis(300));
+            }
+        });
+        let sub = fanout.subscribe(None);
+        let drainer = {
+            let (fanout, sub) = (fanout.clone(), sub.clone());
+            std::thread::spawn(move || {
+                pausing.recv().unwrap();
+                assert!(sub.next(Duration::ZERO).is_some());
+                fanout.on_drained(&sub);
+                let _ = resumed.send(());
+            })
+        };
+        fanout.publish(0, &vec![b'x'; OUTBOUND_PAUSE_BYTES + 1]);
+        drainer.join().unwrap();
+        assert!(!*pty.lock().unwrap(), "the PTY stayed paused");
+    }
+
+    /// The session ends as a stuck subscriber is being dropped: its reader
+    /// still gets a final delivery instead of waiting for ever.
+    #[test]
+    fn dropping_a_stuck_subscriber_keeps_the_final_delivery() {
+        let (fanout, _) = recording_fanout();
+        let sub = fanout.subscribe(None);
+        fanout.publish(0, &vec![b'x'; OUTBOUND_PAUSE_BYTES + 1]);
+        fanout.finish(Delivery::Exit(3));
+        sub.drop_backlog();
+        assert_eq!(sub.next(Duration::ZERO), Some(Delivery::Exit(3)));
+        assert_eq!(sub.next(Duration::ZERO), None);
+    }
+
+    #[test]
+    fn a_handoff_hold_survives_a_draining_subscriber() {
+        let (fanout, pty) = hooked(|_| {});
+        let sub = fanout.subscribe(None);
+        fanout.publish(0, &vec![b'x'; OUTBOUND_PAUSE_BYTES + 1]);
+        fanout.hold(true);
+        while sub.next(Duration::ZERO).is_some() {}
+        fanout.on_drained(&sub);
+        fanout.unsubscribe(&sub);
+        assert!(*pty.lock().unwrap(), "reading resumed during the handoff");
+        fanout.hold(false);
+        assert!(!*pty.lock().unwrap());
+    }
+
+    #[test]
+    fn congestion_before_the_pty_connects_still_pauses_it() {
+        let fanout = Arc::new(Fanout::default());
+        let sub = fanout.subscribe(None);
+        fanout.publish(0, &vec![b'x'; OUTBOUND_PAUSE_BYTES + 1]);
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let log = calls.clone();
+        fanout.set_pause_hook(Box::new(move |paused| log.lock().unwrap().push(paused)));
+        assert_eq!(*calls.lock().unwrap(), vec![true]);
+        drop(sub);
+    }
+
+    /// A replay larger than the limit counts as congestion like live output;
+    /// it used to be marked congested without pausing or being watched, so
+    /// later output queued without bound.
+    #[test]
+    fn a_large_replay_pauses_until_it_drains() {
+        let (fanout, calls) = recording_fanout();
+        let sub = fanout.subscribe(Some(Delivery::Data {
+            base: 0,
+            bytes: vec![b'x'; OUTBOUND_PAUSE_BYTES + 1],
+        }));
+        assert_eq!(*calls.lock().unwrap(), vec![true]);
+        while sub.next(Duration::ZERO).is_some() {}
+        fanout.on_drained(&sub);
         assert_eq!(*calls.lock().unwrap(), vec![true, false]);
     }
 }

@@ -24,6 +24,8 @@ fn host_bin() -> PathBuf {
 
 struct Isolated {
     _guard: std::sync::MutexGuard<'static, ()>,
+    /// Stops the services this test started, pass or fail.
+    services: dragent_host::testing::ServiceGuard,
     base: PathBuf,
     endpoint: PathBuf,
     db: PathBuf,
@@ -47,6 +49,7 @@ impl Isolated {
             std::env::set_var("DRAGENT_WORKSPACE_DB", &db);
         }
         Self {
+            services: dragent_host::testing::ServiceGuard::new(),
             _guard: guard,
             base,
             endpoint,
@@ -61,6 +64,7 @@ impl Isolated {
 
 impl Drop for Isolated {
     fn drop(&mut self) {
+        self.services.stop();
         if let Ok(client) = HostClient::connect_existing() {
             let _ = client.shutdown();
         }
@@ -395,37 +399,21 @@ fn readiness_reports_honest_shape() {
     assert!(!probe.detail.is_empty());
 }
 
+/// No number of runs is refused.
 #[test]
-fn capacity_gate_rejects_the_fifth_concurrent_run() {
-    let iso = Isolated::new("capacity");
+fn many_runs_start_in_one_workspace() {
+    let iso = Isolated::new("many");
     let client = iso.ensure();
     let agent = add_echo(&client, "Echo", PromptTransport::Argv);
     let home = client
-        .create_standalone_session("ws-cap", "cap")
-        .expect("home");
-    let mut runs = Vec::new();
-    for _ in 0..4 {
-        runs.push(
-            client
-                .run_agent("ws-cap", &home.id, &agent, "cap", AgentDispatch::default())
-                .expect("run under capacity"),
-        );
+        .create_standalone_session("ws-many", "many")
+        .expect("standalone");
+    for n in 0..6 {
+        client
+            .run_agent("ws-many", &home.id, &agent, "hi", AgentDispatch::default())
+            .unwrap_or_else(|error| panic!("run {n}: {error}"));
     }
-    let err = client
-        .run_agent("ws-cap", &home.id, &agent, "over", AgentDispatch::default())
-        .expect_err("fifth run refused");
-    assert!(err.contains("capacity"), "actionable refusal: {err}");
-    // Closing one frees exactly one slot.
-    client.close_terminal("ws-cap", &runs[0].id).expect("close");
-    client
-        .run_agent(
-            "ws-cap",
-            &home.id,
-            &agent,
-            "again",
-            AgentDispatch::default(),
-        )
-        .expect("slot freed");
+    assert_eq!(client.list_agent_runs("ws-many").unwrap().len(), 6);
 }
 
 #[test]

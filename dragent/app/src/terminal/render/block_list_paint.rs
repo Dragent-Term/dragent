@@ -537,14 +537,12 @@ impl Element for BlockListElement {
                                         });
 
                                         let chunk_cursor = logical_cursor_col.and_then(|c| {
-                                            if c >= col_start
-                                                && (c < col_end
-                                                    || (c == col_end && col_end == line_text_len))
-                                            {
-                                                Some(c - col_start)
-                                            } else {
-                                                None
-                                            }
+                                            cursor_col_in_chunk(
+                                                c,
+                                                col_start,
+                                                col_end,
+                                                line_text_len,
+                                            )
                                         });
 
                                         let chunk_hovered = full_hovered.and_then(|(a, b)| {
@@ -970,5 +968,40 @@ impl Element for BlockListElement {
 
     fn as_selectable_element(&self) -> Option<&dyn SelectableElement> {
         Some(self)
+    }
+}
+
+/// Where the cursor falls in a wrapped chunk of a line, if it does. Trailing
+/// spaces are trimmed from painted lines, so after a prompt such as
+/// `Password: ` the cursor sits past the end of the text: the line's last
+/// chunk still owns it.
+fn cursor_col_in_chunk(
+    cursor: usize,
+    col_start: usize,
+    col_end: usize,
+    line_len: usize,
+) -> Option<usize> {
+    (cursor >= col_start && (cursor < col_end || col_end == line_len)).then(|| cursor - col_start)
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::cursor_col_in_chunk;
+
+    #[test]
+    fn cursor_shows_after_a_prompt_whose_trailing_space_was_trimmed() {
+        // "Password: " is painted as 9 columns with the cursor in column 10.
+        assert_eq!(cursor_col_in_chunk(10, 0, 9, 9), Some(10));
+        assert_eq!(cursor_col_in_chunk(0, 0, 0, 0), Some(0));
+        assert_eq!(cursor_col_in_chunk(4, 0, 9, 9), Some(4));
+    }
+
+    #[test]
+    fn cursor_belongs_to_one_chunk_of_a_wrapped_line() {
+        assert_eq!(cursor_col_in_chunk(10, 0, 10, 15), None);
+        assert_eq!(cursor_col_in_chunk(10, 10, 15, 15), Some(0));
+        assert_eq!(cursor_col_in_chunk(16, 0, 10, 15), None);
+        assert_eq!(cursor_col_in_chunk(16, 10, 15, 15), Some(6));
+        assert_eq!(cursor_col_in_chunk(3, 10, 15, 15), None);
     }
 }

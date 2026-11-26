@@ -49,6 +49,7 @@ fn task(id: &str, status: TaskStatus) -> Task {
             pane: Some("pane-secret".to_string()),
             terminal: Some("term-secret".to_string()),
             agent: Some("claude".to_string()),
+            ..Default::default()
         }),
         result: Some(TaskResult {
             details: None,

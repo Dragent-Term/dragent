@@ -654,6 +654,8 @@ mod execution_pipeline_tests {
         std::fs::write(&file, "before\n").unwrap();
         let mut session = pipeline_session(contract);
         session.request.project_root = directory.path().to_path_buf();
+        // Its own id: folders are kept per attempt, and tests run together.
+        session.request.launch.attempt.id = ExecutionAttemptId::new();
         session.runtime_task_id = Some("local-dispatch-test".into());
         let pane_id = uuid::Uuid::new_v4();
         crate::agent::local_tools::set_project_cwd(directory.path(), pane_id);
@@ -696,6 +698,8 @@ mod execution_pipeline_tests {
 
         let mut session = pipeline_session(contract);
         session.request.project_root = directory.path().to_path_buf();
+        // Its own id: folders are kept per attempt, and tests run together.
+        session.request.launch.attempt.id = ExecutionAttemptId::new();
         session.checkpoint_message_id = checkpoint_message_id(session.attempt_id());
         let request = WorkspaceToolRequest {
             runtime_task_id: "runtime-1".into(),

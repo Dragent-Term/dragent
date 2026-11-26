@@ -21,6 +21,8 @@ fn host_bin() -> PathBuf {
 
 struct Isolated {
     _guard: std::sync::MutexGuard<'static, ()>,
+    /// Stops the services this test started, pass or fail.
+    services: dragent_host::testing::ServiceGuard,
     endpoint: PathBuf,
 }
 
@@ -41,6 +43,7 @@ impl Isolated {
             std::env::set_var(dragent_host::ENDPOINT_FILE_ENV, &endpoint);
         }
         Self {
+            services: dragent_host::testing::ServiceGuard::new(),
             _guard: guard,
             endpoint,
         }
@@ -53,6 +56,7 @@ impl Isolated {
 
 impl Drop for Isolated {
     fn drop(&mut self) {
+        self.services.stop();
         // Best-effort shutdown so hosts never leak between runs.
         if let Ok(client) = HostClient::connect_existing() {
             let _ = client.shutdown();

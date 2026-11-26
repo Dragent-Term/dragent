@@ -6,8 +6,8 @@
 //! activity as a timeline.
 
 use dragent_host::team::{
-    Change, Cost, Message, MessageKind, Party, Task, TaskStatus, Team, TeamEvent, TeamStatus,
-    TeamSummary, Verdict,
+    Change, Cost, Message, MessageKind, Party, ReseatReason, Task, TaskStatus, Team, TeamEvent,
+    TeamStatus, TeamSummary, Verdict,
 };
 use warpui::color::ColorU;
 use warpui::elements::{
@@ -2527,6 +2527,22 @@ fn stop_for(theme: &Theme, team: &Team, event: &TeamEvent) -> Option<Stop> {
             match from {
                 Some(from) => format!("moved {} from {from} to {to}", named(id)),
                 None => format!("moved {} to {to}", named(id)),
+            },
+            None,
+        ),
+        Change::Reseated { party, reason, .. } => stop(
+            AppIcon::RotateCcw,
+            theme.accent,
+            match party {
+                Party::Lead => "The lead".into(),
+                Party::Task(id) => format!("{}'s worker", named(id)),
+                other => other.label(),
+            },
+            match reason {
+                ReseatReason::Contact | ReseatReason::Resume => {
+                    "carries on in its resumed session".into()
+                }
+                ReseatReason::Taken => "took its seat back in another session".into(),
             },
             None,
         ),

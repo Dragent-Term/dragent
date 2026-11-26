@@ -791,6 +791,15 @@ impl TerminalView {
         self.workflow_search.results.clear();
         self.workflow_search.selected = 0;
         self.workflow_search.saved_buffer.clear();
+        // Dev-only palette entry (see `WorkflowStore::search`): toggling the
+        // perf overlay is a view action, not a shell command, so intercept it
+        // before a workflow session starts.
+        #[cfg(not(target_family = "wasm"))]
+        if workflow.command == "__dragent_toggle_perf_overlay__" {
+            crate::perf_overlay::toggle();
+            ctx.notify();
+            return;
+        }
         self.start_workflow_session(workflow, ctx);
     }
 

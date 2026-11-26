@@ -57,11 +57,16 @@ struct Daemon {
     workspaces: Mutex<HashMap<String, String>>,
     shutdown: AtomicBool,
     handoff: AtomicBool,
+    /// Closing because it held no terminals: its record is already gone and
+    /// every request is told to retry (on the service that replaces it).
+    closing: AtomicBool,
     upgrade_lock: RwLock<()>,
     /// Terminal streams attached right now.
     streams: AtomicUsize,
-    /// When a client last asked for anything, in unix ms.
-    last_request_ms: AtomicU64,
+    /// Counts client requests: unchanged means nobody asked for anything.
+    requests: AtomicU64,
+    /// What this service records in its data folder.
+    manifest: PtyDaemonManifest,
     listener_fd: i32,
     /// Socket path of a Unix listener (passed to a handoff successor).
     listener_socket: Option<String>,
@@ -347,7 +352,7 @@ fn handle_connection(stream: Stream, daemon: Arc<Daemon>) {
         reply(&stream, Err("unauthorized".to_string()));
         return;
     }
-    daemon.last_request_ms.store(now_ms(), Ordering::Relaxed);
+    daemon.requests.fetch_add(1, Ordering::Relaxed);
     if let DaemonRequest::SubscribeTerminal { session_id, offset } = envelope.request {
         let _attached = AttachedStream::new(&daemon.streams);
         stream_terminal(&stream, &daemon, &session_id, offset, false);
@@ -361,6 +366,10 @@ fn handle_connection(stream: Stream, daemon: Arc<Daemon>) {
     // Readiness probes must remain available while the predecessor waits for
     // its successor: both briefly share the inherited listening descriptor.
     if matches!(envelope.request, DaemonRequest::Hello { .. }) {
+        if daemon.closing.load(Ordering::SeqCst) {
+            reply(&stream, Err(PTY_UPDATE_RETRY.to_owned()));
+            return;
+        }
         reply(&stream, handle_request(&daemon, envelope.request));
         return;
     }
@@ -370,7 +379,7 @@ fn handle_connection(stream: Stream, daemon: Arc<Daemon>) {
         .upgrade_lock
         .read()
         .unwrap_or_else(|p| p.into_inner());
-    if daemon.handoff.load(Ordering::SeqCst) {
+    if daemon.handoff.load(Ordering::SeqCst) || daemon.closing.load(Ordering::SeqCst) {
         reply(&stream, Err(PTY_UPDATE_RETRY.to_owned()));
         return;
     }
@@ -389,7 +398,7 @@ fn handle_upgrade(stream: &Stream, daemon: &Daemon, rest: &[u8]) {
         .upgrade_lock
         .write()
         .unwrap_or_else(|p| p.into_inner());
-    if daemon.shutdown.load(Ordering::SeqCst) {
+    if daemon.shutdown.load(Ordering::SeqCst) || daemon.closing.load(Ordering::SeqCst) {
         reply_raw(stream, "ERR update already in progress");
         return;
     }
@@ -652,18 +661,20 @@ fn retire_when_replaced(daemon: Arc<Daemon>) {
         .map(Duration::from_millis)
         .unwrap_or(RETIRE_AFTER);
     let every = RETIRE_CHECK_EVERY.min(after / 4).max(Duration::from_millis(50));
-    let mut unused_since: Option<std::time::Instant> = None;
+    let mut unused = super::service_lifecycle::IdleClock::new(std::time::Instant::now(), every);
+    let mut seen = daemon.requests.load(Ordering::Relaxed);
     while !daemon.shutdown.load(Ordering::SeqCst) {
         std::thread::sleep(every);
-        let last_request = daemon.last_request_ms.load(Ordering::Relaxed);
-        let attached = daemon.streams.load(Ordering::Relaxed) > 0
-            || now_ms().saturating_sub(last_request) < after.as_millis() as u64;
-        if attached || !replaced_by_another(&daemon) {
-            unused_since = None;
-            continue;
-        }
-        let since = *unused_since.get_or_insert_with(std::time::Instant::now);
-        if since.elapsed() >= after {
+        let requests = daemon.requests.load(Ordering::Relaxed);
+        let in_use = daemon.streams.load(Ordering::Relaxed) > 0 || requests != seen;
+        seen = requests;
+        // Time spent asleep or a changed clock never counts as unused: the
+        // apps using this service were asleep too.
+        let unused = unused.look(
+            in_use || !replaced_by_another(&daemon),
+            std::time::Instant::now(),
+        );
+        if unused >= after * 2 {
             log::warn!(
                 "dragent-pty id={} was replaced and has no clients; closing its terminals",
                 daemon.daemon_id
@@ -671,6 +682,193 @@ fn retire_when_replaced(daemon: Arc<Daemon>) {
             daemon.shutdown.store(true, Ordering::SeqCst);
         }
     }
+}
+
+/// Why the terminal service is closing on its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SelfExit {
+    /// The test process that started it is gone.
+    ParentGone,
+    /// No client can find it any more (and none is attached).
+    Unreachable(super::service_lifecycle::RecordState),
+    /// It has held no terminals for the grace period.
+    Empty,
+}
+
+/// Should the terminal service act on an unreachable record now? Never while
+/// it runs a terminal: a folder that is gone may be a disk that isn't mounted
+/// yet, and the shells would be lost for good. A gone or foreign record also
+/// waits until no stream is attached. A record naming another *live* service
+/// is [`retire_when_replaced`]'s.
+fn act_on_record(
+    state: &super::service_lifecycle::RecordState,
+    running_terminals: usize,
+    attached_streams: usize,
+    other_alive: impl FnOnce(u32) -> bool,
+) -> bool {
+    use super::service_lifecycle::RecordState;
+    if running_terminals > 0 {
+        return false;
+    }
+    match state {
+        RecordState::Ours => false,
+        RecordState::DataFolderGone => true,
+        RecordState::RecordGone => attached_streams == 0,
+        RecordState::Replaced { pid } => attached_streams == 0 && !other_alive(*pid),
+    }
+}
+
+/// The record went missing while this service holds terminals: put it back so
+/// clients find them again. Never replaces a record another service wrote in
+/// the meantime, nor one an update is about to write.
+fn restore_record(daemon: &Daemon) {
+    let Ok(_gate) = daemon.upgrade_lock.try_read() else {
+        return;
+    };
+    if daemon.handoff.load(Ordering::SeqCst) || daemon.closing.load(Ordering::SeqCst) {
+        return;
+    }
+    match sup::write_manifest_if_absent(&daemon.org_dir, &daemon.manifest) {
+        Ok(()) => log::warn!(
+            "dragent-pty id={}: its record was gone; wrote it again",
+            daemon.daemon_id
+        ),
+        Err(error) => log::warn!(
+            "dragent-pty id={}: its record is gone and can't be written: {error}",
+            daemon.daemon_id
+        ),
+    }
+}
+
+/// The terminal service's own housekeeping. It never closes because no app
+/// is connected: it closes when its test parent is gone, when no client can
+/// find it (rule above), or when it has held no terminal for the grace
+/// period. Agents run in terminals, so a service with any terminal stays.
+fn watch_for_self_exit(daemon: Arc<Daemon>) {
+    use super::service_lifecycle as life;
+    let check_every = life::check_every();
+    let empty_grace = life::pty_empty_exit();
+    let mut strikes = life::Strikes::default();
+    let mut last_check = std::time::Instant::now();
+    let mut empty_for = life::IdleClock::new(last_check, life::tick());
+    let reason = loop {
+        std::thread::sleep(life::tick());
+        if daemon.shutdown.load(Ordering::SeqCst) {
+            return;
+        }
+        if life::parent_gone() {
+            break SelfExit::ParentGone;
+        }
+        // Exited terminals hold only output (kept in history); a running one
+        // may be an agent.
+        let empty =
+            daemon.registry.running_count() == 0 && daemon.streams.load(Ordering::SeqCst) == 0;
+        if empty_for.look(!empty, std::time::Instant::now()) >= empty_grace
+            && close_if_empty(&daemon)
+        {
+            break SelfExit::Empty;
+        }
+        // Put a missing record back at once, before a host starts a second
+        // service beside this one.
+        let record = sup::manifest_path(&daemon.org_dir);
+        if daemon.registry.running_count() > 0
+            && daemon.org_dir.is_dir()
+            && std::fs::symlink_metadata(&record)
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+        {
+            restore_record(&daemon);
+        }
+        if last_check.elapsed() < check_every {
+            continue;
+        }
+        last_check = std::time::Instant::now();
+        let state = life::record_state(&daemon.org_dir, &record, |text| {
+            let manifest: PtyDaemonManifest = serde_json::from_str(text).ok()?;
+            Some((manifest.pid, manifest.daemon_id == daemon.daemon_id))
+        });
+        // An update in flight rewrites the record on purpose.
+        let state = if daemon.handoff.load(Ordering::SeqCst) {
+            life::RecordState::Ours
+        } else {
+            state
+        };
+        let Some(state) = strikes.observe(state) else {
+            continue;
+        };
+        // Decided and closed under the request gate, so a terminal can't be
+        // created in between.
+        {
+            let _gate = daemon
+                .upgrade_lock
+                .write()
+                .unwrap_or_else(|p| p.into_inner());
+            let running = daemon.registry.running_count();
+            let attached = daemon.streams.load(Ordering::SeqCst);
+            if !daemon.handoff.load(Ordering::SeqCst)
+                && act_on_record(&state, running, attached, |pid| {
+                    super::stale::process_may_be_alive(pid)
+                })
+            {
+                daemon.closing.store(true, Ordering::SeqCst);
+                break SelfExit::Unreachable(state);
+            }
+            log::warn!(
+                "dragent-pty id={}: {}, but it holds {running} terminal(s) and {attached} \
+                 attached stream(s); staying",
+                daemon.daemon_id,
+                state.describe()
+            );
+        }
+        strikes.reset();
+    };
+    match &reason {
+        SelfExit::ParentGone => log::info!(
+            "dragent-pty id={} closing: the process that started it is gone",
+            daemon.daemon_id
+        ),
+        SelfExit::Unreachable(state) => log::warn!(
+            "dragent-pty id={} closing with {} terminal(s): {}",
+            daemon.daemon_id,
+            daemon.registry.len(),
+            state.describe()
+        ),
+        SelfExit::Empty => log::info!(
+            "dragent-pty id={} closing: no terminals for {}s",
+            daemon.daemon_id,
+            empty_grace.as_secs()
+        ),
+    }
+    daemon.shutdown.store(true, Ordering::SeqCst);
+}
+
+/// Close an empty service without racing a terminal being created: under the
+/// exclusive request gate, re-check it is empty, stop answering, drop its
+/// record and socket (so the next client starts a fresh service rather than
+/// waiting on this one) and leave a note that this was no crash.
+fn close_if_empty(daemon: &Daemon) -> bool {
+    let _gate = daemon
+        .upgrade_lock
+        .write()
+        .unwrap_or_else(|p| p.into_inner());
+    if daemon.handoff.load(Ordering::SeqCst)
+        || daemon.registry.running_count() != 0
+        || daemon.streams.load(Ordering::SeqCst) != 0
+    {
+        return false;
+    }
+    daemon.closing.store(true, Ordering::SeqCst);
+    // Only the service the record names may leave the note: one that was
+    // replaced would make a later crash of its replacement look intended, and
+    // its terminals would not be recovered.
+    if sup::read_manifest(&daemon.org_dir).is_some_and(|m| m.daemon_id == daemon.daemon_id) {
+        super::service_lifecycle::mark_idle_exit(&daemon.org_dir, &daemon.daemon_id);
+    }
+    if sup::remove_manifest_if_daemon(&daemon.org_dir, &daemon.daemon_id) {
+        if let Some(socket) = &daemon.listener_socket {
+            let _ = std::fs::remove_file(socket);
+        }
+    }
+    true
 }
 
 /// Counts one attached terminal stream for as long as it lives.
@@ -832,9 +1030,11 @@ pub fn run_service() -> anyhow::Result<()> {
         workspaces: Mutex::new(HashMap::new()),
         shutdown: AtomicBool::new(false),
         handoff: AtomicBool::new(false),
+        closing: AtomicBool::new(false),
         upgrade_lock: RwLock::new(()),
         streams: AtomicUsize::new(0),
-        last_request_ms: AtomicU64::new(started_at),
+        requests: AtomicU64::new(0),
+        manifest: manifest.clone(),
         listener_fd: {
             #[cfg(unix)]
             {
@@ -857,6 +1057,19 @@ pub fn run_service() -> anyhow::Result<()> {
         log::error!("PTY handoff adoption failed: {error}");
         unsafe { libc::_exit(1) };
     }
+    // Before the first terminal, which is told about it.
+    match super::build_slots::Pool::open(&org_dir, super::build_slots::machine_slots()) {
+        Ok(mut pool) => {
+            log::info!("[pty] {} build slots", pool.slots());
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(super::build_slots::TEND_EVERY);
+                    pool.tend(super::build_slots::compiling);
+                }
+            });
+        }
+        Err(error) => log::warn!("[pty] no build slots: {error}"),
+    }
     sup::write_manifest(&org_dir, &manifest).map_err(|e| anyhow::anyhow!("pty manifest: {e}"))?;
     // Every inherited reader remained paused during adoption. Only commit
     // reading after all sessions and their screen checkpoints are installed.
@@ -874,6 +1087,10 @@ pub fn run_service() -> anyhow::Result<()> {
     {
         let daemon = daemon.clone();
         std::thread::spawn(move || retire_when_replaced(daemon));
+    }
+    {
+        let daemon = daemon.clone();
+        std::thread::spawn(move || watch_for_self_exit(daemon));
     }
     loop {
         if daemon.shutdown.load(Ordering::SeqCst) {
@@ -912,8 +1129,11 @@ pub fn run_service() -> anyhow::Result<()> {
         let dropped = daemon.registry.shutdown_all();
         sup::remove_manifest_if_daemon(&daemon.org_dir, &daemon.daemon_id);
         // The socket path is per org: a replaced daemon would remove the
-        // file its replacement is listening on.
-        if !sup::read_manifest(&daemon.org_dir).is_some_and(|m| m.daemon_id != daemon.daemon_id) {
+        // file its replacement is listening on (an empty one closing already
+        // removed its own, and a successor may be binding it now).
+        if !daemon.closing.load(Ordering::SeqCst)
+            && !sup::read_manifest(&daemon.org_dir).is_some_and(|m| m.daemon_id != daemon.daemon_id)
+        {
             listener.remove_socket_file();
         }
         // Each close hangs up its shell tree on the session's own event-loop

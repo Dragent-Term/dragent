@@ -62,8 +62,9 @@ pub fn render_left_segment(
 /// Rendered above the terminal/editor column.
 ///
 /// `minimal` hides every control except the Windows caption cluster (which
-/// renders whenever the right strip is gone): the empty start screen keeps
-/// its sidebar header but no other header content. Borderless Windows
+/// renders whenever the right strip is gone) and the button that reopens a
+/// collapsed sidebar: the empty start screen keeps its sidebar header but no
+/// other header content. Borderless Windows
 /// windows have no native caption buttons, so those must survive.
 #[allow(clippy::too_many_arguments)]
 pub fn render_center_segment(
@@ -103,21 +104,22 @@ pub fn render_center_segment(
     if let Some(badge) = render_dev_badge(ui_font, theme) {
         row = row.with_child(badge);
     }
+    // Also on the empty start screen: a collapsed sidebar can be reopened.
+    if !left_panel_visible {
+        // The left segment is gone with the panel, so its toggle moves here —
+        // drawn exactly as it is with the sidebar open (same chip, same spot
+        // right after the traffic lights) so collapsing never moves or
+        // restyles the control the user just clicked.
+        row = row.with_child(toolbar_button(
+            theme,
+            workspace_view_id,
+            header_mouse_state("sidebar"),
+            AppIcon::LayoutLeft,
+            true,
+            WorkspaceAction::ToggleLeftPanel,
+        ));
+    }
     if !minimal {
-        if !left_panel_visible {
-            // The left segment is gone with the panel, so its toggle moves here —
-            // drawn exactly as it is with the sidebar open (same chip, same spot
-            // right after the traffic lights) so collapsing never moves or
-            // restyles the control the user just clicked.
-            row = row.with_child(toolbar_button(
-                theme,
-                workspace_view_id,
-                header_mouse_state("sidebar"),
-                AppIcon::LayoutLeft,
-                true,
-                WorkspaceAction::ToggleLeftPanel,
-            ));
-        }
         if let Some(tabs) = workspace_tabs {
             // Reserve the toolbar first, then give the tab area all remaining
             // width. Inside it, only the strip flexes: it takes its intrinsic

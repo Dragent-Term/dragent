@@ -548,6 +548,23 @@ pub enum Request {
         prompt: String,
         dispatch: AgentDispatch,
     },
+    /// An agent's launch monitor asks whether the agent may start.
+    AskToStart(StartAsk),
+    /// The person wants a waiting agent (its pane or terminal) started now,
+    /// whatever memory says. Also valid before its agent has asked.
+    StartAnyway {
+        id: String,
+    },
+    /// A waiting start was called off.
+    LeaveStartLine {
+        id: String,
+    },
+    /// Which agents wait or are paused, and what each one holds. Read-only.
+    AgentResources,
+    /// Let a paused agent (its pane or terminal) run again.
+    ResumeAgent {
+        id: String,
+    },
     GetAgentRun {
         run_id: String,
     },
@@ -690,6 +707,8 @@ pub enum Response {
     AgentRunList {
         runs: Vec<AgentRun>,
     },
+    StartAnswer(StartAnswer),
+    AgentResources(AgentResources),
     AgentReadinessReport {
         readiness: AgentReadiness,
     },
@@ -975,6 +994,8 @@ pub struct AgentConfig {
 
 /// Point-in-time projection of one agent run. `id` is the session id string
 /// attached to the owning home; `output` is the captured screen tail.
+/// `memory_bytes` is what the agent and everything it started holds, when
+/// that has been measured.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentRun {
     pub id: String,
@@ -985,6 +1006,8 @@ pub struct AgentRun {
     pub state: AgentRunState,
     pub started_at: u64,
     pub output: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_bytes: Option<u64>,
     /// Coordination linkage echoed from dispatch (see AgentDispatch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_id: Option<String>,
@@ -994,8 +1017,71 @@ pub struct AgentRun {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AgentRunState {
+    /// Its terminal is open and the agent starts in it when memory allows.
+    Waiting,
     Running,
+    /// Stopped for holding too much memory, until the person resumes it.
+    Paused,
     Exited { code: i32 },
+}
+
+/// A start asking whether it may go.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StartAsk {
+    /// The asking agent's pane, or its terminal where it has no pane.
+    pub id: String,
+    #[serde(default)]
+    pub terminal_id: String,
+    /// What the person sees ("claude").
+    pub label: String,
+    /// When it first asked (Unix milliseconds): its place in the line.
+    pub since_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum StartAnswer {
+    Go,
+    Wait {
+        position: usize,
+        /// Why; `None` when only its turn hasn't come yet.
+        reason: Option<WaitReason>,
+    },
+}
+
+/// Why new agents wait instead of starting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WaitReason {
+    /// The machine is critically low on memory.
+    MemoryCritical,
+    /// The cap the person set is reached.
+    AtCap { live: usize, max: usize },
+}
+
+/// A start that waits, as shown to the person.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WaitingStart {
+    pub id: String,
+    pub terminal_id: String,
+    pub label: String,
+    pub since_ms: u64,
+    /// Its place in the line, from 1.
+    pub position: usize,
+}
+
+/// One agent and what it holds, with everything it started.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentMemoryUse {
+    pub pane: String,
+    pub terminal_id: String,
+    pub label: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentResources {
+    pub waiting: Vec<WaitingStart>,
+    pub paused: Vec<AgentMemoryUse>,
+    pub running: Vec<AgentMemoryUse>,
 }
 
 /// Per-launch overrides merged over the resolved config.

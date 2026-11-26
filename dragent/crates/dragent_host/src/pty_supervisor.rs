@@ -173,6 +173,29 @@ pub fn write_manifest(org_dir: &Path, manifest: &PtyDaemonManifest) -> std::io::
     Ok(())
 }
 
+/// [`write_manifest`], but never over an existing record.
+pub fn write_manifest_if_absent(
+    org_dir: &Path,
+    manifest: &PtyDaemonManifest,
+) -> std::io::Result<()> {
+    let path = manifest_path(org_dir);
+    let tmp = path.with_extension(format!("tmp-restore-{}", std::process::id()));
+    let mut file = std::fs::File::create(&tmp)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    let written = serde_json::to_writer(&file, manifest)
+        .map_err(std::io::Error::other)
+        .and_then(|()| file.write_all(b"\n"));
+    drop(file);
+    // A link appears whole, and fails when the name is taken.
+    let linked = written.and_then(|()| std::fs::hard_link(&tmp, &path));
+    let _ = std::fs::remove_file(&tmp);
+    linked
+}
+
 /// Remove the manifest only when it still describes `pid` (never clobber a
 /// successor that already replaced it).
 pub fn remove_manifest_if_pid(org_dir: &Path, pid: u32) -> bool {
@@ -578,6 +601,8 @@ impl PtySupervisor {
         let token = dead
             .map(|manifest| manifest.token)
             .unwrap_or_else(generate_token);
+        // A note left by an earlier empty service must not hide this one's crash.
+        let _ = super::service_lifecycle::take_idle_exit(&self.org_dir);
         let mut command = Command::new(&self.exe);
         // A fresh daemon, never a hand-off successor, whatever this process
         // inherited.
@@ -1061,6 +1086,21 @@ impl PtySupervisor {
                 }
             };
             match owned {
+                Some(false) if super::service_lifecycle::take_idle_exit(&supervisor.org_dir) => {
+                    // It closed because it held no terminals: the next
+                    // request starts a fresh one; nothing to recover.
+                    strikes = 0;
+                    supervisor
+                        .inner
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .ever_up = false;
+                    emit(
+                        log::Level::Info,
+                        "daemon_idle_exit",
+                        serde_json::json!({ "owned": true }),
+                    );
+                }
                 Some(false) => {
                     strikes = 0;
                     let id = read_manifest(&supervisor.org_dir)
@@ -1135,6 +1175,19 @@ impl PtySupervisor {
                         if !ever_up {
                             // Lazy state: no daemon ever ran — nothing to watch.
                             strikes = 0;
+                        } else if super::service_lifecycle::take_idle_exit(&supervisor.org_dir) {
+                            // An adopted service closed because it was empty.
+                            strikes = 0;
+                            supervisor
+                                .inner
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .ever_up = false;
+                            emit(
+                                log::Level::Info,
+                                "daemon_idle_exit",
+                                serde_json::json!({ "owned": false }),
+                            );
                         } else if {
                             strikes += 1;
                             strikes >= WATCH_STRIKES

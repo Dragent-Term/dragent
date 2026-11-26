@@ -46,6 +46,9 @@ impl CodeIndexManager {
         // Open (or create) the vector store and load the previous snapshot.
         let snapshot_path = snapshot_path_for_repo(&root);
         let db_path = db_path_for_repo(&root);
+        // Repo-shared content-hash cache: this worktree's unchanged files hit
+        // the vectors other worktrees of the repo already embedded.
+        let cache = self.embedding_cache(&root);
 
         let store = VectorStore::open(&db_path)?;
         // If the DB was wiped for a schema/model change, the old snapshot is stale:
@@ -108,7 +111,7 @@ impl CodeIndexManager {
         }
 
         // Embed only the changed/new files.
-        embed_files(&embedder, &store, &root, &current_tree, &to_embed)?;
+        embed_files(&embedder, &cache, &store, &root, &current_tree, &to_embed)?;
 
         ensure_store_matches_tree(&store, &root, &current_tree)?;
 
@@ -234,6 +237,9 @@ impl CodeIndexManager {
         };
 
         let mgr: &'static CodeIndexManager = self;
+        // Fetch before the move: the watcher thread consults the repo-shared
+        // embedding cache for every batch it embeds.
+        let cache = mgr.embedding_cache(&root);
         std::thread::spawn(move || {
             set_background_qos();
             // Keep debouncer alive for the duration of this thread.
@@ -284,9 +290,14 @@ impl CodeIndexManager {
                         activity.pending.store(batch.len(), Ordering::Relaxed);
                         let t0 = Instant::now();
                         let synced = match mgr.acquire_embedder(Duration::from_secs(60)) {
-                            Some(embedder) => {
-                                process_batch(&repo_state, &embedder, batch, max_files, &activity)
-                            }
+                            Some(embedder) => process_batch(
+                                &repo_state,
+                                &embedder,
+                                &cache,
+                                batch,
+                                max_files,
+                                &activity,
+                            ),
                             None => false,
                         };
                         activity
@@ -323,7 +334,7 @@ impl CodeIndexManager {
                                 last_event = Instant::now();
                                 continue;
                             };
-                            if let Err(e) = full_rescan(&repo_state, &embedder, max_files) {
+                            if let Err(e) = full_rescan(&repo_state, &embedder, &cache, max_files) {
                                 log::warn!("[index] resume rescan failed: {e}");
                                 activity.pending.store(1, Ordering::Relaxed);
                                 activity.set_state(RepoIndexState::Paused);

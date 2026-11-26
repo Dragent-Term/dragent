@@ -47,6 +47,7 @@ fn the_courier_waits_for_a_turn_to_end_then_types_it_in() {
         pane: Some(pane.to_string()),
         terminal: None,
         agent: Some("claude".into()),
+        ..Default::default()
     };
     let TeamResponse::Team(team) = client
         .team(TeamRequest::Create {

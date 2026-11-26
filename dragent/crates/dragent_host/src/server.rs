@@ -11,7 +11,7 @@ use std::collections::HashMap;
 pub const HOST_SOCKET_FILENAME: &str = "host.sock";
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -48,6 +48,14 @@ struct Shared {
     /// deliberately does NOT exit when clients go away — persistence without
     /// UI is the point).
     clients: Mutex<HashMap<String, u64>>,
+    /// Authenticated connections being served right now (event streams,
+    /// relayed terminal streams and in-flight requests alike).
+    connections: AtomicUsize,
+    /// Counts authenticated connections arriving and ending: unchanged means
+    /// nobody used this host.
+    activity: AtomicU64,
+    /// Closing because it was idle: requests that still got in are served.
+    idle_exit: AtomicBool,
     /// Subscriber senders for the event stream.
     subscribers: Mutex<Vec<std::sync::mpsc::Sender<Vec<u8>>>>,
     /// Canonical workspace authority (Phase 2). `None` when the persistence
@@ -62,6 +70,15 @@ struct Shared {
     /// failed to open — identity RPCs still serve degraded.
     #[cfg(not(target_family = "wasm"))]
     agents: Mutex<Option<super::agents::AgentRegistry>>,
+    /// The line new agents wait in for memory (or under the person's cap).
+    #[cfg(not(target_family = "wasm"))]
+    start_gate: Mutex<super::start_gate::StartGate>,
+    /// Agents paused over their memory limit.
+    #[cfg(not(target_family = "wasm"))]
+    paused_agents: super::agent_memory::PausedAgents,
+    /// What each agent held when last measured.
+    #[cfg(not(target_family = "wasm"))]
+    agent_memory: Mutex<Vec<super::agent_memory::AgentMemory>>,
     /// Supervised PTY daemon owning the terminal sessions (PTY split).
     /// Infallible by construction: spawn failures surface per-RPC, never as
     /// a missing authority.
@@ -177,12 +194,19 @@ impl super::team_courier::Sessions for TeamSessions {
             activity: super::agent_sessions::load_activity(pane).map(|activity| (activity.event, activity.at_ms)),
             last_input_ms: super::team_courier::last_input_ms(&record.terminal_id),
             asleep: super::agent_sessions::is_asleep(pane),
+            held: super::agent_sessions::is_waiting(pane)
+                || self.shared.paused_agents.is_paused(&record.terminal_id),
+            paused_holding: self.shared.paused_agents.held_by(&record.terminal_id),
             output_quiet_ms: None,
         })
     }
 
     fn pane_of_terminal(&self, terminal: &str) -> Option<String> {
         super::agent_sessions::pane_for_terminal(terminal).map(|pane| pane.to_string())
+    }
+
+    fn identity(&self, pane: &str) -> Option<super::team::SessionIdentity> {
+        super::team::session_identity(Some(pane), None)
     }
 
     fn output_total(&self, terminal: &str) -> Option<u64> {
@@ -274,8 +298,10 @@ fn daemon_session(
 }
 
 /// Fill a run record with live terminal state + screen output (the
-/// GetTerminal pattern: liveness resolves through the PTY daemon, never
-/// from the agents record). `None` when the terminal is gone.
+/// GetTerminal pattern: liveness resolves through the PTY daemon, never from
+/// the agents record). `None` when the terminal is gone.
+///
+/// A run whose agent waits for memory, or is paused, says so.
 #[cfg(not(target_family = "wasm"))]
 fn agent_snapshot(
     shared: &Shared,
@@ -294,7 +320,18 @@ fn agent_snapshot(
         return None;
     }
     let state = match session.state {
-        super::protocol::TerminalState::Running => super::protocol::AgentRunState::Running,
+        super::protocol::TerminalState::Running => {
+            if shared.paused_agents.is_paused(&base.id) {
+                super::protocol::AgentRunState::Paused
+            } else if waiting_starts(shared)
+                .iter()
+                .any(|start| start.terminal_id == base.id)
+            {
+                super::protocol::AgentRunState::Waiting
+            } else {
+                super::protocol::AgentRunState::Running
+            }
+        }
         super::protocol::TerminalState::Exited { code } => {
             super::protocol::AgentRunState::Exited { code }
         }
@@ -309,16 +346,145 @@ fn agent_snapshot(
         Ok(DaemonResponse::TerminalOutput { text, .. }) => text,
         _ => String::new(),
     };
+    let memory_bytes = shared
+        .agent_memory
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .find(|agent| agent.terminal_id == base.id)
+        .map(|agent| agent.bytes);
     Some(super::protocol::AgentRun {
         state,
         output,
+        memory_bytes,
         ..base.clone()
     })
+}
+
+/// The agents that wait to start, first in line first.
+#[cfg(not(target_family = "wasm"))]
+fn waiting_starts(shared: &Shared) -> Vec<super::protocol::WaitingStart> {
+    shared
+        .start_gate
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .waiting(std::time::Instant::now())
+}
+
+/// Whether `ask`'s agent may start now.
+#[cfg(not(target_family = "wasm"))]
+fn answer_start(
+    shared: &Shared,
+    ask: super::protocol::StartAsk,
+) -> super::protocol::StartAnswer {
+    let org_dir = super::pty_supervisor::org_dir();
+    // Read before the line is locked: counting agents looks at processes.
+    let capped = super::resources::ResourceLimits::load(&org_dir).max_agents().is_some();
+    let held = super::resources::held_now(&org_dir);
+    shared
+        .start_gate
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .ask(ask, held, capped, std::time::Instant::now())
+}
+
+/// `launch`, held in its terminal until memory allows it when new agents
+/// wait at the moment. Its run exists either way.
+#[cfg(not(target_family = "wasm"))]
+fn launch_in_turn(shared: &Shared, label: &str, launch: String) -> String {
+    let held = super::resources::held_now(&super::pty_supervisor::org_dir());
+    let waits = shared
+        .start_gate
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .would_wait(held.as_ref(), std::time::Instant::now());
+    if !waits {
+        return launch;
+    }
+    let Ok(helper) = super::agent_sessions::helper_executable() else {
+        return launch;
+    };
+    super::agents::hold_launch(&helper, label, &launch)
+}
+
+/// Measure the running agents and pause those over their limit. The app
+/// shows what is paused, with Resume and Stop.
+#[cfg(not(target_family = "wasm"))]
+fn watch_agent_memory(shared: &Shared) {
+    let org_dir = super::pty_supervisor::org_dir();
+    shared.paused_agents.forget_ended();
+    let agents = super::agent_memory::measure(&org_dir.join("agent-sessions"));
+    let limits = super::resources::ResourceLimits::load(&org_dir);
+    let pressure = super::agent_sleep::gate_pressure();
+    let total = super::agent_sleep::memory().total;
+    for agent in &agents {
+        let allowed = shared.paused_agents.allowed(agent);
+        if super::agent_sessions::is_waiting(agent.pane)
+            || !super::resources::should_pause(agent.bytes, &limits, allowed, total, pressure)
+        {
+            continue;
+        }
+        if let Err(error) = shared.paused_agents.pause(agent) {
+            log::warn!("[agents] couldn't pause {}: {error}", agent.terminal_id);
+        } else {
+            log::warn!(
+                "[agents] paused {} ({}) holding {} MB",
+                agent.terminal_id,
+                agent.label,
+                agent.bytes >> 20
+            );
+        }
+    }
+    *shared
+        .agent_memory
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = agents;
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn agent_resources(shared: &Shared) -> super::protocol::AgentResources {
+    use super::protocol::AgentMemoryUse;
+    let waiting = waiting_starts(shared);
+    // A waiting agent's terminal is open, but its agent isn't running yet.
+    let waits: std::collections::HashSet<_> = waiting
+        .iter()
+        .map(|start| start.terminal_id.clone())
+        .collect();
+    super::protocol::AgentResources {
+        waiting,
+        paused: shared
+            .paused_agents
+            .list()
+            .into_iter()
+            .map(|agent| AgentMemoryUse {
+                pane: agent.pane.to_string(),
+                terminal_id: agent.terminal_id,
+                label: agent.label,
+                bytes: agent.bytes,
+            })
+            .collect(),
+        running: shared
+            .agent_memory
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter(|agent| !waits.contains(&agent.terminal_id))
+            .map(|agent| AgentMemoryUse {
+                pane: agent.pane.to_string(),
+                terminal_id: agent.terminal_id.clone(),
+                label: agent.label.clone(),
+                bytes: agent.bytes,
+            })
+            .collect(),
+    }
 }
 
 /// Phase 6.3 launch: resolve home → config → overrides → stage → context →
 /// assemble → launch through the SAME [`TerminalRegistry::create`] path
 /// `CreateTerminal` uses (no duplicated spawn) → attach → record.
+///
+/// Never refused for how many agents run: while memory is critically low
+/// the run's terminal opens and its agent starts there in its turn.
 #[cfg(not(target_family = "wasm"))]
 fn run_agent_inner(
     shared: &Shared,
@@ -343,50 +509,17 @@ fn run_agent_inner(
         effective.args = words[1..].iter().cloned().chain(effective.args).collect();
         effective.command = words[0].clone();
     }
-    // Capacity gate before anything with side effects: live runs only
-    // (exited sessions already released their slots).
-    {
-        let tracked: Vec<(String, String)> = {
-            let agents = shared.agents.lock().unwrap_or_else(|p| p.into_inner());
-            match agents.as_ref() {
-                Some(registry) => registry.all_tracked_runs(),
-                None => return Err("agent authority unavailable".to_string()),
-            }
-        };
-        let mut workspace_live = 0usize;
-        let mut host_live = 0usize;
-        for (run_workspace, run_id) in &tracked {
-            let alive = matches!(
-                daemon_call(
-                    shared,
-                    DaemonRequest::GetTerminal {
-                        session_id: run_id.clone(),
-                    },
-                ),
-                Ok(DaemonResponse::TerminalSnapshot(session))
-                    if matches!(session.state, super::protocol::TerminalState::Running)
-            );
-            if alive {
-                host_live += 1;
-                if run_workspace == &home.workspace_id {
-                    workspace_live += 1;
-                }
-            }
-        }
-        super::resources::check_capacity(
-            workspace_live,
-            host_live,
-            super::resources::CapacityLimits::default(),
-        )
-        .map_err(|e| e)?;
-    }
     let home_dir = std::path::Path::new(&home.path);
     let staged =
         phases::stage_attachments(home_dir, &dispatch.attachments).map_err(|e| format!("{e:#}"))?;
     let budget = phases::clamp_context_chars(dispatch.context_chars);
     let context = phases::read_context(home_dir, &dispatch.context_from, budget);
     let final_prompt = phases::assemble_prompt(&context, &staged, prompt);
-    let shell = phases::build_launch(&effective, &final_prompt);
+    let shell = launch_in_turn(
+        shared,
+        &effective.label,
+        phases::build_launch(&effective, &final_prompt),
+    );
     // SAME path CreateTerminal uses: interactive shell in the home with the
     // launch line as the initial command (argv payload or stdin heredoc both
     // ride inside `shell`), via the supervised PTY daemon.
@@ -445,6 +578,137 @@ fn run_agent_inner(
     }
 }
 
+/// Counts one authenticated connection for as long as it is served; its end
+/// counts as activity too, so the idle clock starts when the last one closes.
+struct ActiveConnection<'a>(&'a Shared);
+
+impl<'a> ActiveConnection<'a> {
+    fn new(shared: &'a Shared) -> Self {
+        shared.connections.fetch_add(1, Ordering::SeqCst);
+        shared.activity.fetch_add(1, Ordering::SeqCst);
+        Self(shared)
+    }
+}
+
+impl Drop for ActiveConnection<'_> {
+    fn drop(&mut self) {
+        self.0.activity.fetch_add(1, Ordering::SeqCst);
+        self.0.connections.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Why the host is closing on its own.
+#[cfg(not(target_family = "wasm"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SelfExit {
+    /// The test process that started it is gone.
+    ParentGone,
+    /// Its record or data folder: nobody can reach it any more.
+    Unreachable(super::service_lifecycle::RecordState),
+    /// No client for the idle period and no team at work.
+    Idle,
+}
+
+/// Should an idle host close? Pure, for tests: nothing connected, nothing
+/// heard for `idle_after`, and no work that only this process holds.
+#[cfg(not(target_family = "wasm"))]
+fn idle_long_enough(
+    connections: usize,
+    idle: Duration,
+    idle_after: Duration,
+    at_work: impl FnOnce() -> bool,
+) -> bool {
+    connections == 0 && idle >= idle_after && !at_work()
+}
+
+/// Work that lives in this process and would be lost with it: a team's
+/// courier, agent runs (their records and leases are held in memory), agents
+/// waiting for their turn, and paused agents, which only a host can resume.
+#[cfg(not(target_family = "wasm"))]
+fn holds_work(shared: &Shared) -> bool {
+    fn is_empty<T>(lock: &Mutex<T>, empty: impl Fn(&T) -> bool) -> bool {
+        empty(&lock.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+    super::team::any_active_team()
+        || !waiting_starts(shared).is_empty()
+        || !shared.paused_agents.is_empty()
+        || !is_empty(&shared.agents, |agents| {
+            agents
+                .as_ref()
+                .is_none_or(|registry| registry.run_count() == 0)
+        })
+}
+
+/// The host's own housekeeping: closes it when its test parent is gone, when
+/// its record says no client can find it (two checks in a row), or when no
+/// client has used it for the idle period. Closing for any reason but a gone
+/// test parent leaves the terminal service and every shell running.
+#[cfg(not(target_family = "wasm"))]
+fn watch_for_self_exit(shared: Arc<Shared>) {
+    use super::service_lifecycle as life;
+    let check_every = life::check_every();
+    let idle_after = life::host_idle_exit();
+    let mut strikes = life::Strikes::default();
+    let mut last_check = std::time::Instant::now();
+    let mut clock = life::IdleClock::new(last_check, life::tick());
+    let mut seen = shared.activity.load(Ordering::SeqCst);
+    let reason = loop {
+        std::thread::sleep(life::tick());
+        let connections = shared.connections.load(Ordering::SeqCst);
+        let activity = shared.activity.load(Ordering::SeqCst);
+        let idle = clock.look(
+            connections > 0 || activity != seen,
+            std::time::Instant::now(),
+        );
+        seen = activity;
+        if shared.shutdown.load(Ordering::SeqCst) {
+            return;
+        }
+        if life::parent_gone() {
+            break SelfExit::ParentGone;
+        }
+        if last_check.elapsed() < check_every {
+            continue;
+        }
+        last_check = std::time::Instant::now();
+        let record = discovery::endpoint_path();
+        let data_dir = record.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let state = life::record_state(&data_dir, &record, |text| {
+            let endpoint: ServiceEndpoint = serde_json::from_str(text).ok()?;
+            Some((endpoint.pid, endpoint.token == shared.token))
+        });
+        if let Some(state) = strikes.observe(state) {
+            break SelfExit::Unreachable(state);
+        }
+        if idle_long_enough(
+            connections,
+            idle,
+            idle_after,
+            || holds_work(&shared),
+        ) {
+            shared.idle_exit.store(true, Ordering::SeqCst);
+            break SelfExit::Idle;
+        }
+    };
+    match &reason {
+        SelfExit::ParentGone => {
+            log::info!("dragent-host closing: the process that started it is gone")
+        }
+        SelfExit::Unreachable(state) => {
+            log::warn!("dragent-host closing: {}", state.describe())
+        }
+        SelfExit::Idle => log::info!(
+            "dragent-host closing after {}s with no client; the app restarts it on demand",
+            idle_after.as_secs()
+        ),
+    }
+    if reason != SelfExit::ParentGone {
+        // Shells and agents live in the terminal service; they outlast us.
+        shared.preserve_pty_on_exit.store(true, Ordering::SeqCst);
+    }
+    shared.shutdown.store(true, Ordering::SeqCst);
+}
+
 fn handle_connection(stream: Stream, shared: Arc<Shared>) {
     // Accepted sockets inherit the listener's non-blocking mode on
     // macOS/BSD; streams need blocking writes with timeouts.
@@ -498,6 +762,7 @@ fn handle_connection(stream: Stream, shared: Arc<Shared>) {
         let mut clients = shared.clients.lock().unwrap_or_else(|p| p.into_inner());
         clients.insert(envelope.client_id.clone(), now_ms());
     }
+    let _active = ActiveConnection::new(&shared);
     match envelope.request {
         #[cfg(not(target_family = "wasm"))]
         Request::Development(request) => reply(&stream, super::development::execute(request).map(Response::Development)),
@@ -512,6 +777,10 @@ fn handle_connection(stream: Stream, shared: Arc<Shared>) {
                     super::team::TeamResponse::Team(team) => team.id.clone(),
                     _ => team_id,
                 };
+                broadcast(&shared, &Event::TeamChanged { team_id });
+            }
+            // A seat that followed its conversation to a new pane.
+            for team_id in super::team::take_reseated() {
                 broadcast(&shared, &Event::TeamChanged { team_id });
             }
             reply(&stream, result.map(Response::Team))
@@ -1388,6 +1657,11 @@ fn handle_connection(stream: Stream, shared: Arc<Shared>) {
                 reply(&stream, Err(error));
                 return;
             }
+            shared
+                .start_gate
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .terminal_closed(&session_id, std::time::Instant::now());
             // Best-effort detach from the home (already gone after teardown).
             {
                 let worktrees = shared.worktrees.lock().unwrap_or_else(|p| p.into_inner());
@@ -1601,6 +1875,38 @@ fn handle_connection(stream: Stream, shared: Arc<Shared>) {
             reply(&stream, Ok(Response::AgentRunList { runs }))
         }
         #[cfg(not(target_family = "wasm"))]
+        Request::AskToStart(ask) => {
+            let answer = answer_start(&shared, ask);
+            reply(&stream, Ok(Response::StartAnswer(answer)))
+        }
+        #[cfg(not(target_family = "wasm"))]
+        Request::StartAnyway { id } => {
+            shared
+                .start_gate
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .start_anyway(&id, std::time::Instant::now());
+            reply(&stream, Ok(Response::Ack))
+        }
+        #[cfg(not(target_family = "wasm"))]
+        Request::LeaveStartLine { id } => {
+            shared
+                .start_gate
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .leave(&id);
+            reply(&stream, Ok(Response::Ack))
+        }
+        #[cfg(not(target_family = "wasm"))]
+        Request::AgentResources => {
+            reply(&stream, Ok(Response::AgentResources(agent_resources(&shared))))
+        }
+        #[cfg(not(target_family = "wasm"))]
+        Request::ResumeAgent { id } => {
+            let resumed = shared.paused_agents.resume(&id);
+            reply(&stream, resumed.map(|_| Response::Ack))
+        }
+        #[cfg(not(target_family = "wasm"))]
         Request::CheckAgentReadiness { agent } => {
             let agents = shared.agents.lock().unwrap_or_else(|p| p.into_inner());
             match agents.as_ref() {
@@ -1666,6 +1972,11 @@ fn handle_connection(stream: Stream, shared: Arc<Shared>) {
         Request::ListAgentConfigs
         | Request::AddAgentConfig { .. }
         | Request::RunAgent { .. }
+        | Request::AskToStart(_)
+        | Request::StartAnyway { .. }
+        | Request::LeaveStartLine { .. }
+        | Request::AgentResources
+        | Request::ResumeAgent { .. }
         | Request::GetAgentRun { .. }
         | Request::ListAgentRuns { .. }
         | Request::CheckAgentReadiness { .. }
@@ -2089,6 +2400,8 @@ fn enforce_lease_expiry(
 /// Run the host service loop on an ephemeral loopback port. Blocks until a
 /// token-gated `Shutdown` arrives.
 pub fn run_service() -> anyhow::Result<()> {
+    /// How long a closing idle host serves what got in meanwhile.
+    const IDLE_DRAIN: Duration = Duration::from_secs(15);
     let _authority = discovery::acquire_host_authority()?
         .ok_or_else(|| anyhow::anyhow!("another dragent host owns this endpoint"))?;
     // Unix domain socket next to the endpoint file (macOS/Linux; the
@@ -2182,6 +2495,9 @@ pub fn run_service() -> anyhow::Result<()> {
         shutdown: Arc::new(AtomicBool::new(false)),
         preserve_pty_on_exit: AtomicBool::new(false),
         clients: Mutex::new(HashMap::new()),
+        connections: AtomicUsize::new(0),
+        activity: AtomicU64::new(0),
+        idle_exit: AtomicBool::new(false),
         subscribers: Mutex::new(Vec::new()),
         #[cfg(not(target_family = "wasm"))]
         workspaces: Mutex::new(workspaces),
@@ -2189,6 +2505,15 @@ pub fn run_service() -> anyhow::Result<()> {
         worktrees: Mutex::new(worktrees),
         #[cfg(not(target_family = "wasm"))]
         agents: Mutex::new(agents),
+        #[cfg(not(target_family = "wasm"))]
+        start_gate: Mutex::new(super::start_gate::StartGate::new(
+            std::time::Instant::now(),
+            now_ms(),
+        )),
+        #[cfg(not(target_family = "wasm"))]
+        paused_agents: super::agent_memory::PausedAgents::load(super::pty_supervisor::org_dir()),
+        #[cfg(not(target_family = "wasm"))]
+        agent_memory: Mutex::new(Vec::new()),
         #[cfg(not(target_family = "wasm"))]
         pty,
         #[cfg(not(target_family = "wasm"))]
@@ -2280,6 +2605,17 @@ pub fn run_service() -> anyhow::Result<()> {
             }
         });
     }
+    // Measure the agents, and pause any that runs away. Stops with the host.
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let shared = shared.clone();
+        std::thread::spawn(move || {
+            while !shared.shutdown.load(Ordering::SeqCst) {
+                watch_agent_memory(&shared);
+                std::thread::sleep(super::agent_memory::WATCH_EVERY);
+            }
+        });
+    }
     // Headless driver loop (Phase 4): evaluates every managed workspace on a
     // tick with zero UI required. Stops with the host.
     #[cfg(not(target_family = "wasm"))]
@@ -2291,6 +2627,11 @@ pub fn run_service() -> anyhow::Result<()> {
                 std::thread::sleep(crate::scheduler::DRIVER_TICK);
             }
         });
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let shared = shared.clone();
+        std::thread::spawn(move || watch_for_self_exit(shared));
     }
     broadcast(&shared, &Event::HostReady { host_id });
     listener
@@ -2326,12 +2667,46 @@ pub fn run_service() -> anyhow::Result<()> {
     }
     // Drain: give in-flight handlers a moment, then exit.
     std::thread::sleep(Duration::from_millis(250));
+    // A request can arrive just as an idle host decides to close: finish it
+    // rather than cutting it off half done.
+    let drain = std::time::Instant::now() + IDLE_DRAIN;
+    while shared.idle_exit.load(Ordering::SeqCst)
+        && shared.connections.load(Ordering::SeqCst) > 0
+        && std::time::Instant::now() < drain
+    {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     #[cfg(not(target_family = "wasm"))]
     if !shared.preserve_pty_on_exit.load(Ordering::SeqCst) {
         shared.pty.stop_owned();
     }
-    listener.remove_socket_file();
+    // The socket path is per data folder: once the record names another host,
+    // the file there is that host's, and it stays reachable only through it.
+    // A leftover file of ours is replaced by whoever binds next.
+    if discovery::read_endpoint().is_some_and(|endpoint| endpoint.token == shared.token) {
+        listener.remove_socket_file();
+    }
     discovery::remove_owned_endpoint(&shared.token);
     log::info!("dragent-host exiting id={}", shared.info.host_id);
     Ok(())
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod self_exit_tests {
+    use super::*;
+
+    #[test]
+    fn an_idle_host_closes_only_with_nothing_connected_heard_or_at_work() {
+        let after = Duration::from_millis(1_000);
+        let long = Duration::from_secs(1_000);
+        // Nothing connected, nothing heard for the idle period, no work.
+        assert!(idle_long_enough(0, after, after, || false));
+        // A connection being served (an app's event stream, a terminal relay,
+        // a long request) keeps it up however old the last activity.
+        assert!(!idle_long_enough(1, long, after, || false));
+        // Heard from too recently.
+        assert!(!idle_long_enough(0, after / 2, after, || false));
+        // A team's courier runs here, or agents only this host knows.
+        assert!(!idle_long_enough(0, long, after, || true));
+    }
 }

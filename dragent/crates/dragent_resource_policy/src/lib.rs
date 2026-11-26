@@ -7,6 +7,8 @@
 mod budgeted_queue;
 
 pub use budgeted_queue::{BudgetedQueue, Eviction};
+pub mod agent_slots;
+pub mod build_slots;
 
 use std::time::Duration;
 

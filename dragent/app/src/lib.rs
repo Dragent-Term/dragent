@@ -10,6 +10,10 @@ pub mod auth;
 pub mod automation;
 #[cfg(not(target_family = "wasm"))]
 pub mod automations;
+#[cfg(not(target_family = "wasm"))]
+pub mod bench;
+#[cfg(not(target_family = "wasm"))]
+pub mod perf_overlay;
 pub mod autoupdate;
 pub mod bg;
 pub mod channel_ext;
@@ -50,6 +54,7 @@ pub mod root_view;
 pub mod settings;
 pub mod setup;
 pub mod shared_input;
+pub mod startup_timing;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod team_source;
 pub mod terminal;

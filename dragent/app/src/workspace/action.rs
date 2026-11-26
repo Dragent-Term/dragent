@@ -906,6 +906,8 @@ pub enum WorkspaceAction {
         agent_id: String,
     },
     ClosePromptAgentInstall,
+    /// A click in the pop-up terminal sheet: its terminal takes the keyboard.
+    FocusPopupTerminal,
     CheckPromptAgentInstall,
     /// The install sheet's "Retry with administrator rights" (a machine job
     /// that stopped for lack of permission).
@@ -1207,6 +1209,9 @@ pub enum WorkspaceAction {
     TogglePortsPanel,
     /// Show or hide the host agents panel (agent runs across open projects).
     ToggleAgentsPanel,
+    /// Dev-only: show or hide the performance overlay (frame time, memory,
+    /// input latency). Also forced on by `DRAGENT_PERF_OVERLAY=1`.
+    TogglePerfOverlay,
     /// Re-resolve host agent runs for every open project root.
     RefreshAgentRuns,
     /// Close the panel and bind a controlling mirror to this host run.
@@ -1219,6 +1224,26 @@ pub enum WorkspaceAction {
     },
     /// Hide the agents panel without touching any run.
     CloseAgentsPanel,
+    /// Keep or offer one agent in "Put idle agents to sleep?" (its pane).
+    ToggleSleepAgent {
+        pane: uuid::Uuid,
+    },
+    /// Put the ticked ones to sleep.
+    ConfirmSleepAgents,
+    /// Let them all run, and don't ask for a while.
+    KeepAgentsAwake,
+    /// Start an agent that waits for memory now (its pane or terminal).
+    StartAgentAnyway {
+        id: String,
+    },
+    /// Let an agent paused for its memory run again (its pane).
+    ResumeAgent {
+        id: String,
+    },
+    /// Close the tab of an agent that waits or is paused (its pane).
+    StopHeldAgent {
+        id: String,
+    },
     ToggleLanguageServicesPanel,
     RestartLanguageServices,
     StopLanguageServices,

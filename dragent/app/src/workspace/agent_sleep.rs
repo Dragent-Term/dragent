@@ -1,20 +1,23 @@
-//! Idle agents are put to sleep to free memory, and wake when opened.
+//! Idle agents can be put to sleep to free memory, and wake when opened.
 //!
 //! An agent CLI (opencode, Claude, Codex…) keeps its process — often near a
 //! gigabyte — for as long as its tab exists, working or not. With 10–20 tabs
-//! that exhausts a laptop's memory. So an agent whose turn is finished, that
-//! no one has touched for a while (Settings → Agents, 15 minutes by default)
-//! and that isn't on screen, has its process stopped. Its tab stays, with its
+//! that exhausts a laptop's memory. So once more than [`ALWAYS_AWAKE`] agents
+//! run, and some have finished, sit off screen and haven't been touched for a
+//! while (Settings → Agents, 15 minutes by default), Dragent asks whether to
+//! put those to sleep. Nothing sleeps without the person's word: from that
+//! question, or "Sleep workspace". A sleeping agent's tab stays, with its
 //! history; opening it (or opening it on the phone) resumes the same
 //! conversation in a new process.
 //!
 //! Never put to sleep: an agent that is working or waiting for an answer, one
-//! whose conversation can't be resumed exactly, one that left something
-//! serving (a dev server it started), one coordinating with a team, one in
-//! use on the phone, and the built-in Dragent agent (it has no process).
+//! with something it started still running in the background (a build, tests,
+//! a dev server), one whose conversation can't be resumed exactly, one
+//! coordinating with a team, one in use on the phone, and the built-in
+//! Dragent agent (it has no process).
 //!
 //! When the machine is short of memory the idle time drops to a couple of
-//! minutes. Starting an agent never asks; the sweep makes the room.
+//! minutes. Starting an agent never asks.
 
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
@@ -35,6 +38,12 @@ const SWEEP_EVERY: Duration = Duration::from_secs(60);
 const SHORT_OF_MEMORY_IDLE: Duration = Duration::from_secs(2 * 60);
 /// How long the "put to sleep" notice stays.
 const NOTICE_FOR: Duration = Duration::from_secs(7);
+/// This many agents are left running however long they sit.
+const ALWAYS_AWAKE: usize = 5;
+/// After "Keep awake", how long until asking again; sooner while a new agent
+/// waits for memory.
+const ASK_AGAIN: Duration = Duration::from_secs(60 * 60);
+const ASK_AGAIN_WAITING: Duration = Duration::from_secs(10 * 60);
 /// How often wake requests (a team's courier needs a sleeping agent) are
 /// looked for, while any agent sleeps.
 const WAKE_EVERY: Duration = Duration::from_secs(2);
@@ -78,7 +87,7 @@ fn note(pane: Uuid, sleeping: bool) {
 }
 
 /// "1.2 GB" / "640 MB".
-fn size_label(bytes: u64) -> String {
+pub(crate) fn size_label(bytes: u64) -> String {
     let gb = bytes as f64 / (1u64 << 30) as f64;
     if gb >= 1.0 {
         format!("{gb:.1} GB")
@@ -87,18 +96,89 @@ fn size_label(bytes: u64) -> String {
     }
 }
 
-/// "Memory was low: put 3 idle agents to sleep, freeing 2.4 GB. …"
-fn sleep_notice(count: usize, freed: u64, asked: bool) -> String {
-    let reason = if asked { "Put" } else { "Memory was low: put" };
-    let (what, them) = if count == 1 {
-        ("an idle agent".to_string(), "it")
-    } else {
-        (format!("{count} idle agents"), "one")
+/// "Put 3 agents to sleep, freeing about 2.4 GB. …", and how many of the
+/// `chosen` had started on something since they were offered.
+fn sleep_notice(slept: usize, chosen: usize, freed: u64) -> String {
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    if slept == 0 {
+        return "No agent was put to sleep: they are in use again.".into();
+    }
+    let busy = chosen.saturating_sub(slept);
+    let rest = match busy {
+        0 => String::new(),
+        n => format!(" {n} stayed awake: in use again."),
     };
     format!(
-        "{reason} {what} to sleep, freeing {}. Open its tab to wake {them}.",
+        "Put {slept} agent{} to sleep, freeing about {}. Open a tab to wake it.{rest}",
+        plural(slept),
         size_label(freed)
     )
+}
+
+/// How many agents may be offered for sleep: those beyond the ones that
+/// always stay awake.
+fn may_offer(awake: usize) -> usize {
+    awake.saturating_sub(ALWAYS_AWAKE)
+}
+
+/// Whether the person may be asked, given how long ago they said to keep
+/// agents awake.
+fn may_ask(since_declined: Option<Duration>, start_waits: bool) -> bool {
+    let again = if start_waits { ASK_AGAIN_WAITING } else { ASK_AGAIN };
+    since_declined.is_none_or(|since| since >= again)
+}
+
+fn declined() -> &'static Mutex<Option<std::time::Instant>> {
+    static DECLINED: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
+    DECLINED.get_or_init(Default::default)
+}
+
+/// "22 min" / "1 h 5 min".
+fn idle_label(idle: Duration) -> String {
+    let minutes = idle.as_secs() / 60;
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{} min", m.max(1)),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
+/// The question "put these idle agents to sleep?".
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SleepPrompt {
+    agents: Vec<OfferedAgent>,
+    /// The ones the person unticked.
+    keep: HashSet<Uuid>,
+    /// A new agent waits for the memory.
+    start_waits: bool,
+    short: bool,
+}
+
+#[derive(Clone, Debug)]
+struct OfferedAgent {
+    pane: Uuid,
+    provider: String,
+    title: String,
+    place: String,
+    idle: Duration,
+    memory: u64,
+}
+
+impl SleepPrompt {
+    fn chosen(&self) -> impl Iterator<Item = &OfferedAgent> {
+        self.agents.iter().filter(|agent| !self.keep.contains(&agent.pane))
+    }
+}
+
+/// Why agents are being looked at.
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
+enum Sweep {
+    /// The regular look: finds what to ask about.
+    Look,
+    /// The person said yes to these.
+    Chosen(HashSet<Uuid>),
+    /// "Sleep workspace": its tabs, and how many agents they hold.
+    Workspace(HashSet<usize>, usize),
 }
 
 /// What "Sleep workspace" did: how many of the workspace's `agents` slept,
@@ -106,7 +186,7 @@ fn sleep_notice(count: usize, freed: u64, asked: bool) -> String {
 pub(crate) fn stayed_awake_notice(slept: usize, freed: u64, agents: usize) -> String {
     let awake = agents.saturating_sub(slept);
     let plural = |n: usize| if n == 1 { "" } else { "s" };
-    let why = "working, waiting for you, on screen, coordinating a team, or can't be resumed";
+    let why = "working, running something in the background, waiting for you, on screen, coordinating a team, or can't be resumed";
     match (slept, awake) {
         (0, _) => format!("No agent was put to sleep: {awake} agent{} {} ({why}).", plural(awake), if awake == 1 { "is" } else { "are" }),
         (_, 0) => format!("Put {slept} agent{} to sleep, freeing about {}. Open a tab to wake it.", plural(slept), size_label(freed)),
@@ -131,6 +211,22 @@ pub(crate) fn idle_before_sleep(minutes: u32, short_of_memory: bool, asked: bool
     Some(if short_of_memory { configured.min(SHORT_OF_MEMORY_IDLE) } else { configured })
 }
 
+/// [`idle_before_sleep`], and how long while a start waits for memory: two
+/// minutes, whatever the setting, so an agent that just finished isn't put
+/// to sleep the moment it stops.
+pub(crate) fn required_idle(
+    minutes: u32,
+    short_of_memory: bool,
+    asked: bool,
+    start_waits: bool,
+) -> Option<Duration> {
+    let required = idle_before_sleep(minutes, short_of_memory, asked)?;
+    if start_waits && short_of_memory && !asked {
+        return Some(SHORT_OF_MEMORY_IDLE);
+    }
+    Some(required)
+}
+
 /// One agent the UI thread found eligible; the rest is checked off it.
 struct Candidate {
     tab_id: usize,
@@ -140,6 +236,7 @@ struct Candidate {
 }
 
 /// An agent confirmed idle, with the memory its processes hold.
+#[derive(Default)]
 struct Sleeper {
     tab_id: usize,
     pane: Uuid,
@@ -182,8 +279,9 @@ pub(crate) fn may_sleep(
     required: Duration,
     found: bool,
     listening: Option<bool>,
+    background: bool,
 ) -> bool {
-    resumable && between_turns && idle >= required && found && listening == Some(false)
+    resumable && between_turns && idle >= required && found && listening == Some(false) && !background
 }
 
 impl WorkspaceView {
@@ -191,7 +289,7 @@ impl WorkspaceView {
     #[cfg(not(target_family = "wasm"))]
     pub(super) fn start_agent_sleep(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.spawn(Timer::after(SWEEP_EVERY), |view, _, ctx| {
-            view.sweep_idle_agents(false, None, ctx);
+            view.sweep_idle_agents(ctx);
             view.start_agent_sleep(ctx);
         });
     }
@@ -208,16 +306,31 @@ impl WorkspaceView {
             .collect()
     }
 
-    /// Put to sleep the agents idle long enough. `asked`: the person chose
-    /// "Sleep idle agents" (no idle time needed); `then` runs afterwards.
+    /// Look for agents idle long enough, and ask about them.
     #[cfg(not(target_family = "wasm"))]
-    pub(crate) fn sweep_idle_agents(
-        &mut self,
-        asked: bool,
-        then: Option<WorkspaceAction>,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.sweep_agents(asked, then, None, ctx);
+    pub(crate) fn sweep_idle_agents(&mut self, ctx: &mut ViewContext<Self>) {
+        let start_waits = !self.agent_resources.waiting.is_empty();
+        let since = declined().lock().ok().and_then(|at| at.map(|at| at.elapsed()));
+        if !may_ask(since, start_waits) || self.sleep_prompt_open(ctx) {
+            return;
+        }
+        self.sweep_agents(Sweep::Look, ctx);
+    }
+
+    /// Whether any window is asking already.
+    #[cfg(not(target_family = "wasm"))]
+    fn sleep_prompt_open(&self, ctx: &mut ViewContext<Self>) -> bool {
+        let this_window = ctx.window_id();
+        if self.agent_sleep_prompt.is_some() {
+            return true;
+        }
+        let others: Vec<_> = ctx.window_ids().filter(|window| *window != this_window).collect();
+        others.into_iter().any(|window| {
+            let workspace = ctx
+                .root_view::<crate::root_view::RootView>(window)
+                .and_then(|root| root.read(ctx, |root, _| root.workspace()));
+            workspace.is_some_and(|workspace| workspace.read(ctx, |other, _| other.agent_sleep_prompt.is_some()))
+        })
     }
 
     /// "Sleep workspace": put the workspace's agents to sleep now, without
@@ -252,28 +365,24 @@ impl WorkspaceView {
             self.show_agent_sleep_notice("No running agents in this workspace to put to sleep.".into(), ctx);
             return;
         }
-        self.sweep_agents(true, None, Some((tabs, agents)), ctx);
+        self.sweep_agents(Sweep::Workspace(tabs, agents), ctx);
     }
 
-    /// Put to sleep the agents idle long enough, or, with `only`, the
-    /// agents among those tabs (and how many agents they hold, for saying
-    /// how many stayed awake).
+    /// Find the agents that may sleep, then ask about them or, when the
+    /// person already said so, put them to sleep.
     #[cfg(not(target_family = "wasm"))]
-    fn sweep_agents(
-        &mut self,
-        asked: bool,
-        then: Option<WorkspaceAction>,
-        only: Option<(HashSet<usize>, usize)>,
-        ctx: &mut ViewContext<Self>,
-    ) {
+    fn sweep_agents(&mut self, sweep: Sweep, ctx: &mut ViewContext<Self>) {
         if self.agent_sleep_sweeping {
-            if let Some(action) = then {
-                self.handle_low_memory_resume(action, ctx);
+            // A yes is never lost to a look that happens to be under way.
+            if let Sweep::Chosen(panes) = sweep {
+                ctx.spawn(Timer::after(Duration::from_secs(1)), move |view, _, ctx| {
+                    view.sweep_agents(Sweep::Chosen(panes), ctx);
+                });
             }
             return;
         }
         let minutes = crate::settings::AppSettings::global().agent.idle_sleep_minutes;
-        if minutes == 0 && !asked {
+        if minutes == 0 && matches!(sweep, Sweep::Look) {
             return;
         }
         let visible = self.visible_tab_ids();
@@ -284,7 +393,10 @@ impl WorkspaceView {
                 owned.session_id.is_some()
                     && owned.remote_host.is_none()
                     && !visible.contains(tab_id)
-                    && only.as_ref().is_none_or(|(tabs, _)| tabs.contains(tab_id))
+                    && match &sweep {
+                        Sweep::Workspace(tabs, _) => tabs.contains(tab_id),
+                        _ => true,
+                    }
             })
             .filter_map(|(tab_id, owned)| {
                 let session = owned.session_id.clone()?;
@@ -301,7 +413,11 @@ impl WorkspaceView {
                     let quiet = since_woken(view.pane_uuid).map_or(typed, |woke| woke.min(typed));
                     // Drawing output: working, whatever its reports say.
                     let drawing = crate::terminal::output_activity::busy(view.pane_uuid) == Some(true);
-                    (cli_agent && !drawing && !is_pane_asleep(view.pane_uuid)).then_some(Candidate {
+                    let wanted = match &sweep {
+                        Sweep::Chosen(panes) => panes.contains(&view.pane_uuid),
+                        _ => true,
+                    };
+                    (cli_agent && wanted && !drawing && !is_pane_asleep(view.pane_uuid)).then_some(Candidate {
                         tab_id: *tab_id,
                         pane: view.pane_uuid,
                         quiet,
@@ -317,21 +433,42 @@ impl WorkspaceView {
             })
             .collect();
         if candidates.is_empty() {
-            if let Some((_, agents)) = &only {
-                self.show_agent_sleep_notice(stayed_awake_notice(0, 0, *agents), ctx);
-            }
-            if let Some(action) = then {
-                self.handle_low_memory_resume(action, ctx);
+            match sweep {
+                Sweep::Workspace(_, agents) => {
+                    self.show_agent_sleep_notice(stayed_awake_notice(0, 0, agents), ctx)
+                }
+                Sweep::Chosen(panes) => {
+                    self.show_agent_sleep_notice(sleep_notice(0, panes.len(), 0), ctx)
+                }
+                Sweep::Look => {}
             }
             return;
         }
-        let manual = only.map(|(_, agents)| agents);
+        let look = matches!(sweep, Sweep::Look);
+        let chosen = matches!(sweep, Sweep::Chosen(_));
+        let waiting: HashSet<String> =
+            self.agent_resources.waiting.iter().map(|agent| agent.id.clone()).collect();
         self.agent_sleep_sweeping = true;
         let (tx, rx) = futures::channel::oneshot::channel();
         crate::bg::detach(move || {
             let memory = dragent_host::agent_sleep::memory();
             let short = memory.pressure >= dragent_host::agent_sleep::Pressure::Elevated;
-            let Some(required) = idle_before_sleep(minutes, short, asked) else {
+            let required = if look {
+                required_idle(minutes, short, false, !waiting.is_empty())
+            } else if chosen {
+                // Not one that finished a moment ago.
+                Some(SHORT_OF_MEMORY_IDLE)
+            } else {
+                Some(Duration::ZERO)
+            };
+            // The person asked for a whole workspace: how many run elsewhere
+            // doesn't matter. Otherwise some always stay.
+            let most = if look || chosen {
+                may_offer(dragent_host::agent_sleep::agents_awake())
+            } else {
+                usize::MAX
+            };
+            let (Some(required), true) = (required, most > 0) else {
                 let _ = tx.send((Vec::new(), short));
                 return;
             };
@@ -345,6 +482,8 @@ impl WorkspaceView {
                 .unwrap_or(0);
             let mut sleepers: Vec<Sleeper> = candidates
                 .into_iter()
+                // One that hasn't started holds nothing.
+                .filter(|candidate| !waiting.contains(&candidate.pane.to_string()))
                 .filter_map(|candidate| {
                     use dragent_host::agent_sessions as sessions;
                     let record = sessions::load(candidate.pane).filter(|r| r.active)?;
@@ -362,6 +501,7 @@ impl WorkspaceView {
                         required,
                         found.found,
                         found.listening,
+                        found.background,
                     )
                     .then_some(Sleeper {
                         tab_id: candidate.tab_id,
@@ -372,19 +512,22 @@ impl WorkspaceView {
                 })
                 .collect();
             sleepers.sort_by(|a, b| b.idle.cmp(&a.idle));
+            sleepers.truncate(most);
             let _ = tx.send((sleepers, short));
         });
         ctx.spawn(rx, move |view, result, ctx| {
             view.agent_sleep_sweeping = false;
-            let (sleepers, short) = result.unwrap_or_default();
+            let (mut sleepers, short) = result.unwrap_or_default();
             // Opened since it was found idle: it stays awake.
             let visible = view.visible_tab_ids();
+            sleepers.retain(|sleeper| !visible.contains(&sleeper.tab_id));
+            if let Sweep::Look = sweep {
+                view.ask_to_sleep(sleepers, short, ctx);
+                return;
+            }
             let mut count = 0usize;
             let mut freed = 0u64;
             for sleeper in sleepers {
-                if visible.contains(&sleeper.tab_id) {
-                    continue;
-                }
                 if view.put_agent_to_sleep(sleeper.tab_id, sleeper.pane, ctx) {
                     count += 1;
                     freed += sleeper.memory;
@@ -397,29 +540,252 @@ impl WorkspaceView {
                     size_label(freed)
                 );
             }
-            if let Some(agents) = manual {
-                view.show_agent_sleep_notice(stayed_awake_notice(count, freed, agents), ctx);
-            } else if count > 0 && (short || asked) {
-                view.show_agent_sleep_notice(sleep_notice(count, freed, asked), ctx);
-            }
-            if let Some(action) = then {
-                view.handle_low_memory_resume(action, ctx);
-            }
+            let notice = match sweep {
+                Sweep::Workspace(_, agents) => stayed_awake_notice(count, freed, agents),
+                Sweep::Chosen(panes) => sleep_notice(count, panes.len(), freed),
+                Sweep::Look => return,
+            };
+            view.show_agent_sleep_notice(notice, ctx);
             ctx.notify();
         });
     }
 
-    #[cfg(target_family = "wasm")]
-    pub(crate) fn sleep_workspace(&mut self, _workspace_id: usize, _ctx: &mut ViewContext<Self>) {}
+    /// Ask whether these may sleep.
+    #[cfg(not(target_family = "wasm"))]
+    fn ask_to_sleep(&mut self, sleepers: Vec<Sleeper>, short: bool, ctx: &mut ViewContext<Self>) {
+        if sleepers.is_empty() || self.sleep_prompt_open(ctx) {
+            return;
+        }
+        let agents = sleepers
+            .into_iter()
+            .filter_map(|sleeper| {
+                let owned = self.host_owned_tabs.get(&sleeper.tab_id)?;
+                let provider = owned.pane.read(ctx, |view, _| view.agent_id.clone()).unwrap_or_default();
+                let (title, place) = self.sleeper_place(sleeper.tab_id);
+                Some(OfferedAgent {
+                    pane: sleeper.pane,
+                    provider,
+                    title,
+                    place,
+                    idle: sleeper.idle,
+                    memory: sleeper.memory,
+                })
+            })
+            .collect();
+        self.agent_sleep_prompt = Some(SleepPrompt {
+            agents,
+            keep: HashSet::new(),
+            start_waits: !self.agent_resources.waiting.is_empty(),
+            short,
+        });
+        ctx.notify();
+    }
+
+    /// A tab's name and the workspace it is in.
+    #[cfg(not(target_family = "wasm"))]
+    fn sleeper_place(&self, tab_id: usize) -> (String, String) {
+        let here = self.tabs.iter().find(|tab| tab.id == tab_id).map(|tab| (tab, self.active_workspace_tab_id));
+        let found = here.or_else(|| {
+            self.parked_workspace_tabs.iter().find_map(|surface| {
+                surface.panes.iter().find(|tab| tab.id == tab_id).map(|tab| (tab, surface.id))
+            })
+        });
+        let Some((tab, surface)) = found else {
+            return (String::new(), String::new());
+        };
+        let place = self
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.tab_ids.contains(&surface))
+            .map(|workspace| workspace.title.clone())
+            .unwrap_or_default();
+        (tab.custom_label.clone().unwrap_or_else(|| tab.title.clone()), place)
+    }
+
+    pub(crate) fn handle_sleep_prompt_action(&mut self, action: &WorkspaceAction, ctx: &mut ViewContext<Self>) {
+        match action {
+            WorkspaceAction::ToggleSleepAgent { pane } => {
+                if let Some(prompt) = &mut self.agent_sleep_prompt {
+                    if !prompt.keep.remove(pane) {
+                        prompt.keep.insert(*pane);
+                    }
+                }
+            }
+            WorkspaceAction::ConfirmSleepAgents => {
+                let Some(prompt) = &self.agent_sleep_prompt else {
+                    return;
+                };
+                let panes: HashSet<Uuid> = prompt.chosen().map(|agent| agent.pane).collect();
+                if panes.is_empty() {
+                    return;
+                }
+                self.agent_sleep_prompt = None;
+                // Those kept aren't offered again straight away.
+                if let Ok(mut at) = declined().lock() {
+                    *at = Some(std::time::Instant::now());
+                }
+                #[cfg(not(target_family = "wasm"))]
+                self.sweep_agents(Sweep::Chosen(panes), ctx);
+            }
+            WorkspaceAction::KeepAgentsAwake => {
+                self.agent_sleep_prompt = None;
+                if let Ok(mut at) = declined().lock() {
+                    *at = Some(std::time::Instant::now());
+                }
+            }
+            _ => {}
+        }
+        ctx.notify();
+    }
+
+    /// "Put these agents to sleep?", over the window. It takes no keys, so
+    /// typing carries on and Enter never answers it.
+    pub(crate) fn overlay_sleep_prompt(&self, root: Box<dyn Element>, theme: &Theme) -> Box<dyn Element> {
+        use crate::machine_ui::{self as mui, Size, Variant};
+        use warpui::elements::{CrossAxisAlignment, Expanded, Flex, Hoverable};
+        let Some(prompt) = &self.agent_sleep_prompt else {
+            return root;
+        };
+        let (ui, id) = (self.ui_font, self.workspace_view_id);
+        let hover = |key: String| {
+            self.new_tab_picker_mouse_states
+                .borrow_mut()
+                .entry(format!("sleep_prompt_{key}"))
+                .or_default()
+                .clone()
+        };
+        let why = if prompt.start_waits {
+            "A new agent is waiting for memory. These have finished and aren't in use."
+        } else if prompt.short {
+            "Memory is running low. These have finished and aren't in use."
+        } else {
+            "These have finished and haven't been used for a while. Sleeping frees their memory."
+        };
+        let mut rows = Vec::new();
+        for agent in &prompt.agents {
+            let on = !prompt.keep.contains(&agent.pane);
+            let known = super::action::PromptAgent::ALL
+                .into_iter()
+                .find(|known| known.command_key() == agent.provider);
+            let name = known.map(|known| known.label().to_string()).unwrap_or_else(|| agent.provider.clone());
+            let mut detail: Vec<String> = Vec::new();
+            if !agent.place.is_empty() && agent.place != agent.title {
+                detail.push(agent.place.clone());
+            }
+            detail.push(format!("idle {}", idle_label(agent.idle)));
+            detail.push(size_label(agent.memory));
+            let title = if agent.title.is_empty() { name } else { agent.title.clone() };
+            let pane = agent.pane;
+            let theme = *theme;
+            let detail = detail.join(" · ");
+            rows.push(
+                Hoverable::new(hover(format!("row_{pane}")), move |state| {
+                    let mut row = Flex::row()
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_spacing(12.0);
+                    if let Some(known) = known {
+                        row = row.with_child(super::agent_image(known, &theme, 18.0, 1.0));
+                    }
+                    let row = row
+                        .with_child(
+                            Expanded::new(
+                                1.0,
+                                Flex::column()
+                                    .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                                    .with_spacing(3.0)
+                                    .with_child(mui::line(ui, title.clone(), 13.0, theme.main_text()))
+                                    .with_child(mui::line(ui, detail.clone(), 11.5, theme.sub_text()))
+                                    .finish(),
+                            )
+                            .finish(),
+                        )
+                        .with_child(if on {
+                            crate::icons::render_icon(crate::icons::AppIcon::CircleCheck, theme.accent, 17.0)
+                        } else {
+                            ConstrainedBox::new(
+                                Container::new(warpui::elements::Empty::new().finish())
+                                    .with_border(Border::all(1.5).with_border_color(theme.disabled_text()))
+                                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(7.5)))
+                                    .finish(),
+                            )
+                            .with_width(15.0)
+                            .with_height(15.0)
+                            .finish()
+                        })
+                        .finish();
+                    let mut cell = Container::new(row)
+                        .with_padding_left(10.0)
+                        .with_padding_right(10.0)
+                        .with_padding_top(9.0)
+                        .with_padding_bottom(9.0)
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.0)));
+                    if state.is_hovered() {
+                        cell = cell.with_background_color(theme.surface_2());
+                    }
+                    cell.finish()
+                })
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action_for(id, WorkspaceAction::ToggleSleepAgent { pane })
+                })
+                .finish(),
+            );
+        }
+        let mut list = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch).with_spacing(2.0);
+        for row in rows {
+            list = list.with_child(row);
+        }
+        let body = Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_spacing(14.0)
+            .with_child(mui::text(ui, why, 12.5, theme.sub_text()))
+            .with_child(list.finish())
+            .with_child(mui::text(
+                ui,
+                "Open an agent's tab when you need it: it starts again on the same conversation.",
+                12.0,
+                theme.disabled_text(),
+            ))
+            .finish();
+        let (count, memory) = prompt.chosen().fold((0usize, 0u64), |(n, m), agent| (n + 1, m + agent.memory));
+        let free = (count > 0).then(|| mui::text(ui, format!("Frees about {}", size_label(memory)), 12.0, theme.sub_text()));
+        let footer = mui::dialog_footer(
+            free,
+            vec![
+                mui::button(theme, ui, id, hover("keep".into()), None, "Keep awake", Variant::Secondary, Size::Md, true, WorkspaceAction::KeepAgentsAwake),
+                mui::button(
+                    theme,
+                    ui,
+                    id,
+                    hover("sleep".into()),
+                    None,
+                    &if count == prompt.agents.len() { "Put to sleep".to_string() } else { format!("Put {count} to sleep") },
+                    Variant::Primary,
+                    Size::Md,
+                    count > 0,
+                    WorkspaceAction::ConfirmSleepAgents,
+                ),
+            ],
+        );
+        let title = if prompt.agents.len() == 1 { "Put an idle agent to sleep?" } else { "Put idle agents to sleep?" };
+        let dialog = mui::dialog::<WorkspaceAction>(
+            theme,
+            ui,
+            id,
+            hover("unused".into()),
+            &self.agent_sleep_scroll,
+            mui::dialog_title(theme, ui, crate::icons::AppIcon::Clock, title, None),
+            body,
+            Some(footer),
+            500.0,
+            None,
+        );
+        let mut stack = warpui::elements::Stack::new().with_child(root);
+        stack.add_overlay_child(dialog);
+        stack.finish()
+    }
 
     #[cfg(target_family = "wasm")]
-    pub(crate) fn sweep_idle_agents(
-        &mut self,
-        _asked: bool,
-        _then: Option<WorkspaceAction>,
-        _ctx: &mut ViewContext<Self>,
-    ) {
-    }
+    pub(crate) fn sleep_workspace(&mut self, _workspace_id: usize, _ctx: &mut ViewContext<Self>) {}
 
     /// Stop a tab's agent process; the tab stays and wakes it when opened.
     #[cfg(not(target_family = "wasm"))]
@@ -620,12 +986,6 @@ impl WorkspaceView {
         self.wake_agent(local_tab_id as usize, ctx)
     }
 
-    /// Run the action that was waiting for idle agents to sleep.
-    fn handle_low_memory_resume(&mut self, action: WorkspaceAction, ctx: &mut ViewContext<Self>) {
-        use warpui::TypedActionView;
-        self.handle_action(&action, ctx);
-    }
-
     fn show_agent_sleep_notice(&mut self, text: String, ctx: &mut ViewContext<Self>) {
         self.agent_sleep_notice = Some(text);
         self.agent_sleep_notice_epoch = self.agent_sleep_notice_epoch.wrapping_add(1);
@@ -702,25 +1062,73 @@ mod tests {
     fn only_an_idle_resumable_agent_with_nothing_serving_sleeps() {
         let idle = Duration::from_secs(20 * 60);
         let required = Duration::from_secs(15 * 60);
-        assert!(may_sleep(true, true, idle, required, true, Some(false)));
-        assert!(!may_sleep(false, true, idle, required, true, Some(false)), "can't resume exactly");
-        assert!(!may_sleep(true, false, idle, required, true, Some(false)), "working or asking");
-        assert!(!may_sleep(true, true, Duration::from_secs(60), required, true, Some(false)), "not idle long enough");
-        assert!(!may_sleep(true, true, idle, required, false, Some(false)), "no process found");
-        assert!(!may_sleep(true, true, idle, required, true, Some(true)), "a server it started still runs");
-        assert!(!may_sleep(true, true, idle, required, true, None), "can't tell what it serves");
+        assert!(may_sleep(true, true, idle, required, true, Some(false), false));
+        assert!(!may_sleep(false, true, idle, required, true, Some(false), false), "can't resume exactly");
+        assert!(!may_sleep(true, false, idle, required, true, Some(false), false), "working or asking");
+        assert!(!may_sleep(true, true, Duration::from_secs(60), required, true, Some(false), false), "not idle long enough");
+        assert!(!may_sleep(true, true, idle, required, false, Some(false), false), "no process found");
+        assert!(!may_sleep(true, true, idle, required, true, Some(true), false), "a server it started still runs");
+        assert!(!may_sleep(true, true, idle, required, true, None, false), "can't tell what it serves");
+        assert!(!may_sleep(true, true, idle, required, true, Some(false), true), "a build it started still runs");
+    }
+
+    #[test]
+    fn a_waiting_start_makes_idle_agents_sleep_after_two_minutes() {
+        let two_minutes = Duration::from_secs(2 * 60);
+        // Sooner than the setting, never at once; only while memory is short.
+        assert_eq!(required_idle(15, false, false, true), idle_before_sleep(15, false, false));
+        assert_eq!(required_idle(15, true, false, true), Some(two_minutes));
+        assert_eq!(required_idle(1, true, false, true), Some(two_minutes));
+        // The person's explicit ask still means now; Never still means never.
+        assert_eq!(required_idle(0, true, true, true), Some(Duration::ZERO));
+        assert_eq!(required_idle(0, true, false, true), None);
+        // Without a waiter, the setting (shortened when short) applies.
+        assert_eq!(required_idle(15, true, false, false), idle_before_sleep(15, true, false));
+        assert_eq!(required_idle(15, false, false, false), idle_before_sleep(15, false, false));
     }
 
     #[test]
     fn the_notice_reads_naturally() {
         assert_eq!(
-            sleep_notice(1, 900 << 20, false),
-            "Memory was low: put an idle agent to sleep, freeing 900 MB. Open its tab to wake it."
+            sleep_notice(1, 1, 900 << 20),
+            "Put 1 agent to sleep, freeing about 900 MB. Open a tab to wake it."
         );
         assert_eq!(
-            sleep_notice(3, 3 << 30, true),
-            "Put 3 idle agents to sleep, freeing 3.0 GB. Open its tab to wake one."
+            sleep_notice(2, 3, 3 << 30),
+            "Put 2 agents to sleep, freeing about 3.0 GB. Open a tab to wake it. 1 stayed awake: in use again."
         );
+        assert!(sleep_notice(0, 2, 0).starts_with("No agent was put to sleep"));
+        assert_eq!(idle_label(Duration::from_secs(22 * 60)), "22 min");
+        assert_eq!(idle_label(Duration::from_secs(65 * 60)), "1 h 5 min");
+        assert_eq!(idle_label(Duration::from_secs(2 * 3600)), "2 h");
+    }
+
+    #[test]
+    fn five_agents_are_always_left_running() {
+        assert_eq!((may_offer(0), may_offer(5), may_offer(6), may_offer(9)), (0, 0, 1, 4));
+    }
+
+    #[test]
+    fn keep_awake_is_not_asked_again_for_a_while() {
+        let min = |m: u64| Some(Duration::from_secs(m * 60));
+        assert!(may_ask(None, false), "never declined");
+        assert!(!may_ask(min(30), false) && may_ask(min(60), false));
+        assert!(!may_ask(min(5), true) && may_ask(min(10), true), "sooner while a start waits");
+    }
+
+    #[test]
+    fn only_the_ticked_agents_are_chosen() {
+        let agent = |pane| OfferedAgent {
+            pane,
+            provider: "claude".into(),
+            title: String::new(),
+            place: String::new(),
+            idle: Duration::ZERO,
+            memory: 1,
+        };
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let prompt = SleepPrompt { agents: vec![agent(a), agent(b)], keep: HashSet::from([b]), ..Default::default() };
+        assert_eq!(prompt.chosen().map(|agent| agent.pane).collect::<Vec<_>>(), [a]);
     }
 
     #[test]

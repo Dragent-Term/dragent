@@ -1418,6 +1418,17 @@ impl TerminalView {
         let theme = self.theme.clone();
         let listener = self.event_listener.clone();
         move |chunk| {
+            // Decode a checkpoint before taking the display lock: restoring
+            // a full screen takes long enough (tens of milliseconds, far
+            // more in a debug build) that the UI, which reads this terminal
+            // on every frame, waited on it at launch for every restored tab.
+            let decoded = chunk.resume.as_ref().map(|resume| {
+                let (rows, cols) = {
+                    let session = core.lock();
+                    (session.size.rows, session.size.cols)
+                };
+                crate::terminal::model::TerminalSessionCore::decode_host_resume(resume, rows, cols)
+            });
             let waiting = std::time::Instant::now();
             let mut session = core.lock();
             crate::terminal::performance::FEED_LOCK_WAIT.record(waiting.elapsed());
@@ -1425,8 +1436,10 @@ impl TerminalView {
                 return false;
             }
             let started = std::time::Instant::now();
-            if let Some(resume) = &chunk.resume {
-                if let Err(error) = session.restore_host_resume(resume, &theme) {
+            if let (Some(resume), Some(decoded)) = (&chunk.resume, decoded) {
+                if let Err(error) =
+                    decoded.and_then(|emulator| session.apply_host_resume(resume, emulator, &theme))
+                {
                     log::error!("[host-tab] cannot restore terminal checkpoint: {error}");
                     return false;
                 }

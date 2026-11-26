@@ -4,7 +4,8 @@
 //! the report's overall `status` is `ok` (every check passed or was skipped)
 //! or `partial` (at least one check failed, listed in `failing`).
 //!
-//! Strictly read-only: no restarts, no reinstalling, no deleting data, no
+//! Read-only (except the explicit `--stop-strays` and `--clear-build-cache`,
+//! below): no restarts, no reinstalling, no deleting data, no
 //! clearing credentials, no resetting permissions, no starting the app, and
 //! no writing files or databases. Checks that need the app first confirm it
 //! is already running through files that already exist; with a fresh home
@@ -15,6 +16,12 @@
 //! shortened to `~`, operation/request ids, timestamps, the specific failing
 //! layer. Never tokens, keys, cookies, environment variable values or file
 //! contents.
+//!
+//! `--stop-strays` is the one action: it stops Dragent services no client can
+//! reach any more (their data folder or record is gone, or their record names
+//! another service). Never a service its data folder's record names; never
+//! one with processes inside unless `--force` (and confirmed); `--dry-run`
+//! only says what it would do.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -38,6 +45,14 @@ Usage: dragent doctor [options]
   --json               Machine-readable JSON (default for agents)
   --text               Human-readable text
   --quiet              Only failing check ids, one per line
+  --stop-strays        Stop stray Dragent services (see `services` below)
+    --dry-run          Only say what --stop-strays would stop
+    --force            Also stop strays with shells/agents inside (asks first)
+    --yes              With --force: don't ask (for scripts)
+  --clear-build-cache  Remove every repository's Cargo build cache
+                       (regenerable `target` folders under the organisation's
+                       `build-cache`; repos built in the last hour are kept
+                       unless --force --yes). Accepts --dry-run.
 
 Checks (each independent; one failing never stops the others):
 
@@ -54,9 +69,20 @@ Checks (each independent; one failing never stops the others):
   browser       The browser pane control is reachable
   automations   Scheduler state and last run errors
   hangs         Recent freeze reports (path and timestamp only)
+  builds        Per-repository Cargo build caches: size per repo, cleared
+                with --clear-build-cache
+  services      Dragent host/terminal services on this computer: data folder,
+                edition, started, reachable, what runs inside; strays are
+                services no client can reach (data folder or record gone, or
+                the record names another service)
 
 The report's `status` is `ok`, or `partial` with the failing checks listed.
 Read-only: changes nothing, starts nothing, writes no files or databases.
+The exceptions are `--stop-strays`, which only stops stray services: never
+the one a data folder's record names, never one with processes inside unless
+`--force`; and `--clear-build-cache`, which only removes regenerable Cargo
+`target` folders under the organisation's `build-cache`, keeping repos built
+in the last hour unless `--force --yes`.
 ";
 
 /// Help text with this edition's launcher folder filled in, so a Dev build
@@ -110,6 +136,11 @@ const CHECKS: &[(&str, &str)] = &[
     ("automations", "Scheduler state and last run errors"),
     ("hangs", "Recent freeze reports"),
     ("machines", "This computer, and remote machines as the app sees them"),
+    (
+        "builds",
+        "Per-repository Cargo build caches: size per repo and how to clear them",
+    ),
+    ("services", "Dragent services on this computer, strays included"),
 ];
 
 /// One check's result. Statuses: `ok`, `warn`, `fail`, `skipped`.
@@ -206,6 +237,11 @@ struct Opts {
     text: bool,
     quiet: bool,
     help: bool,
+    stop_strays: bool,
+    clear_build_cache: bool,
+    dry_run: bool,
+    force: bool,
+    yes: bool,
 }
 
 fn agent_environment() -> bool {
@@ -248,6 +284,16 @@ fn parse(args: &[String]) -> Result<Opts, String> {
             opts.quiet = true;
         } else if arg == "--help" || arg == "-h" || arg == "help" {
             opts.help = true;
+        } else if arg == "--stop-strays" {
+            opts.stop_strays = true;
+        } else if arg == "--clear-build-cache" {
+            opts.clear_build_cache = true;
+        } else if arg == "--dry-run" {
+            opts.dry_run = true;
+        } else if arg == "--force" {
+            opts.force = true;
+        } else if arg == "--yes" || arg == "-y" {
+            opts.yes = true;
         } else if arg == "--check" || arg == "--project" {
             let name = arg.trim_start_matches("--");
             let value = iter.next().ok_or_else(|| {
@@ -311,6 +357,24 @@ fn parse(args: &[String]) -> Result<Opts, String> {
             .next("See `dragent doctor --help`.")
             .encode());
         }
+    }
+    if (opts.dry_run || opts.force || opts.yes) && !opts.stop_strays && !opts.clear_build_cache {
+        return Err(Failure::new(
+            Status::InvalidInput,
+            "usage",
+            "--dry-run, --force and --yes go with --stop-strays or --clear-build-cache",
+        )
+        .next("See `dragent doctor --help`.")
+        .encode());
+    }
+    if opts.clear_build_cache && opts.stop_strays {
+        return Err(Failure::new(
+            Status::InvalidInput,
+            "usage",
+            "use --clear-build-cache or --stop-strays, not both",
+        )
+        .next("See `dragent doctor --help`.")
+        .encode());
     }
     if opts.json && opts.text {
         return Err(Failure::new(
@@ -902,6 +966,389 @@ fn check_host() -> Check {
             "Open Dragent (it owns the host) and rerun `dragent doctor --check host`.",
         ),
     }
+}
+
+// ── Services ─────────────────────────────────────────────────────────────────
+
+fn started_text(unix_secs: u64) -> String {
+    chrono::DateTime::from_timestamp(unix_secs as i64, 0)
+        .map(|at| {
+            at.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn service_entry(report: &dragent_host::strays::ServiceReport) -> Value {
+    use dragent_host::strays::Standing;
+    let process = &report.process;
+    json!({
+        "pid": process.pid,
+        "kind": process.kind,
+        "data_dir": report.data_dir.as_ref().map(|d| shorten(&d.display().to_string())),
+        "data_dir_exists": report.data_dir_exists,
+        "edition": report.edition,
+        "organisation": process.organisation,
+        "started_at": started_text(process.started_at_unix),
+        "reachable": report.reachable,
+        "stray": report.is_stray(),
+        "reason": match &report.standing {
+            Standing::Current => Value::Null,
+            Standing::Unknown { reason } | Standing::Stray { reason } => Value::String(reason.clone()),
+        },
+        "inside": process.inside.iter().map(|inner| json!({ "pid": inner.pid, "what": inner.what })).collect::<Vec<_>>(),
+    })
+}
+
+/// One line per service for people.
+fn service_line(report: &dragent_host::strays::ServiceReport) -> String {
+    use dragent_host::strays::Standing;
+    let process = &report.process;
+    let folder = report
+        .data_dir
+        .as_ref()
+        .map(|d| shorten(&d.display().to_string()))
+        .unwrap_or_else(|| "unknown folder".into());
+    let standing = match &report.standing {
+        Standing::Current => "current".to_string(),
+        Standing::Unknown { reason } => format!("not judged ({reason})"),
+        Standing::Stray { reason } => format!("STRAY ({reason})"),
+    };
+    let inside = if process.inside.is_empty() {
+        if report.is_stray() {
+            report.inside_text()
+        } else {
+            "no child processes".to_string()
+        }
+    } else {
+        format!(
+            "{} inside: {}",
+            process.inside.len(),
+            process
+                .inside
+                .iter()
+                .map(|inner| inner.what.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    format!(
+        "pid {} {} · {} edition · {}{} · started {} · {} · {}",
+        process.pid,
+        process.kind.label(),
+        report.edition,
+        folder,
+        if report.data_dir_exists {
+            ""
+        } else {
+            " (gone)"
+        },
+        started_text(process.started_at_unix),
+        standing,
+        inside,
+    )
+}
+
+fn check_builds() -> Check {
+    // Read-only inventory of the organisation's per-repository Cargo build
+    // caches (regenerable `target` folders worktree terminals build into).
+    // Never fails the report: an absent or unreadable cache is just empty.
+    let root = dragent_paths::organisation_dir().join(dragent_host::build_cache::BUILD_CACHE_DIRNAME);
+    let repos = survey_build_cache(&root);
+    let total: u64 = repos.iter().map(|repo| repo.bytes).sum();
+    let mut summary = if repos.is_empty() {
+        "No Cargo build caches.".to_string()
+    } else {
+        format!(
+            "{} repo{}, {} total.",
+            repos.len(),
+            if repos.len() == 1 { "" } else { "s" },
+            mb(total),
+        )
+    };
+    for repo in &repos {
+        summary.push_str(&format!("\n    {}: {}", repo.name, mb(repo.bytes)));
+    }
+    ok(
+        "builds",
+        "builds-ok",
+        summary,
+        json!({
+            "root": shorten(&root.display().to_string()),
+            "repos": repos.iter().map(|repo| json!({"repo": repo.name, "bytes": repo.bytes})).collect::<Vec<_>>(),
+            "total_bytes": total,
+        }),
+        "Clear them with `dragent doctor --clear-build-cache` (--dry-run first).",
+    )
+}
+
+/// Repos built this recently are kept by `--clear-build-cache` unless
+/// `--force` is passed (a build may still be writing into them).
+const RECENTLY_BUILT: Duration = Duration::from_secs(60 * 60);
+
+/// One repository's build cache: size and newest write anywhere inside.
+struct BuildCacheRepo {
+    name: String,
+    bytes: u64,
+    newest_write: Option<std::time::SystemTime>,
+}
+
+/// Inventory `root` (`build-cache/`): one entry per repository folder.
+fn survey_build_cache(root: &Path) -> Vec<BuildCacheRepo> {
+    let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
+    let mut repos = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
+        let (bytes, newest_write) = walk_cache(&path);
+        repos.push(BuildCacheRepo { name, bytes, newest_write });
+    }
+    repos.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    repos
+}
+
+/// Bytes and newest mtime under `dir`, not following symlinks.
+fn walk_cache(dir: &Path) -> (u64, Option<std::time::SystemTime>) {
+    let mut total = 0u64;
+    let mut newest: Option<std::time::SystemTime> = None;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(next) = stack.pop() {
+        let Ok(meta) = std::fs::symlink_metadata(&next) else { continue };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if let Ok(modified) = meta.modified() {
+            newest = Some(newest.map_or(modified, |current| current.max(modified)));
+        }
+        if meta.is_dir() {
+            let Ok(entries) = std::fs::read_dir(&next) else { continue };
+            for entry in entries.flatten() {
+                stack.push(entry.path());
+            }
+        } else {
+            total += meta.len();
+        }
+    }
+    (total, newest)
+}
+
+fn mb(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{} MB", bytes / (1024 * 1024))
+    } else {
+        format!("{} KB", bytes.div_ceil(1024))
+    }
+}
+
+fn clear_build_cache(opts: &Opts, json: bool) -> Result<String, String> {
+    let root = dragent_paths::organisation_dir().join(dragent_host::build_cache::BUILD_CACHE_DIRNAME);
+    let now = std::time::SystemTime::now();
+    let repos = survey_build_cache(&root);
+    let recent: Vec<&BuildCacheRepo> = repos
+        .iter()
+        .filter(|repo| {
+            repo.newest_write
+                .is_some_and(|when| now.duration_since(when).unwrap_or_default() < RECENTLY_BUILT)
+        })
+        .collect();
+    // With --force, recently-built caches go too (after confirmation,
+    // unless scripted); otherwise they are kept.
+    let mut results = Vec::new();
+    let mut lines = Vec::new();
+    if opts.force && !recent.is_empty() && !opts.dry_run && !opts.yes
+        && !confirm(&format!(
+            "Remove {} recently-built build cache{} ({} regenerable)? A build may still be writing into them.",
+            recent.len(),
+            if recent.len() == 1 { "" } else { "s" },
+            recent.iter().map(|repo| repo.bytes).sum::<u64>() / (1024 * 1024),
+        ))
+    {
+        return Err(Failure::new(
+            Status::InvalidInput,
+            "not_confirmed",
+            "recently-built caches kept (pass --yes with --force)",
+        )
+        .encode());
+    }
+    for repo in &repos {
+        let is_recent = recent.iter().any(|kept| kept.name == repo.name);
+        if is_recent && !opts.force {
+            lines.push(format!("kept (recently built): {} ({})", repo.name, mb(repo.bytes)));
+            results.push(json!({"repo": repo.name, "outcome": "kept", "detail": "recently built"}));
+            continue;
+        }
+        if opts.dry_run {
+            lines.push(format!("would_remove: {} ({})", repo.name, mb(repo.bytes)));
+            results.push(json!({"repo": repo.name, "outcome": "would_remove", "detail": ""}));
+            continue;
+        }
+        match std::fs::remove_dir_all(root.join(&repo.name)) {
+            Ok(()) => {
+                lines.push(format!("removed: {} ({})", repo.name, mb(repo.bytes)));
+                results.push(json!({"repo": repo.name, "outcome": "removed", "bytes": repo.bytes}));
+            }
+            Err(error) => {
+                lines.push(format!("failed: {} ({error})", repo.name));
+                results.push(json!({"repo": repo.name, "outcome": "failed", "detail": error.to_string()}));
+            }
+        }
+    }
+    if json {
+        return Ok(serde_json::to_string_pretty(&json!({
+            "dry_run": opts.dry_run,
+            "repos": results,
+        }))
+        .unwrap_or_default());
+    }
+    let mut out = format!(
+        "{} build cache{}{}.\n",
+        repos.len(),
+        if repos.len() == 1 { "" } else { "s" },
+        if opts.dry_run { " (dry run: nothing removed)" } else { "" },
+    );
+    for line in lines {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    Ok(out.trim_end().to_string())
+}
+
+fn check_services() -> Check {
+    let reports = dragent_host::strays::survey();
+    let strays = reports.iter().filter(|r| r.is_stray()).count();
+    let mut summary = format!(
+        "{} Dragent service{} running, {strays} stray.",
+        reports.len(),
+        if reports.len() == 1 { "" } else { "s" },
+    );
+    for report in &reports {
+        summary.push_str("\n    ");
+        summary.push_str(&service_line(report));
+    }
+    let evidence = json!({
+        "services": reports.iter().map(service_entry).collect::<Vec<_>>(),
+        "strays": strays,
+    });
+    if strays == 0 {
+        ok("services", "no_strays", summary, evidence, "Nothing to do.")
+    } else {
+        warn(
+            "services",
+            "strays_running",
+            summary,
+            evidence,
+            "`dragent doctor --stop-strays --dry-run` shows what would stop; then `dragent doctor --stop-strays`. Strays with shells or agents inside need `--force`.",
+        )
+    }
+}
+
+/// What `--stop-strays` does with each service, before doing it.
+fn stray_actions(
+    reports: &[dragent_host::strays::ServiceReport],
+    force: bool,
+) -> Vec<(
+    &dragent_host::strays::ServiceReport,
+    dragent_host::strays::Verdict,
+)> {
+    reports
+        .iter()
+        .filter(|r| r.is_stray())
+        .map(|r| (r, dragent_host::strays::verdict(r, force)))
+        .collect()
+}
+
+fn confirm(question: &str) -> bool {
+    use std::io::{BufRead, IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return false;
+    }
+    eprint!("{question} [y/N] ");
+    let _ = std::io::stderr().flush();
+    let mut answer = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut answer);
+    matches!(answer.trim(), "y" | "Y" | "yes" | "Yes")
+}
+
+fn stop_strays(opts: &Opts, json: bool) -> Result<String, String> {
+    use dragent_host::strays::Verdict;
+    let reports = dragent_host::strays::survey();
+    let actions = stray_actions(&reports, opts.force);
+    let busy: Vec<_> = actions
+        .iter()
+        .filter(|(report, verdict)| *verdict == Verdict::Stop && report.busy())
+        .collect();
+    let forced_ok = busy.is_empty()
+        || opts.dry_run
+        || opts.yes
+        || confirm(&format!(
+            "Stop {} stray service(s) with shells or agents inside? Their processes end.",
+            busy.len()
+        ));
+    let mut results = Vec::new();
+    let mut lines = Vec::new();
+    for (report, verdict) in &actions {
+        let pid = report.process.pid;
+        let (outcome, detail) = match verdict {
+            Verdict::Keep => ("kept", "current".to_string()),
+            Verdict::NeedsForce => (
+                "skipped",
+                format!("{}; --force to stop", report.inside_text()),
+            ),
+            Verdict::Stop if report.busy() && !forced_ok => {
+                ("skipped", "not confirmed (pass --yes with --force)".into())
+            }
+            Verdict::Stop if opts.dry_run => ("would_stop", String::new()),
+            Verdict::Stop => match dragent_host::strays::stop(pid, opts.force) {
+                Ok(()) => ("stopped", String::new()),
+                Err(error) => ("failed", error),
+            },
+        };
+        lines.push(format!(
+            "{outcome}: {}{}",
+            service_line(report),
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" — {detail}")
+            }
+        ));
+        results.push(json!({
+            "service": service_entry(report),
+            "outcome": outcome,
+            "detail": detail,
+        }));
+    }
+    let kept = reports.len() - actions.len();
+    if json {
+        return Ok(serde_json::to_string_pretty(&json!({
+            "dry_run": opts.dry_run,
+            "services": reports.len(),
+            "current_kept": kept,
+            "strays": results,
+        }))
+        .unwrap_or_default());
+    }
+    let mut out = format!(
+        "{} Dragent service{}; {kept} current (never stopped), {} stray{}{}.\n",
+        reports.len(),
+        if reports.len() == 1 { "" } else { "s" },
+        actions.len(),
+        if actions.len() == 1 { "" } else { "s" },
+        if opts.dry_run {
+            " (dry run: nothing stopped)"
+        } else {
+            ""
+        },
+    );
+    for line in lines {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    Ok(out.trim_end().to_string())
 }
 
 fn check_agents() -> Check {
@@ -1513,6 +1960,12 @@ pub fn run(args: &[String]) -> Result<String, String> {
     }
     // JSON for agents unless the caller asked for text; `--quiet` prints ids.
     let json = opts.json || (!opts.text && !opts.quiet && agent_environment());
+    if opts.stop_strays {
+        return stop_strays(&opts, json);
+    }
+    if opts.clear_build_cache {
+        return clear_build_cache(&opts, json);
+    }
     let wanted = |id: &str| {
         opts.checks
             .as_ref()
@@ -1554,8 +2007,14 @@ pub fn run(args: &[String]) -> Result<String, String> {
     if wanted("hangs") {
         checks.push(check_hangs());
     }
+    if wanted("builds") {
+        checks.push(check_builds());
+    }
     if wanted("machines") {
         checks.push(check_machines());
+    }
+    if wanted("services") {
+        checks.push(check_services());
     }
     let report = build_report(&checks, &opts);
     Ok(render(&report, &checks, &opts, json))
@@ -1620,6 +2079,112 @@ fn render_text(report: &Value, checks: &[Check]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn service(
+        pid: u32,
+        kind: dragent_host::strays::ServiceKind,
+        folder: &Path,
+        record: Option<u32>,
+        inside: usize,
+    ) -> dragent_host::strays::ServiceReport {
+        let record_path = folder.join(match kind {
+            dragent_host::strays::ServiceKind::Host => "host-v1.json",
+            dragent_host::strays::ServiceKind::Terminal => "pty-daemon.json",
+        });
+        if let Some(named) = record {
+            std::fs::create_dir_all(folder).unwrap();
+            std::fs::write(&record_path, format!("{{\"pid\":{named}}}")).unwrap();
+        }
+        dragent_host::strays::report(dragent_host::strays::ServiceProcess {
+            pid,
+            kind,
+            exe: None,
+            started_at_unix: 0,
+            organisation: "local".into(),
+            candidates: vec![dragent_host::strays::Candidate {
+                data_dir: folder.to_path_buf(),
+                record: record_path,
+            }],
+            token: None,
+            inside: (0..inside)
+                .map(|i| dragent_host::strays::Inner {
+                    pid: 900 + i as u32,
+                    what: "zsh → claude".into(),
+                })
+                .collect(),
+            terminals: Some(inside),
+            own_dir: None,
+            edition: "unknown",
+            unjudgeable: None,
+        })
+    }
+
+    #[test]
+    fn stop_strays_never_touches_current_services_and_forces_busy_ones_only_on_request() {
+        use dragent_host::strays::{ServiceKind, Verdict};
+        let base = std::env::temp_dir().join(format!("doctor-strays-{}", uuid::Uuid::new_v4()));
+        let live = base.join("live");
+        let reports = vec![
+            // The live folder's record names it: current.
+            service(10, ServiceKind::Host, &live, Some(10), 0),
+            service(11, ServiceKind::Terminal, &live.join("t"), Some(11), 2),
+            // Replaced by pid 10, empty: stops without --force.
+            service(12, ServiceKind::Host, &live, None, 0),
+            // Data folder gone, two shells inside: needs --force.
+            service(13, ServiceKind::Terminal, &base.join("deleted"), None, 2),
+        ];
+        let actions = |force| {
+            stray_actions(&reports, force)
+                .into_iter()
+                .map(|(report, verdict)| (report.process.pid, verdict))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            actions(false),
+            [(12, Verdict::Stop), (13, Verdict::NeedsForce)]
+        );
+        assert_eq!(actions(true), [(12, Verdict::Stop), (13, Verdict::Stop)]);
+        let line = service_line(&reports[3]);
+        assert!(line.contains("STRAY (its data folder is gone)"), "{line}");
+        assert!(line.contains("2 inside: zsh → claude"), "{line}");
+        let entry = service_entry(&reports[0]);
+        assert_eq!(entry["stray"], json!(false));
+        assert_eq!(entry["reachable"], json!(true));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn stop_strays_options_only_go_with_it() {
+        assert!(parse(&args(&["--force"])).is_err());
+        assert!(parse(&args(&["--dry-run"])).is_err());
+        let opts = parse(&args(&["--stop-strays", "--dry-run", "--force", "--yes"])).unwrap();
+        assert!(opts.stop_strays && opts.dry_run && opts.force && opts.yes);
+    }
+
+    #[test]
+    fn clear_build_cache_parses_and_conflicts_with_stop_strays() {
+        assert!(parse(&args(&["--clear-build-cache"])).unwrap().clear_build_cache);
+        let opts = parse(&args(&["--clear-build-cache", "--dry-run"])).unwrap();
+        assert!(opts.clear_build_cache && opts.dry_run);
+        assert!(parse(&args(&["--clear-build-cache", "--stop-strays"])).is_err());
+        // The new check is a known id.
+        assert!(parse(&args(&["--check", "builds"])).unwrap().checks == Some(vec!["builds".to_string()]));
+    }
+
+    #[test]
+    fn build_cache_survey_counts_bytes_and_clear_dry_run_removes_nothing() {
+        let root = std::env::temp_dir().join(format!("doctor-builds-{}", uuid::Uuid::new_v4()));
+        let repo = root.join("demo-12345678").join("worktrees").join("wt-1").join("target");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("blob"), vec![7u8; 3000]).unwrap();
+        let surveyed = survey_build_cache(&root);
+        assert_eq!(surveyed.len(), 1);
+        assert_eq!(surveyed[0].name, "demo-12345678");
+        assert!(surveyed[0].bytes >= 3000, "{}", surveyed[0].bytes);
+        assert!(surveyed[0].newest_write.is_some());
+        assert_eq!(walk_cache(&root).0, surveyed[0].bytes);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|arg| arg.to_string()).collect()

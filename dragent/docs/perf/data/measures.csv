@@ -1,0 +1,14 @@
+timestamp,measure,method,value,unit,note
+1795405527.4019158,cold-start,in-app-first-frame,740.0,ms,"[branch] launch->first presented frame, in-app ready_ms (dev-terminal window, performance-harness build; wall median 1029 ms, 3 runs)"
+1795405566.5065331,input-latency,in-app-log,4.944,ms,[branch] 60 in-app key_to_frame samples (p50; p95=14.04 ms)
+1795407214.9855921,frame-times,in-app-frames,253.485,ms,"[branch] 95 in-app 1 s frame-interval aggregates; 10 agents in 1 real app terminal (median interval p50; interval p95 max 845.46 ms; interval max 845.46 ms). render: 506 frames presented in window, cumulative render avg 2.02 ms/frame, max 96.88 ms/frame"
+1795406685.261029,cold-start,in-app-first-frame,731.0,ms,"[baseline t2+hook] launch->first presented frame, in-app ready_ms (dev-terminal window, performance-harness build; wall median 1032 ms, 3 runs)"
+1795406714.3759842,input-latency,in-app-log,5.877,ms,[baseline t2+hook] 60 in-app key_to_frame samples (p50; p95=13.56 ms)
+1795407358.1784902,frame-times,in-app-frames,212.166,ms,"[baseline t2+hook] 92 in-app 1 s frame-interval aggregates; 10 agents in 1 real app terminal (median interval p50; interval p95 max 1680.94 ms; interval max 1680.94 ms). render: 487 frames presented in window, cumulative render avg 11.42 ms/frame, max 872.66 ms/frame"
+1795407526.168662,throughput,yes-head-2M,593.534,ms,"[shared env proxy] 2M lines, 3.8 MB in 0.59s (6 MB/s); app frame times need a GUI run, see README"
+1795407531.288576,git-status,git-status-porcelain,148.794,ms,[shared env proxy] median over 3 runs on generated 2000-file repo (1000 changed paths)
+1795407542.233999,diff-open,git-diff-parse,192.191,ms,[shared env proxy] median `git diff --numstat` + parse over a 10000-line diff (10000 added lines counted)
+1795407546.0071821,worktree-create,git-worktree-add,334.901,ms,[shared env proxy] median `git worktree add/remove --detach` on 100-file scratch repo (what workspace creation shells out to)
+1795407555.13236,tab-switch,headless-proxy,119.386,ms,"[shared env proxy] mean per-switch over 10 scratch worktrees (NOT app tab switch); in-app: GUI step (manual): launch the dev build (scripts/dev.sh from the repo root; dev edition ~/.dragent-dev, local mode), open 10+ agent tabs, then re-run this measure: in-app numbers come from the [bench] log lines described in scripts/bench/README.md."
+1795405679.824964,tab-switch,headless-proxy,,ms,[branch] stayed proxy: unsigned CLI cannot reach panes (rc=-1); automation has no tab-switch command
+1795405682.9105852,worktree-create,git-worktree-add,,ms,[branch] stayed proxy: workspaces create needs sign-in (rc=3); run.py git-worktree-add row applies

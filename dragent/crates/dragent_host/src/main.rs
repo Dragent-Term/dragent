@@ -5,6 +5,11 @@ use dragent_host::{
     server,
 };
 
+// Experimental allocator swap, off by default (`--features mimalloc`).
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     // Inherited daemon hand-off variables are only for the PTY daemon its
     // predecessor or supervisor starts (see the app's `main`).

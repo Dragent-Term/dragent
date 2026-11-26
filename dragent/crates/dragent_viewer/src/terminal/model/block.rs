@@ -9,6 +9,14 @@ use web_time::{SystemTime, UNIX_EPOCH};
 use super::block_context::{block_context_from_lines, BlockContext};
 use crate::console::escape_parse::ColoredLine;
 
+/// Scrollback cap for a block's emulator, from settings (always bounded;
+/// a legacy stored `0` loads as the default).
+fn configured_scrollback_lines() -> usize {
+    crate::console::editor_settings::EditorSettings::global()
+        .terminal
+        .clamped_scrollback_lines()
+}
+
 /// Lifecycle state of a single command block.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum BlockStatus {
@@ -138,7 +146,11 @@ impl Block {
             expanded: true,
             bookmarked: false,
             lines: Arc::new(Vec::new()),
-            emulator: Some(Box::new(dragent_terminal::Emulator::new(rows, cols))),
+            emulator: Some(Box::new(dragent_terminal::Emulator::with_scrollback(
+                rows,
+                cols,
+                configured_scrollback_lines(),
+            ))),
             live_line_count: 0,
             completion: None,
             dir_entries: None,
@@ -151,7 +163,11 @@ impl Block {
     pub fn discard_output(&mut self) {
         if let Some(emulator) = self.emulator.as_mut() {
             let (rows, cols) = emulator.dimensions();
-            **emulator = dragent_terminal::Emulator::new(rows, cols);
+            **emulator = dragent_terminal::Emulator::with_scrollback(
+                rows,
+                cols,
+                configured_scrollback_lines(),
+            );
         }
         self.live_line_count = 0;
         self.lines = Arc::new(Vec::new());

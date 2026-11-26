@@ -270,8 +270,10 @@ impl WorkspaceView {
                 .collect();
         let mut split_tree: Option<PaneLayout> = None;
         let mut restored_parked_workspace_tabs: Vec<WorkspaceTab> = Vec::new();
-        // Default: right panel open; overridden only when restoring persisted state.
+        // Default: both panels open; overridden only when restoring persisted
+        // state. The web viewer keeps its sidebar closed.
         let mut restored_chrome = WindowChrome {
+            left_panel_open: cfg!(not(target_family = "wasm")),
             right_panel_open: true,
             ..WindowChrome::default()
         };
@@ -372,6 +374,12 @@ impl WorkspaceView {
             // so login lands on the main view, not a bare canvas.
             restored_chrome.right_panel_open = false;
         }
+        // Nothing to come back to: the start screen always has its sidebar,
+        // whatever an earlier window saved.
+        let starts_empty = cfg!(not(target_family = "wasm"))
+            && split_tree.is_none()
+            && restored_parked_workspace_tabs.is_empty()
+            && restored_open_project_roots.is_empty();
         let active_workspace_tab_id = restored_document
             .active_workspace_tab_id
             .filter(|id| {
@@ -1226,7 +1234,7 @@ impl WorkspaceView {
             split_action_mouse_states: RefCell::new(HashMap::new()),
             header_mouse_states: RefCell::new(HashMap::new()),
             new_tab_mouse_state: MouseStateHandle::default(),
-            left_panel_visible: restored_chrome.left_panel_open,
+            left_panel_visible: restored_chrome.left_panel_open || starts_empty,
             right_panel_visible: restored_chrome.right_panel_open,
             workspace_trust,
             add_project: None,
@@ -1302,6 +1310,7 @@ impl WorkspaceView {
             prompt_install_agent: None,
             prompt_install_terminal: None,
             page_command: None,
+            account_sign_in: None,
             prompt_install_error: None,
             prompt_install_generation: 0,
             remote_tool_install: None,
@@ -1539,6 +1548,9 @@ impl WorkspaceView {
             agent_sleep_sweeping: false,
             agent_sleep_notice: None,
             agent_sleep_notice_epoch: 0,
+            agent_sleep_prompt: None,
+            agent_sleep_scroll: Default::default(),
+            agent_resources: Default::default(),
             share_snapshot: share_sheet::ShareSnapshot::default(),
             login_prompt_open: false,
             mirror_pane: None,
@@ -1610,6 +1622,11 @@ impl WorkspaceView {
         view.rehome_imported_worktree_tabs(ctx);
         view.reveal_workspace_tab(view.active_workspace_tab_id);
         view.sync_left_panel(ctx);
+        if restore {
+            crate::startup_timing::expect_terminals(
+                pending_host_reattach.iter().map(|(tab_id, _)| *tab_id),
+            );
+        }
         view.attach_restored_host_tabs(ctx, pending_host_reattach);
         // Resolve agent installation state on startup so the rail and menus
         // never show a false "not installed": the probe flips

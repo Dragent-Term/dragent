@@ -6,13 +6,11 @@
 //! `DevelopmentRequest::Accounts(AccountsRequest::…)`. This computer goes
 //! through `development::execute` on a background thread; a machine goes
 //! through its `HostClient`. Never block the UI thread.
-use super::widgets::{
-    choice_row, danger_button, page_header, primary_button, secondary_button, select_control,
-    SelectItem,
-};
+use super::api_key_check::{self, KeyCheck};
+use super::widgets::{page_header, SelectItem};
 use super::{SettingsAction, SettingsEvent, SettingsView};
 use crate::workspace::{InputEditor, InputMode};
-use dragent_host::agent_accounts::{self, CredentialKind, Selection};
+use dragent_host::agent_accounts::{self, ApiKey, CredentialKind, Selection};
 use dragent_host::development::{
     AccountsRequest, AccountsResponse, DevelopmentRequest, DevelopmentResponse,
 };
@@ -22,7 +20,6 @@ use warpui::elements::{
     MainAxisSize, ParentElement, Text,
 };
 use warpui::{ReadView, SingletonEntity, UpdateView, ViewContext, ViewHandle};
-use warpui_core::clipboard::ClipboardContent;
 use warpui_core::elements::Hoverable;
 use warpui_core::scene::{Border, CornerRadius, Radius};
 
@@ -38,17 +35,20 @@ pub enum AccountAction {
     Select(String),
     StartAdd(String),
     SetKind(CredentialKind),
+    /// The form's main button, or Enter in one of its fields.
     ConfirmAdd,
-    CancelDialog,
+    /// Save a key the provider couldn't be asked about.
+    AddUnchecked,
+    ToggleShowKey,
     CloseDialog,
-    CopyCommand,
     SignInAgain { provider: String, target: Option<uuid::Uuid> },
     MakeDefault {
         provider: String,
         selection: Selection,
     },
-    /// The dialog's Done step also sets the default.
-    UseDialogDefault,
+    ToggleDialogDefault,
+    /// Done: also sets the default when its switch is on.
+    FinishDialog,
     StartRename(uuid::Uuid),
     Save,
     CancelEdit,
@@ -64,43 +64,65 @@ pub(crate) enum Editing {
     Rename(uuid::Uuid),
 }
 
-/// The add / sign-in dialog.
+/// Where the form is with a key it was given.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FormStep {
+    #[default]
+    Editing,
+    Checking,
+    Saving,
+}
+
+/// The pop-up's first page: a new account, or a new key for an existing one.
+#[derive(Clone, Debug)]
+pub(crate) struct AccountForm {
+    pub provider: String,
+    pub kind: CredentialKind,
+    pub machine_id: Option<String>,
+    pub machine_label: String,
+    /// The account whose key is being replaced.
+    pub target: Option<(uuid::Uuid, String)>,
+    pub step: FormStep,
+    pub error: Option<String>,
+    /// The provider couldn't be asked, so saving anyway is offered.
+    pub offer_unchecked: bool,
+    pub show_key: bool,
+}
+
+/// The add / sign-in pop-up.
 #[derive(Clone, Debug, Default)]
 pub(crate) enum AccountDialog {
     #[default]
     Closed,
-    Form {
-        provider: String,
-        kind: CredentialKind,
-    },
+    Form(AccountForm),
+    /// The sign-in runs in the workspace's pop-up terminal, over this page.
     Waiting {
         provider: String,
-        kind: CredentialKind,
         machine_id: Option<String>,
-        machine_label: String,
         target: Option<uuid::Uuid>,
         label: String,
-        command: String,
-            /// What the account reported when the dialog opened. The dialog
-            /// only finishes when a later `List` shows something different
-            /// (or a fresh account signs in), so "Sign in again" on an
-            /// already-signed-in account does not complete straight away.
-            /// Rotating an API key leaves the identity identical, so the
-            /// sign-in files' change time is baselined too.
-            baseline_signed_in: bool,
-            baseline_email: Option<String>,
-            baseline_error: Option<String>,
-            baseline_credentials_changed_at: Option<u64>,
+        /// Added by this pop-up: cancelling the sign-in removes it again.
+        created: bool,
+        /// What the account reported when the dialog opened. The dialog
+        /// only finishes when a later `List` shows something different
+        /// (or a fresh account signs in), so "Sign in again" on an
+        /// already-signed-in account does not complete straight away.
+        /// Rotating an API key leaves the identity identical, so the
+        /// sign-in files' change time is baselined too.
+        baseline_signed_in: bool,
+        baseline_email: Option<String>,
+        baseline_error: Option<String>,
+        baseline_credentials_changed_at: Option<u64>,
     },
     Done {
         provider: String,
-        kind: CredentialKind,
         machine_id: Option<String>,
-        machine_label: String,
         target: Option<uuid::Uuid>,
         label: String,
-        command: String,
-        signed_label: String,
+        /// Who it signed in as, or what wasn't checked.
+        note: Option<String>,
+        /// None hides the switch: the account already is the default.
+        make_default: Option<bool>,
     },
 }
 
@@ -144,6 +166,13 @@ pub(crate) struct AccountsState {
     pub selected: Option<String>,
     pub snapshots: HashMap<String, MachineSnapshot>,
     pub dialog: AccountDialog,
+    /// Bumped whenever the pop-up opens or closes, so a late answer can't
+    /// act on a pop-up that is gone.
+    pub dialog_generation: u64,
+    pub scroll: warpui::elements::ClippedScrollStateHandle,
+    /// The typed API key. It sends no actions, so the key never travels
+    /// through the action log; it is emptied when the pop-up closes.
+    pub key: ViewHandle<InputEditor>,
     pub pending_remove: Option<uuid::Uuid>,
     pub provider: String,
     pub name: ViewHandle<InputEditor>,
@@ -203,14 +232,32 @@ impl AccountsState {
                 theme.disabled_text(),
                 theme.accent,
                 theme,
-                InputMode::Settings("agent_account_name".into()),
+                InputMode::Plain { key: "agent_account_name".into() },
                 c.focus_handle(),
             )
+        });
+        let key = ctx.add_typed_action_view(|c| {
+            let mut editor = InputEditor::new(
+                "Paste or type your key",
+                font,
+                crate::theme::scaled(13.0),
+                theme.main_text(),
+                theme.disabled_text(),
+                theme.accent,
+                theme,
+                InputMode::Plain { key: "agent_account_key".into() },
+                c.focus_handle(),
+            );
+            editor.set_secure(true, c);
+            editor
         });
         Self {
             selected: None,
             snapshots: HashMap::new(),
             dialog: AccountDialog::Closed,
+            dialog_generation: 0,
+            scroll: Default::default(),
+            key,
             pending_remove: None,
             provider: "claude".into(),
             name,
@@ -227,7 +274,7 @@ impl AccountsState {
     }
 }
 
-fn agent_label(provider: &str) -> String {
+pub(super) fn agent_label(provider: &str) -> String {
     crate::workspace::PromptAgent::ALL
         .into_iter()
         .find(|a| a.command_key() == provider)
@@ -235,8 +282,15 @@ fn agent_label(provider: &str) -> String {
         .unwrap_or_else(|| provider.to_string())
 }
 
-fn dialog_title(provider: &str) -> String {
-    format!("Add {} account", agent_label(provider))
+/// A name nothing else uses yet: the pop-up's starting suggestion.
+fn suggested_name(taken: &[String]) -> String {
+    let free = |name: &str| !taken.iter().any(|t| t.eq_ignore_ascii_case(name));
+    ["Work", "Personal"]
+        .into_iter()
+        .map(str::to_string)
+        .chain((2..).map(|n| format!("Account {n}")))
+        .find(|name| free(name))
+        .unwrap_or_default()
 }
 
 impl SettingsView {
@@ -389,86 +443,469 @@ impl SettingsView {
             }
         }
         // A finished sign-in lands here: Waiting becomes Done.
-        self.promote_waiting_if_signed_in(machine_id);
+        self.promote_waiting_if_signed_in(machine_id, ctx);
         ctx.notify();
     }
 
-    fn promote_waiting_if_signed_in(&mut self, machine_id: &Option<String>) {
-        let waiting = match &self.agent_accounts.dialog {
-            AccountDialog::Waiting {
-                provider,
-                kind,
-                machine_id: waiting_machine,
-                machine_label,
-                target,
-                label,
-                command,
-                baseline_signed_in,
-                baseline_email,
-                baseline_error,
-                baseline_credentials_changed_at,
-            } if waiting_machine == machine_id => (
-                provider.clone(),
-                *kind,
-                machine_label.clone(),
-                *target,
-                label.clone(),
-                command.clone(),
-                *baseline_signed_in,
-                baseline_email.clone(),
-                baseline_error.clone(),
-                *baseline_credentials_changed_at,
-            ),
-            _ => return,
-        };
-        let (
+    fn promote_waiting_if_signed_in(
+        &mut self,
+        machine_id: &Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let AccountDialog::Waiting {
             provider,
-            kind,
-            machine_label,
+            machine_id: waiting_machine,
             target,
             label,
-            command,
+            created,
             baseline_signed_in,
             baseline_email,
             baseline_error,
             baseline_credentials_changed_at,
-        ) = waiting;
-        let key = snapshot_key(machine_id);
-        let current = self
-            .agent_accounts
-            .snapshots
-            .get(&key)
-            .and_then(|s| s.identity_for(&provider, target).cloned());
-        let Some(current) = current else {
+        } = &self.agent_accounts.dialog
+        else {
+            return;
+        };
+        if waiting_machine != machine_id {
+            return;
+        }
+        let snapshot = self.agent_accounts.snapshots.get(&snapshot_key(machine_id));
+        let Some(current) = snapshot.and_then(|s| s.identity_for(provider, *target)) else {
             return;
         };
         if !waiting_promotes(
-            baseline_signed_in,
-            &baseline_email,
-            &baseline_error,
-            &baseline_credentials_changed_at,
-            &current,
+            *baseline_signed_in,
+            baseline_email,
+            baseline_error,
+            baseline_credentials_changed_at,
+            current,
         ) {
             return;
         }
-        let signed_label = current
-            .email
-            .clone()
-            .filter(|e| !e.is_empty())
-            .unwrap_or_else(|| {
-                // Fall back to the account name when the agent reports no email.
-                label.clone()
-            });
+        let (provider, target, label, created) = (provider.clone(), *target, label.clone(), *created);
+        let note = current.email.clone().filter(|e| !e.is_empty()).map(|e| format!("Signed in as {e}"));
+        self.show_done(provider, machine_id.clone(), target, label, note, created);
+        // The pop-up terminal has done its job.
+        ctx.emit(SettingsEvent::AgentAccountSignedIn);
+    }
+
+    fn show_done(
+        &mut self,
+        provider: String,
+        machine_id: Option<String>,
+        target: Option<uuid::Uuid>,
+        label: String,
+        note: Option<String>,
+        suggest_default: bool,
+    ) {
+        let default = self
+            .agent_accounts
+            .snapshots
+            .get(&snapshot_key(&machine_id))
+            .and_then(|s| s.defaults.get(&provider).cloned())
+            .unwrap_or(Selection::System);
+        let is_default = match target {
+            Some(id) => default == Selection::Profile(id),
+            None => matches!(default, Selection::System | Selection::Inherit),
+        };
+        self.agent_accounts.dialog_generation += 1;
         self.agent_accounts.dialog = AccountDialog::Done {
             provider,
-            kind,
-            machine_id: machine_id.clone(),
-            machine_label,
+            machine_id,
             target,
             label,
-            command,
-            signed_label,
+            note,
+            // On for a new, working account; re-signing in never changes the choice.
+            make_default: (!is_default).then_some(suggest_default),
         };
+    }
+
+    fn close_account_dialog(&mut self, ctx: &mut ViewContext<Self>) {
+        self.agent_accounts.dialog_generation += 1;
+        self.agent_accounts.dialog = AccountDialog::Closed;
+        ctx.update_view(&self.agent_accounts.key, |e, c| {
+            e.set_text("", c);
+            e.set_secure(true, c);
+        });
+        ctx.notify();
+    }
+
+    fn open_account_form(
+        &mut self,
+        provider: &str,
+        target: Option<(uuid::Uuid, String)>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.close_account_dialog(ctx);
+        self.agent_accounts.pending_remove = None;
+        self.agent_accounts.editing = None;
+        let machine_label = self.selected_machine_label(ctx);
+        let taken: Vec<String> = self
+            .agent_accounts
+            .snapshot()
+            .profiles
+            .iter()
+            .filter(|p| p.provider == provider)
+            .map(|p| p.label.clone())
+            .collect();
+        let replacing = target.is_some();
+        self.agent_accounts.dialog = AccountDialog::Form(AccountForm {
+            provider: provider.to_string(),
+            kind: if replacing { CredentialKind::ApiKey } else { CredentialKind::Subscription },
+            machine_id: self.agent_accounts.selected.clone(),
+            machine_label,
+            target,
+            step: FormStep::Editing,
+            error: None,
+            offer_unchecked: false,
+            show_key: false,
+        });
+        ctx.update_view(&self.agent_accounts.name, |e, c| {
+            e.set_text(&suggested_name(&taken), c)
+        });
+        if replacing {
+            ctx.focus(&self.agent_accounts.key);
+        } else {
+            ctx.focus(&self.agent_accounts.name);
+        }
+        ctx.notify();
+    }
+
+    fn form_mut(&mut self) -> Option<&mut AccountForm> {
+        match &mut self.agent_accounts.dialog {
+            AccountDialog::Form(form) => Some(form),
+            _ => None,
+        }
+    }
+
+    /// Back to the form with what went wrong.
+    fn fail_account_form(&mut self, error: String, offer_unchecked: bool, ctx: &mut ViewContext<Self>) {
+        if let Some(form) = self.form_mut() {
+            form.step = FormStep::Editing;
+            form.error = Some(error);
+            form.offer_unchecked = offer_unchecked;
+        }
+        ctx.notify();
+    }
+
+    /// Continue, Add account or Save key. A key is checked with its provider
+    /// first unless `unchecked`.
+    fn submit_account_form(&mut self, unchecked: bool, ctx: &mut ViewContext<Self>) {
+        let AccountDialog::Form(form) = &self.agent_accounts.dialog else {
+            return;
+        };
+        if form.step != FormStep::Editing {
+            return;
+        }
+        let form = form.clone();
+        let name = self
+            .agent_accounts
+            .name
+            .read(ctx, |e, _| e.get_text().trim().to_string());
+        if form.target.is_none() && name.is_empty() {
+            self.fail_account_form("Enter a name for this account.".into(), false, ctx);
+            return;
+        }
+        if form.kind == CredentialKind::Subscription {
+            self.add_subscription(form, name, ctx);
+            return;
+        }
+        let key = self.agent_accounts.key.read(ctx, |e, _| ApiKey::parse(&e.get_text()));
+        let key = match key {
+            Ok(key) => key,
+            Err(error) => {
+                self.fail_account_form(error, false, ctx);
+                return;
+            }
+        };
+        if unchecked {
+            self.save_account_key(form, name, key, false, ctx);
+            return;
+        }
+        if let Some(form) = self.form_mut() {
+            form.step = FormStep::Checking;
+            form.error = None;
+            form.offer_unchecked = false;
+        }
+        let generation = self.agent_accounts.dialog_generation;
+        let provider = form.provider.clone();
+        let asked = key.clone();
+        ctx.spawn(
+            async move { api_key_check::check(&provider, asked.expose()) },
+            move |view, answer, ctx| {
+                if view.agent_accounts.dialog_generation != generation {
+                    return;
+                }
+                let issuer = api_key_check::key_issuer(&form.provider);
+                match answer {
+                    KeyCheck::Works => view.save_account_key(form, name, key, true, ctx),
+                    KeyCheck::Rejected => view.fail_account_form(
+                        format!("{issuer} says this key isn't valid. Check that you copied all of it."),
+                        false,
+                        ctx,
+                    ),
+                    KeyCheck::Unknown => view.fail_account_form(
+                        format!("Couldn't check the key with {issuer}. Check your connection and try again, or add it without checking."),
+                        true,
+                        ctx,
+                    ),
+                }
+            },
+        );
+        ctx.notify();
+    }
+
+    fn save_account_key(
+        &mut self,
+        form: AccountForm,
+        name: String,
+        key: ApiKey,
+        checked: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if let Some(form) = self.form_mut() {
+            form.step = FormStep::Saving;
+            form.error = None;
+        }
+        let generation = self.agent_accounts.dialog_generation;
+        let created = form.target.is_none();
+        let request = match &form.target {
+            Some((id, _)) => AccountsRequest::SetKey { id: *id, key },
+            None => AccountsRequest::AddWithKey {
+                provider: form.provider.clone(),
+                label: name,
+                key,
+            },
+        };
+        self.send_account_form(form.machine_id.clone(), request, ctx, move |view, result, ctx| {
+            let saved = match result {
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::Added(profile))) => {
+                    Ok((profile.id, profile.label))
+                }
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::Ack)) => {
+                    form.target.clone().ok_or_else(|| "The machine returned an invalid answer.".to_string())
+                }
+                Ok(_) => Err("The machine returned an invalid answer.".to_string()),
+                Err(error) => Err(error),
+            };
+            if view.agent_accounts.dialog_generation != generation {
+                // Closed meanwhile: just show what's there now.
+                view.refresh_current_accounts(ctx);
+                return;
+            }
+            match saved {
+                Ok((id, label)) => {
+                    let issuer = api_key_check::key_issuer(&form.provider);
+                    let note = (!checked).then(|| format!("{issuer} hasn't checked this key yet."));
+                    view.close_account_dialog(ctx);
+                    view.show_done(form.provider, form.machine_id, Some(id), label, note, created && checked);
+                    view.refresh_current_accounts(ctx);
+                }
+                Err(error) => view.fail_account_form(error, false, ctx),
+            }
+        });
+        ctx.notify();
+    }
+
+    /// Add a subscription account, then sign it in in the pop-up terminal.
+    fn add_subscription(&mut self, form: AccountForm, name: String, ctx: &mut ViewContext<Self>) {
+        if let Some(form) = self.form_mut() {
+            form.step = FormStep::Saving;
+            form.error = None;
+        }
+        let generation = self.agent_accounts.dialog_generation;
+        let request = AccountsRequest::Add {
+            provider: form.provider.clone(),
+            label: name,
+            kind: CredentialKind::Subscription,
+        };
+        self.send_account_form(form.machine_id.clone(), request, ctx, move |view, result, ctx| {
+            let cancelled = view.agent_accounts.dialog_generation != generation;
+            match result {
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::Added(profile))) => {
+                    if cancelled {
+                        view.remove_unused_account(form.machine_id, profile.id, ctx);
+                        return;
+                    }
+                    view.start_terminal_sign_in(
+                        form.provider,
+                        form.machine_id,
+                        Some(profile.id),
+                        profile.label,
+                        true,
+                        ctx,
+                    );
+                }
+                Ok(_) if !cancelled => {
+                    view.fail_account_form("The machine returned an invalid answer.".into(), false, ctx)
+                }
+                Err(error) if !cancelled => view.fail_account_form(error, false, ctx),
+                _ => {}
+            }
+        });
+        ctx.notify();
+    }
+
+    /// Open the pop-up terminal on an account's sign-in command and wait.
+    fn start_terminal_sign_in(
+        &mut self,
+        provider: String,
+        machine_id: Option<String>,
+        target: Option<uuid::Uuid>,
+        label: String,
+        created: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let generation = self.agent_accounts.dialog_generation;
+        let request = AccountsRequest::SignInCommand {
+            provider: provider.clone(),
+            target,
+        };
+        self.send_account_form(machine_id.clone(), request, ctx, move |view, result, ctx| {
+            let cancelled = view.agent_accounts.dialog_generation != generation;
+            let command = match result {
+                Ok(DevelopmentResponse::Accounts(AccountsResponse::SignInCommand {
+                    command, ..
+                })) if !cancelled => command,
+                other => {
+                    if created {
+                        if let Some(id) = target {
+                            view.remove_unused_account(machine_id, id, ctx);
+                        }
+                    }
+                    if !cancelled {
+                        let error = match other {
+                            Err(error) => error,
+                            Ok(_) => "The machine returned an invalid answer.".into(),
+                        };
+                        if view.form_mut().is_some() {
+                            view.fail_account_form(error, false, ctx);
+                        } else {
+                            ctx.emit(SettingsEvent::AgentAccountError(error));
+                        }
+                    }
+                    return;
+                }
+            };
+            // Remember what the account reported: the wait only finishes on
+            // a new sign-in, never on the same identity.
+            let baseline = view
+                .agent_accounts
+                .snapshots
+                .get(&snapshot_key(&machine_id))
+                .and_then(|s| s.identity_for(&provider, target).cloned())
+                .filter(|_| !created);
+            let (baseline_signed_in, baseline_email, baseline_error, baseline_credentials_changed_at) =
+                baseline.map_or((false, None, None, None), |i| {
+                    (i.signed_in, i.email, i.error, i.credentials_changed_at)
+                });
+            let agent = agent_label(&provider);
+            ctx.emit(SettingsEvent::AgentAccountSignIn {
+                machine_id: machine_id.clone(),
+                provider: provider.clone(),
+                title: if target.is_some() {
+                    format!("Sign in to {agent} as {label}")
+                } else {
+                    format!("Sign in to {agent}")
+                },
+                command,
+            });
+            view.close_account_dialog(ctx);
+            view.agent_accounts.dialog = AccountDialog::Waiting {
+                provider,
+                machine_id,
+                target,
+                label,
+                created,
+                baseline_signed_in,
+                baseline_email,
+                baseline_error,
+                baseline_credentials_changed_at,
+            };
+            // The terminal run is the poll's first tick: an immediate List
+            // keeps already-signed-in rows honest.
+            view.refresh_current_accounts(ctx);
+        });
+    }
+
+    /// The person closed the pop-up terminal. One last look: a sign-in that
+    /// just finished still counts; otherwise the pop-up is over, and an
+    /// account added only for it goes away again.
+    pub(crate) fn account_sign_in_closed(&mut self, ctx: &mut ViewContext<Self>) {
+        let AccountDialog::Waiting {
+            provider,
+            machine_id,
+            target,
+            created,
+            ..
+        } = self.agent_accounts.dialog.clone()
+        else {
+            return;
+        };
+        let generation = self.agent_accounts.dialog_generation;
+        self.send_host_accounts(
+            machine_id.clone(),
+            AccountsRequest::List,
+            ctx,
+            move |view, result, ctx| {
+                let read = result.is_ok();
+                view.apply_list_result(&machine_id, result, ctx);
+                if view.agent_accounts.dialog_generation == generation {
+                    view.close_account_dialog(ctx);
+                }
+                // Only a clear "not signed in" removes anything.
+                let unused = view
+                    .agent_accounts
+                    .snapshots
+                    .get(&snapshot_key(&machine_id))
+                    .and_then(|s| s.identity_for(&provider, target))
+                    .is_some_and(|i| !i.signed_in && i.error.is_none());
+                if let (true, true, true, Some(id)) = (created, read, unused, target) {
+                    view.remove_unused_account(machine_id, id, ctx);
+                }
+            },
+        );
+    }
+
+    fn remove_unused_account(
+        &mut self,
+        machine_id: Option<String>,
+        id: uuid::Uuid,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        // Off the page at once; reading the accounts again takes seconds.
+        if let Some(snapshot) = self.agent_accounts.snapshots.get_mut(&snapshot_key(&machine_id)) {
+            snapshot.profiles.retain(|p| p.id != id);
+        }
+        ctx.notify();
+        self.send_host_accounts(
+            machine_id,
+            AccountsRequest::Remove { id },
+            ctx,
+            |view, _, ctx| view.refresh_current_accounts(ctx),
+        );
+    }
+
+    /// [`Self::send_host_accounts`], with "not connected" reported in the form.
+    fn send_account_form(
+        &mut self,
+        machine_id: Option<String>,
+        request: AccountsRequest,
+        ctx: &mut ViewContext<Self>,
+        then: impl FnOnce(&mut Self, Result<DevelopmentResponse, String>, &mut ViewContext<Self>) + 'static,
+    ) {
+        if let Some(id) = &machine_id {
+            if crate::remote_fs::client(id).is_err() {
+                let label = self.selected_machine_label(ctx);
+                then(
+                    self,
+                    Err(format!("{label} is not connected. Connect it in Settings → Machines.")),
+                    ctx,
+                );
+                return;
+            }
+        }
+        self.send_host_accounts(machine_id, request, ctx, then);
     }
 
     /// While the dialog waits, re-read `List` every 2 s. Stops when the
@@ -596,7 +1033,7 @@ impl SettingsView {
             }
             AccountAction::SelectMachine(machine_id) => {
                 self.agent_accounts.selected = machine_id.clone();
-                self.agent_accounts.dialog = AccountDialog::Closed;
+                self.close_account_dialog(ctx);
                 self.agent_accounts.pending_remove = None;
                 self.agent_accounts.editing = None;
                 self.open_picker = None;
@@ -610,230 +1047,63 @@ impl SettingsView {
                     return;
                 }
                 self.agent_accounts.provider = provider.clone();
-                self.agent_accounts.dialog = AccountDialog::Form {
-                    provider: provider.clone(),
-                    kind: CredentialKind::Subscription,
-                };
-                self.agent_accounts.pending_remove = None;
-                self.agent_accounts.editing = None;
-                ctx.update_view(&self.agent_accounts.name, |e, c| e.set_text("Work", c));
-                ctx.notify();
+                self.open_account_form(provider, None, ctx);
             }
             AccountAction::SetKind(kind) => {
-                if let AccountDialog::Form { provider, .. } = &self.agent_accounts.dialog {
-                    let provider = provider.clone();
-                    self.agent_accounts.dialog = AccountDialog::Form { provider, kind: *kind };
-                    ctx.notify();
-                }
-            }
-            AccountAction::ConfirmAdd => {
-                if self.selected_is_remote_windows(ctx) {
-                    self.agent_accounts.dialog = AccountDialog::Closed;
-                    ctx.notify();
+                let kind = *kind;
+                let Some(form) = self.form_mut().filter(|f| f.step == FormStep::Editing) else {
                     return;
-                }
-                let (provider, kind) = match &self.agent_accounts.dialog {
-                    AccountDialog::Form { provider, kind } => (provider.clone(), *kind),
-                    _ => return,
                 };
-                let name = self
-                    .agent_accounts
-                    .name
-                    .read(ctx, |e, _| e.get_text().trim().to_string());
-                let machine_id = self.agent_accounts.selected.clone();
-                let machine_label = self.selected_machine_label(ctx);
-                let agent = agent_label(&provider);
-                self.send_host_accounts(
-                    machine_id.clone(),
-                    AccountsRequest::Add {
-                        provider: provider.clone(),
-                        label: name.clone(),
-                        kind,
-                    },
-                    ctx,
-                    move |view, result, ctx| match result {
-                        Ok(DevelopmentResponse::Accounts(AccountsResponse::Added(profile))) => {
-                            let target = Some(profile.id);
-                            let label = profile.label.clone();
-                            let machine_id = machine_id.clone();
-                            let machine_label = machine_label.clone();
-                            view.send_host_accounts(
-                                machine_id.clone(),
-                                AccountsRequest::SignInCommand {
-                                    provider: provider.clone(),
-                                    target,
-                                },
-                                ctx,
-                                move |view, result, ctx| match result {
-                                    Ok(DevelopmentResponse::Accounts(
-                                        AccountsResponse::SignInCommand { command, .. },
-                                    )) => {
-                                        ctx.emit(SettingsEvent::AgentAccountSignIn {
-                                            machine_id: machine_id.clone(),
-                                            title: format!("{agent} account sign-in"),
-                                            command: command.clone(),
-                                        });
-                                        view.agent_accounts.dialog = AccountDialog::Waiting {
-                                            provider: provider.clone(),
-                                            kind,
-                                            machine_id: machine_id.clone(),
-                                            machine_label,
-                                            target,
-                                            label,
-                                            command,
-                                        // A fresh account starts unsigned:
-                                        // the first signed-in report
-                                        // finishes the dialog.
-                                        baseline_signed_in: false,
-                                        baseline_email: None,
-                                        baseline_error: None,
-                                        baseline_credentials_changed_at: None,
-                                        };
-                                        view.refresh_current_accounts(ctx);
-                                    }
-                                    Ok(_) => {
-                                        ctx.emit(SettingsEvent::AgentAccountError(
-                                            "The machine returned an invalid answer.".into(),
-                                        ));
-                                        ctx.notify();
-                                    }
-                                    Err(error) => {
-                                        ctx.emit(SettingsEvent::AgentAccountError(error));
-                                        view.refresh_current_accounts(ctx);
-                                    }
-                                },
-                            );
-                        }
-                        Ok(_) => {
-                            ctx.emit(SettingsEvent::AgentAccountError(
-                                "The machine returned an invalid answer.".into(),
-                            ));
-                            ctx.notify();
-                        }
-                        Err(error) => {
-                            ctx.emit(SettingsEvent::AgentAccountError(error));
-                            ctx.notify();
-                        }
-                    },
-                );
-            }
-            AccountAction::CancelDialog | AccountAction::CloseDialog => {
-                self.agent_accounts.dialog = AccountDialog::Closed;
+                form.kind = kind;
+                form.error = None;
+                form.offer_unchecked = false;
+                if kind == CredentialKind::ApiKey {
+                    ctx.focus(&self.agent_accounts.key);
+                } else {
+                    ctx.focus(&self.agent_accounts.name);
+                }
                 ctx.notify();
             }
-            AccountAction::CopyCommand => {
-                let command = match &self.agent_accounts.dialog {
-                    AccountDialog::Waiting { command, .. }
-                    | AccountDialog::Done { command, .. } => Some(command.clone()),
-                    _ => None,
+            AccountAction::ToggleShowKey => {
+                let Some(form) = self.form_mut() else {
+                    return;
                 };
-                if let Some(command) = command {
-                    ctx.clipboard().write(ClipboardContent::plain_text(command));
-                    ctx.notify();
-                }
+                form.show_key = !form.show_key;
+                let secure = !form.show_key;
+                ctx.update_view(&self.agent_accounts.key, |e, c| e.set_secure(secure, c));
+                ctx.notify();
             }
+            AccountAction::ConfirmAdd => self.submit_account_form(false, ctx),
+            AccountAction::AddUnchecked => self.submit_account_form(true, ctx),
+            AccountAction::CloseDialog => self.close_account_dialog(ctx),
             AccountAction::SignInAgain { provider, target } => {
                 if self.selected_is_remote_windows(ctx) {
                     return;
                 }
-                let provider = provider.clone();
-                let target = *target;
-                let machine_id = self.agent_accounts.selected.clone();
-                let machine_label = self.selected_machine_label(ctx);
-                let agent = agent_label(&provider);
-                let label = self
-                    .agent_accounts
-                    .snapshots
-                    .get(&snapshot_key(&machine_id))
-                    .and_then(|s| {
-                        target.and_then(|id| {
-                            s.profiles
-                                .iter()
-                                .find(|p| p.id == id)
-                                .map(|p| p.label.clone())
-                        })
-                    })
-                    .unwrap_or_else(|| "System login".to_string());
-                let kind = self
-                    .agent_accounts
-                    .snapshots
-                    .get(&snapshot_key(&machine_id))
-                    .and_then(|s| {
-                        target.and_then(|id| {
-                            s.profiles
-                                .iter()
-                                .find(|p| p.id == id)
-                                .map(|p| p.kind)
-                        })
-                    })
-                    .unwrap_or(CredentialKind::Subscription);
-                self.send_host_accounts(
-                    machine_id.clone(),
-                    AccountsRequest::SignInCommand {
-                        provider: provider.clone(),
-                        target,
-                    },
-                    ctx,
-                    move |view, result, ctx| match result {
-                        Ok(DevelopmentResponse::Accounts(AccountsResponse::SignInCommand {
-                            command,
-                            ..
-                        })) => {
-                            ctx.emit(SettingsEvent::AgentAccountSignIn {
-                                machine_id: machine_id.clone(),
-                                title: format!("{agent} account sign-in"),
-                                command: command.clone(),
-                            });
-                            // Remember what the account reported when
-                            // the dialog opened: it only finishes on a
-                            // new sign-in, never on the same identity.
-                            let baseline = view
-                                .agent_accounts
-                                .snapshots
-                                .get(&snapshot_key(&machine_id))
-                                .and_then(|s| s.identity_for(&provider, target).cloned());
-                            let (
-                                baseline_signed_in,
-                                baseline_email,
-                                baseline_error,
-                                baseline_credentials_changed_at,
-                            ) = baseline.map_or((false, None, None, None), |i| {
-                                (
-                                    i.signed_in,
-                                    i.email,
-                                    i.error,
-                                    i.credentials_changed_at,
-                                )
-                            });
-                            view.agent_accounts.dialog = AccountDialog::Waiting {
-                                provider: provider.clone(),
-                                kind,
-                                machine_id: machine_id.clone(),
-                                machine_label,
-                                target,
-                                label,
-                                command,
-                                baseline_signed_in,
-                                baseline_email,
-                                baseline_error,
-                                baseline_credentials_changed_at,
-                            };
-                            // The terminal run is the poll's first tick: an
-                            // immediate List keeps already-signed-in rows honest.
-                            view.refresh_current_accounts(ctx);
-                        }
-                        Ok(_) => {
-                            ctx.emit(SettingsEvent::AgentAccountError(
-                                "The machine returned an invalid answer.".into(),
-                            ));
-                            ctx.notify();
-                        }
-                        Err(error) => {
-                            ctx.emit(SettingsEvent::AgentAccountError(error));
-                            ctx.notify();
-                        }
-                    },
-                );
+                let profile = target.and_then(|id| {
+                    self.agent_accounts
+                        .snapshot()
+                        .profiles
+                        .into_iter()
+                        .find(|p| p.id == id)
+                });
+                match profile {
+                    Some(p) if p.kind == CredentialKind::ApiKey => {
+                        self.open_account_form(provider, Some((p.id, p.label)), ctx);
+                    }
+                    profile => {
+                        self.close_account_dialog(ctx);
+                        let label = profile.map_or_else(|| "System login".to_string(), |p| p.label);
+                        self.start_terminal_sign_in(
+                            provider.clone(),
+                            self.agent_accounts.selected.clone(),
+                            *target,
+                            label,
+                            false,
+                            ctx,
+                        );
+                    }
+                }
             }
             AccountAction::MakeDefault { provider, selection } => {
                 let provider = provider.clone();
@@ -863,23 +1133,27 @@ impl SettingsView {
                     },
                 );
             }
-            AccountAction::UseDialogDefault => {
-                let (provider, target) = match &self.agent_accounts.dialog {
-                    AccountDialog::Done {
-                        provider, target, ..
-                    } => (provider.clone(), *target),
-                    _ => return,
+            AccountAction::ToggleDialogDefault => {
+                if let AccountDialog::Done { make_default: Some(on), .. } = &mut self.agent_accounts.dialog {
+                    *on = !*on;
+                    ctx.notify();
+                }
+            }
+            AccountAction::FinishDialog => {
+                let AccountDialog::Done { provider, machine_id, target, make_default, .. } =
+                    self.agent_accounts.dialog.clone()
+                else {
+                    return;
                 };
-                let selection = target.map_or(Selection::System, Selection::Profile);
-                self.handle_agent_account(
-                    &AccountAction::MakeDefault {
-                        provider,
-                        selection,
-                    },
-                    ctx,
-                );
-                self.agent_accounts.dialog = AccountDialog::Closed;
-                ctx.notify();
+                // The answer belongs to the machine it was signed in on.
+                if make_default == Some(true) && machine_id == self.agent_accounts.selected {
+                    let selection = target.map_or(Selection::System, Selection::Profile);
+                    self.handle_agent_account(
+                        &AccountAction::MakeDefault { provider, selection },
+                        ctx,
+                    );
+                }
+                self.close_account_dialog(ctx);
             }
             AccountAction::StartRename(id) => {
                 let id = *id;
@@ -893,8 +1167,9 @@ impl SettingsView {
                     .unwrap_or_default();
                 self.agent_accounts.editing = Some(Editing::Rename(id));
                 self.agent_accounts.pending_remove = None;
-                self.agent_accounts.dialog = AccountDialog::Closed;
+                self.close_account_dialog(ctx);
                 ctx.update_view(&self.agent_accounts.name, |e, c| e.set_text(&label, c));
+                ctx.focus(&self.agent_accounts.name);
                 ctx.notify();
             }
             AccountAction::Save => {
@@ -961,7 +1236,7 @@ impl SettingsView {
                                 AccountDialog::Waiting { target: Some(t), .. }
                                 | AccountDialog::Done { target: Some(t), .. } if *t == id);
                             if drop_dialog {
-                                view.agent_accounts.dialog = AccountDialog::Closed;
+                                view.close_account_dialog(ctx);
                             }
                             view.refresh_current_accounts(ctx);
                         }
@@ -1103,20 +1378,6 @@ pub fn render(
             return page.finish();
         }
     }
-    if let Some(dialog) = render_dialog(view, theme) {
-        page = page.with_child(
-            Container::new(dialog)
-                .with_padding_bottom(16.0)
-                .finish(),
-        );
-    }
-    if let Some(pending) = view.agent_accounts.pending_remove {
-        let snapshot = view.agent_accounts.snapshot();
-        let machine_label = machine_label_for(app, &view.agent_accounts.selected);
-        if let Some(profile) = snapshot.profiles.iter().find(|p| p.id == pending) {
-            page = page.with_child(remove_confirm(view, theme, profile, &machine_label));
-        }
-    }
     if snapshot.loading && snapshot.profiles.is_empty() && snapshot.error.is_none() {
         page = page.with_child(card(
             theme,
@@ -1186,7 +1447,7 @@ fn is_remote_windows_machine(
         })
 }
 
-fn machine_label_for(app: &warpui::AppContext, machine_id: &Option<String>) -> String {
+pub(super) fn machine_label_for(app: &warpui::AppContext, machine_id: &Option<String>) -> String {
     match machine_id {
         None => "This computer".to_string(),
         Some(id) => {
@@ -1252,301 +1513,6 @@ fn machine_picker(
         .finish()
 }
 
-/// The add-account dialog (form, waiting or done), below the picker.
-fn render_dialog(view: &SettingsView, theme: &crate::theme::Theme) -> Option<Box<dyn Element>> {
-    let font = view.ui_font;
-    match &view.agent_accounts.dialog {
-        AccountDialog::Closed => None,
-        AccountDialog::Form { provider, kind } => {
-            let title = dialog_title(provider);
-            let description = match kind {
-                CredentialKind::Subscription => {
-                    "A separate login with its own sign-in. Skills, settings and MCP servers are not shared."
-                }
-                CredentialKind::ApiKey => {
-                    "Pay per token with an API key. You type the key in the terminal; Dragent never sees it."
-                }
-            };
-            let billing = Flex::column()
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_main_axis_size(MainAxisSize::Min)
-                .with_spacing(2.0)
-                .with_child(choice_row(
-                    theme,
-                    font,
-                    view.view_id,
-                    view.hover("accounts-kind-subscription"),
-                    "Subscription",
-                    *kind == CredentialKind::Subscription,
-                    SettingsAction::AgentAccount(AccountAction::SetKind(
-                        CredentialKind::Subscription,
-                    )),
-                ))
-                .with_child(choice_row(
-                    theme,
-                    font,
-                    view.view_id,
-                    view.hover("accounts-kind-apikey"),
-                    "API key",
-                    *kind == CredentialKind::ApiKey,
-                    SettingsAction::AgentAccount(AccountAction::SetKind(CredentialKind::ApiKey)),
-                ))
-                .finish();
-            let row = Flex::row()
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_spacing(8.0)
-                .with_child(
-                    ConstrainedBox::new(crate::shared_input::shared_input(
-                        theme,
-                        &view.agent_accounts.name,
-                        crate::shared_input::SharedInputOpts::default(),
-                    ))
-                    .with_max_width(300.0)
-                    .finish(),
-                )
-                .with_child(primary_button(
-                    theme,
-                    font,
-                    view.view_id,
-                    view.hover("accounts-dialog-signin"),
-                    "Sign in",
-                    SettingsAction::AgentAccount(AccountAction::ConfirmAdd),
-                ))
-                .with_child(secondary_button(
-                    theme,
-                    font,
-                    view.view_id,
-                    view.hover("accounts-dialog-cancel"),
-                    "Cancel",
-                    SettingsAction::AgentAccount(AccountAction::CancelDialog),
-                ))
-                .finish();
-            Some(card(
-                theme,
-                false,
-                Flex::column()
-                    .with_spacing(10.0)
-                    .with_child(text(theme, font, &title, 14.0, theme.main_text()))
-                    .with_child(text(theme, font, description, 12.5, theme.sub_text()))
-                    .with_child(billing)
-                    .with_child(text(theme, font, "Account name", 12.5, theme.sub_text()))
-                    .with_child(row)
-                    .finish(),
-            ))
-        }
-        AccountDialog::Waiting {
-            provider,
-            kind,
-            machine_label,
-            label,
-            command,
-            ..
-        } => Some(sign_in_card(
-            view,
-            theme,
-            provider,
-            *kind,
-            machine_label,
-            label,
-            command,
-            None,
-        )),
-        AccountDialog::Done {
-            provider,
-            kind,
-            machine_label,
-            label,
-            command,
-            signed_label,
-            ..
-        } => Some(sign_in_card(
-            view,
-            theme,
-            provider,
-            *kind,
-            machine_label,
-            label,
-            command,
-            Some(signed_label.clone()),
-        )),
-    }
-}
-
-/// Waiting and done share the command box; done adds the signed-in line.
-#[allow(clippy::too_many_arguments)]
-fn sign_in_card(
-    view: &SettingsView,
-    theme: &crate::theme::Theme,
-    provider: &str,
-    kind: CredentialKind,
-    machine_label: &str,
-    label: &str,
-    command: &str,
-    signed_label: Option<String>,
-) -> Box<dyn Element> {
-    let font = view.ui_font;
-    let run_label = if kind == CredentialKind::ApiKey {
-        format!("Runs in a terminal on {machine_label}; type your key when asked:")
-    } else {
-        format!("Runs in a terminal on {machine_label}:")
-    };
-    let command_box = Container::new(
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(8.0)
-            .with_child(
-                Expanded::new(
-                    1.0,
-                    Text::new(
-                        command.to_string(),
-                        font,
-                        crate::theme::text_size(12.0),
-                    )
-                    .with_color(theme.main_text())
-                    .finish(),
-                )
-                .finish(),
-            )
-            .with_child(ghost(
-                view,
-                theme,
-                &format!("accounts-copy-{label}"),
-                "Copy",
-                false,
-                AccountAction::CopyCommand,
-            ))
-            .finish(),
-    )
-    .with_background_color(theme.surface_3())
-    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.0)))
-    .with_padding_left(12.0)
-    .with_padding_right(8.0)
-    .with_padding_top(8.0)
-    .with_padding_bottom(8.0)
-    .finish();
-    let mut column = Flex::column()
-        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_spacing(10.0)
-        .with_child(text(
-            theme,
-            font,
-            &dialog_title(provider),
-            14.0,
-            theme.main_text(),
-        ))
-        .with_child(text(theme, font, &run_label, 12.5, theme.sub_text()))
-        .with_child(command_box);
-    match signed_label {
-        None => {
-            column = column
-                .with_child(status_line(theme, font, "Waiting for sign-in…"))
-                .with_child(
-                    Flex::row()
-                        .with_main_axis_alignment(warpui::elements::MainAxisAlignment::End)
-                        .with_child(ghost(
-                            view,
-                            theme,
-                            "accounts-dialog-close",
-                            "Close",
-                            false,
-                            AccountAction::CloseDialog,
-                        ))
-                        .finish(),
-                );
-        }
-        Some(signed) => {
-            column = column
-                .with_child(text(
-                    theme,
-                    font,
-                    &format!("{signed} is signed in."),
-                    13.0,
-                    theme.main_text(),
-                ))
-                .with_child(
-                    Flex::row()
-                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                        .with_spacing(8.0)
-                        .with_child(primary_button(
-                            theme,
-                            font,
-                            view.view_id,
-                            view.hover("accounts-dialog-done"),
-                            "Done",
-                            SettingsAction::AgentAccount(AccountAction::CloseDialog),
-                        ))
-                        .with_child(secondary_button(
-                            theme,
-                            font,
-                            view.view_id,
-                            view.hover("accounts-dialog-default"),
-                            "Use for new sessions",
-                            SettingsAction::AgentAccount(AccountAction::UseDialogDefault),
-                        ))
-                        .finish(),
-                );
-        }
-    }
-    card(theme, false, column.finish())
-}
-
-fn remove_confirm(
-    view: &SettingsView,
-    theme: &crate::theme::Theme,
-    profile: &dragent_host::development::AccountProfileView,
-    machine_label: &str,
-) -> Box<dyn Element> {
-    let font = view.ui_font;
-    card(
-        theme,
-        false,
-        Flex::column()
-            .with_spacing(10.0)
-            .with_child(text(
-                theme,
-                font,
-                &format!("Remove “{}”?", profile.label),
-                14.0,
-                theme.main_text(),
-            ))
-            .with_child(text(
-                theme,
-                font,
-                &format!(
-                    "Removes {} from {machine_label}. Its sign-in files stay on that machine.",
-                    profile.label
-                ),
-                12.5,
-                theme.sub_text(),
-            ))
-            .with_child(
-                Flex::row()
-                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_spacing(8.0)
-                    .with_child(danger_button(
-                        theme,
-                        font,
-                        view.view_id,
-                        view.hover(&format!("accounts-remove-confirm-{}", profile.id)),
-                        "Remove",
-                        SettingsAction::AgentAccount(AccountAction::ConfirmRemove),
-                    ))
-                    .with_child(secondary_button(
-                        theme,
-                        font,
-                        view.view_id,
-                        view.hover("accounts-remove-cancel"),
-                        "Cancel",
-                        SettingsAction::AgentAccount(AccountAction::CancelRemove),
-                    ))
-                    .finish(),
-            )
-            .finish(),
-    )
-}
-
 /// One agent: its name with "Add account", then a card per account.
 fn agent_section(
     view: &SettingsView,
@@ -1603,9 +1569,6 @@ fn agent_section(
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
         .with_spacing(12.0)
         .with_child(header);
-    if let Some(form) = rename_form(view, theme, &provider) {
-        column = column.with_child(form);
-    }
 
     let snapshot = view.agent_accounts.snapshot();
     let default = snapshot
@@ -1650,70 +1613,6 @@ fn agent_section(
     Container::new(column.finish())
         .with_padding_bottom(28.0)
         .finish()
-}
-
-/// The rename field, when this agent is renaming an account.
-fn rename_form(
-    view: &SettingsView,
-    theme: &crate::theme::Theme,
-    provider: &str,
-) -> Option<Box<dyn Element>> {
-    let state = &view.agent_accounts;
-    let font = view.ui_font;
-    let snapshot = state.snapshot();
-    let id = match state.editing.as_ref()? {
-        Editing::Rename(id) => *id,
-    };
-    let profile = snapshot
-        .profiles
-        .iter()
-        .find(|p| p.id == id && p.provider == provider)?;
-    let title = format!("Rename “{}”", profile.label);
-    let row = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_spacing(8.0)
-        .with_child(
-            ConstrainedBox::new(crate::shared_input::shared_input(
-                theme,
-                &state.name,
-                crate::shared_input::SharedInputOpts::default(),
-            ))
-            .with_max_width(300.0)
-            .finish(),
-        )
-        .with_child(primary_button(
-            theme,
-            font,
-            view.view_id,
-            view.hover("accounts-save"),
-            "Save",
-            SettingsAction::AgentAccount(AccountAction::Save),
-        ))
-        .with_child(secondary_button(
-            theme,
-            font,
-            view.view_id,
-            view.hover("accounts-cancel"),
-            "Cancel",
-            SettingsAction::AgentAccount(AccountAction::CancelEdit),
-        ))
-        .finish();
-    Some(card(
-        theme,
-        false,
-        Flex::column()
-            .with_spacing(10.0)
-            .with_child(text(theme, font, &title, 13.5, theme.main_text()))
-            .with_child(row)
-            .with_child(text(
-                theme,
-                font,
-                "Only the name changes; the sign-in stays.",
-                12.0,
-                theme.sub_text(),
-            ))
-            .finish(),
-    ))
 }
 
 /// One account: who it is, its limits, and what can be done with it.
@@ -1931,7 +1830,12 @@ fn account_card(
                         view,
                         theme,
                         &format!("accounts-signin-{machine_suffix}-{key}"),
-                        if signed_in { "Sign in again" } else { "Sign in" },
+                        match (p.kind, signed_in) {
+                            (CredentialKind::ApiKey, true) => "Replace key",
+                            (CredentialKind::ApiKey, false) => "Add key",
+                            (_, true) => "Sign in again",
+                            (_, false) => "Sign in",
+                        },
                         true,
                         AccountAction::SignInAgain {
                             provider: provider.to_string(),
@@ -2209,6 +2113,15 @@ fn ghost(
 #[cfg(test)]
 mod tests {
     use super::AccountDialog;
+
+    #[test]
+    fn suggested_names_skip_the_ones_in_use() {
+        let taken = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        use super::suggested_name;
+        assert_eq!(suggested_name(&[]), "Work");
+        assert_eq!(suggested_name(&taken(&["work"])), "Personal");
+        assert_eq!(suggested_name(&taken(&["Work", "PERSONAL", "account 2"])), "Account 3");
+    }
 
     #[test]
     fn durations_read_naturally() {

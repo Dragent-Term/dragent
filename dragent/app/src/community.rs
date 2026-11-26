@@ -37,12 +37,40 @@ pub struct StarState {
     pub starred: Option<bool>,
     /// A star request is under way.
     pub starring: bool,
+    /// Whether the person starred it has been looked up (it may still be
+    /// unknown).
+    pub checked: bool,
+}
+
+impl StarState {
+    /// Whether to show a Star button: not before it's known whether the
+    /// person starred it, and nowhere once they have (a click still shows
+    /// "Starring…" first).
+    pub fn offers_star(self) -> bool {
+        self.checked && (self.starring || self.starred != Some(true))
+    }
+}
+
+/// Left in the app's own folder once the person has starred it, so the button
+/// stays away when `gh` can't be asked (offline, signed out).
+#[cfg(not(target_family = "wasm"))]
+const STARRED_MARKER: &str = "github-starred";
+
+#[cfg(not(target_family = "wasm"))]
+fn remember_starred(starred: bool) {
+    let marker = dragent_paths::home().join(STARRED_MARKER);
+    let _ = if starred {
+        std::fs::write(marker, "")
+    } else {
+        std::fs::remove_file(marker)
+    };
 }
 
 static STATE: Mutex<StarState> = Mutex::new(StarState {
     stars: None,
     starred: None,
     starring: false,
+    checked: false,
 });
 
 /// The latest state, for rendering.
@@ -95,8 +123,19 @@ pub fn refresh() -> StarState {
                 None
             }
         });
+    let starred = match starred {
+        Some(starred) => {
+            remember_starred(starred);
+            Some(starred)
+        }
+        None => dragent_paths::home()
+            .join(STARRED_MARKER)
+            .is_file()
+            .then_some(true),
+    };
     let stars = stars_from_gh().or_else(stars_from_api);
     update(|state| {
+        state.checked = true;
         state.starred = starred;
         if stars.is_some() {
             state.stars = stars;
@@ -152,7 +191,12 @@ pub fn star() -> Result<StarState, String> {
         .as_ref()
         .is_some_and(|output| output.status.success());
     // The count as GitHub now has it, the new star included.
-    let stars = if ok { stars_from_gh() } else { None };
+    let stars = if ok {
+        remember_starred(true);
+        stars_from_gh()
+    } else {
+        None
+    };
     let state = update(|state| {
         state.starring = false;
         if ok {
@@ -173,7 +217,7 @@ pub fn star() -> Result<StarState, String> {
 
 #[cfg(target_family = "wasm")]
 pub fn refresh() -> StarState {
-    state()
+    update(|state| state.checked = true)
 }
 
 #[cfg(target_family = "wasm")]
@@ -335,6 +379,24 @@ pub fn render_x_button(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_star_button_is_nowhere_once_starred() {
+        let at = |starred, starring, checked| StarState {
+            stars: Some(1),
+            starred,
+            starring,
+            checked,
+        };
+        assert!(!at(Some(true), false, true).offers_star());
+        // The click shows "Starring…" first.
+        assert!(at(Some(true), true, true).offers_star());
+        assert!(at(Some(false), false, true).offers_star());
+        // Unknown (no gh): Star opens the repository.
+        assert!(at(None, false, true).offers_star());
+        // Not looked up yet: no flash of it at launch.
+        assert!(!at(None, false, false).offers_star());
+    }
 
     #[test]
     fn star_counts_read_like_githubs() {

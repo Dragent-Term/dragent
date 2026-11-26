@@ -41,6 +41,11 @@ impl Drop for Harness {
                     .join("organisations")
                     .join(dragent_paths::organisation_key(org))
             };
+            // Wait for (or kill) whatever is still running there.
+            dragent_host::testing::stop_services(
+                &dir.join(dragent_host::protocol::ENDPOINT_FILENAME),
+                &dir,
+            );
             if let Some(manifest) = dragent_host::pty_supervisor::read_manifest(&dir) {
                 let conn = dragent_host::pty_supervisor::DaemonConn::from(&manifest);
                 let _ = conn.rpc(dragent_host::DaemonRequest::Shutdown);
@@ -81,6 +86,7 @@ fn organisations_restore_only_their_own_workspaces_and_keep_other_hosts_alive() 
         std::env::remove_var("DRAGENT_HOST_ENDPOINT_FILE");
         std::env::remove_var("DRAGENT_WORKSPACE_DB");
     }
+    dragent_host::testing::mark_test_services();
     let root = home.join("shared-checkout");
     std::fs::create_dir_all(root.join(".git")).unwrap();
     std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();

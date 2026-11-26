@@ -23,6 +23,8 @@ use crate::agent_recovery::{self, HookKind, SessionIdStrategy, SessionRecovery};
 use crate::agent_user_hooks;
 
 pub const RUN_ARG: &str = "--dragent-agent-run";
+/// Holds a terminal's next command until memory allows its agent to start.
+pub const WAIT_ARG: &str = "--dragent-agent-wait";
 pub const HOOK_ARG: &str = "--dragent-agent-session-hook";
 
 const STAGED_AGENT: &str = "custom-agent.json";
@@ -259,6 +261,62 @@ pub fn set_asleep(pane: Uuid, asleep: bool) -> Result<(), String> {
 /// Whether a pane's agent was put to sleep and hasn't been woken.
 pub fn is_asleep(pane: Uuid) -> bool {
     directory(pane).join(ASLEEP).is_file()
+}
+
+/// Marker file of a pane whose agent waits for memory before it starts. It
+/// names the launch monitor that waits.
+const WAITING: &str = "waiting";
+
+/// Whether `pane`'s agent hasn't started yet because it waits for memory.
+/// A marker whose monitor is gone (its terminal was closed) doesn't count.
+#[cfg(not(target_family = "wasm"))]
+pub fn is_waiting(pane: Uuid) -> bool {
+    fs::read(directory(pane).join(WAITING))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<crate::agent_memory::Proc>(&bytes).ok())
+        .is_some_and(|monitor| monitor.is_running())
+}
+
+/// Wait for memory before starting `provider` in `pane`. While it waits the
+/// pane has an active record of an unused conversation, so whoever looks for
+/// its agent finds one that hasn't begun rather than none. `false`: the
+/// person called the start off.
+#[cfg(not(target_family = "wasm"))]
+fn wait_for_memory(record: &AgentSession) -> Result<bool, String> {
+    let pane = record.pane_uuid;
+    let previous = load(pane);
+    let mut waited = false;
+    let outcome = crate::start_wait::wait_for_turn(
+        &pane.to_string(),
+        &record.terminal_id,
+        &record.provider,
+        || {
+            waited = true;
+            let saved = lock(pane).and_then(|_lock| {
+                if !record.terminal_id.is_empty() {
+                    let _ = index_terminal(&record.terminal_id, pane);
+                }
+                let dir = private_directory(pane)?;
+                let me = crate::agent_memory::Proc::this().ok_or("no process record")?;
+                let me = serde_json::to_vec(&me).map_err(|e| e.to_string())?;
+                write_atomic(&dir, WAITING, &me)?;
+                save(record)
+            });
+            if let Err(error) = saved {
+                eprintln!("Agent session recovery: {error}");
+            }
+        },
+    );
+    if waited {
+        let _lock = lock(pane)?;
+        let _ = fs::remove_file(directory(pane).join(WAITING));
+        if outcome == crate::start_wait::Outcome::Cancelled {
+            let mut left = previous.unwrap_or_else(|| record.clone());
+            left.active = false;
+            save(&left)?;
+        }
+    }
+    Ok(outcome == crate::start_wait::Outcome::Start)
 }
 
 /// A durable request to wake a sleeping agent, read by the app's sleep
@@ -626,7 +684,11 @@ fn save(record: &AgentSession) -> Result<(), String> {
 }
 
 /// Durable replace: a power loss leaves either the old or the new file.
-fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+/// Owner-only permissions (0600 on unix; elsewhere the directory's
+/// inherited ACLs, which live under the user's profile): for prompts and
+/// other secrets. The temp file carries a fresh uuid, so concurrent writers
+/// never share one.
+pub(crate) fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
     let tmp = dir.join(format!("{}.tmp", Uuid::new_v4()));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
@@ -1022,6 +1084,16 @@ pub fn restore_terminal(
                 record.provider,
                 request.pane_uuid
             );
+            #[cfg(not(target_family = "wasm"))]
+            if let Some(conversation) = record.conversation_id.as_deref() {
+                announce_resume_with(
+                    client,
+                    &request.pane_uuid.to_string(),
+                    Some(&session.id),
+                    &record.provider,
+                    conversation,
+                );
+            }
             return Ok(Restored {
                 home_id: home.id,
                 terminal_id: session.id,
@@ -1046,6 +1118,50 @@ pub fn restore_terminal(
         return Ok(Restored::attached(home.id, session.id));
     }
     Ok(Restored::attached(request.home_id.into(), String::new()))
+}
+
+/// Dragent resumed `conversation` of agent `provider` in `pane`: tell the
+/// host, so a team seat the conversation holds moves there at once (the
+/// lead's news then goes to its new terminal). Best effort.
+#[cfg(not(target_family = "wasm"))]
+pub fn announce_resume(pane: &str, terminal: Option<&str>, provider: &str, conversation: &str) {
+    match crate::HostClient::connect_existing() {
+        Ok(client) => announce_resume_with(&client, pane, terminal, provider, conversation),
+        Err(error) => log::debug!("[team] no host to announce a resume to: {error}"),
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn announce_resume_with(
+    client: &crate::HostClient,
+    pane: &str,
+    terminal: Option<&str>,
+    provider: &str,
+    conversation: &str,
+) {
+    let Ok(agent) = crate::team_command_support::agent_key(provider) else {
+        return;
+    };
+    if conversation.is_empty() {
+        return;
+    }
+    let request = crate::team::TeamRequest::Reseat {
+        pane: pane.to_string(),
+        terminal: terminal.map(str::to_owned),
+        identity: crate::team::SessionIdentity {
+            conversation: conversation.to_string(),
+            agent,
+        },
+        at_ms: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_millis() as i64)
+                .unwrap_or(0),
+        ),
+    };
+    if let Err(error) = client.team(request) {
+        log::warn!("[team] couldn't announce the resume in {pane}: {error}");
+    }
 }
 
 /// Persist a new transport identity before returning it to the GUI. Called
@@ -1535,6 +1651,32 @@ fn run(pane: Uuid, argv: Vec<String>) -> Result<i32, String> {
     let resume_options = launch.map(|launch| launch.options);
     let resumed = recovery.is_resume(&args);
     let mut conversation_id = recovery.selected_id(&args);
+    // A new agent waits while memory is critically low. One being resumed
+    // (woken, or brought back after a restart) was already running here.
+    #[cfg(not(target_family = "wasm"))]
+    if resume_options.is_some() && !resumed {
+        let waiting = AgentSession {
+            organisation_id: dragent_paths::organisation_id(),
+            pane_uuid: pane,
+            generation: Uuid::new_v4(),
+            provider: provider.clone(),
+            account: Some(account.clone()),
+            cwd: cwd.clone(),
+            executable: executable.clone(),
+            resume_options: resume_options.clone(),
+            resumed,
+            last_exit_code: None,
+            conversation_id: None,
+            active: true,
+            workspace_id: std::env::var("DRAGENT_HOST_WORKSPACE_ID").unwrap_or_default(),
+            terminal_id: std::env::var("DRAGENT_HOST_TERMINAL_ID").unwrap_or_default(),
+            recovery: Some(recovery.clone()),
+            used: false,
+        };
+        if !wait_for_memory(&waiting)? {
+            return Ok(130);
+        }
+    }
     // A new interactive conversation gets its exact identity before the
     // provider starts, so it is durable even if the machine dies mid-turn.
     let mut named = Vec::new();
@@ -1579,8 +1721,9 @@ fn run(pane: Uuid, argv: Vec<String>) -> Result<i32, String> {
         }) {
             record.used = previous.used || prompted;
         }
-        // Indexed before the record is visible: a line submitted as soon as
-        // the record appears must find its pane (`note_submitted_input`).
+        // The terminal first: once the record can be seen, a prompt submitted
+        // there must be found to belong to it. One that is missed leaves the
+        // conversation counting as never used, and a reboot drops it.
         if !record.terminal_id.is_empty() {
             let _ = index_terminal(&record.terminal_id, pane);
         }
@@ -1788,6 +1931,10 @@ pub fn run_if_requested() -> Option<i32> {
         // Claude Code's status line: never fails, prints what it shows.
         let account = args.next().unwrap_or_else(|| "system".into());
         return Some(crate::agent_usage::run_status_line(&account));
+    }
+    #[cfg(not(target_family = "wasm"))]
+    if mode == WAIT_ARG {
+        return Some(crate::start_wait::run_wait(&args.next().unwrap_or_else(|| "The agent".into())));
     }
     if mode == agent_user_hooks::ANCESTRY_HOOK_ARG {
         // Runs for every agent that has the user-level hook, inside Dragent

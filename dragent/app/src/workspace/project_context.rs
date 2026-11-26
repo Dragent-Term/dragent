@@ -864,6 +864,7 @@ impl WorkspaceView {
                                 }
                                 if view.open_project_roots.is_empty() && view.tabs.is_empty() {
                                     view.project_start_visible = true;
+                                    view.left_panel_visible = true;
                                 }
                             }
                             view.sync_left_panel(ctx);

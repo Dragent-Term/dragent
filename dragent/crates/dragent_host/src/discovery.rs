@@ -97,9 +97,15 @@ fn rpc_once(
     env.result
 }
 
+/// How long a health ping waits for the answer. A live host answers in
+/// milliseconds; a hung one used to hold every caller for 10 s, one after
+/// another behind the client's start lock (one per restored terminal at
+/// launch).
+pub const PING_TIMEOUT: Duration = Duration::from_secs(3);
+
 pub fn ping(endpoint: &ServiceEndpoint, client_id: &str) -> bool {
     matches!(
-        rpc_once(endpoint, client_id, Request::Ping, Duration::from_secs(10)),
+        rpc_once(endpoint, client_id, Request::Ping, PING_TIMEOUT),
         Ok(Response::Pong)
     )
 }

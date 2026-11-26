@@ -67,7 +67,8 @@ pub fn color_scheme_report(is_dark: bool) -> Vec<u8> {
 
 // Keep enough live history for long-running commands without allowing an
 // unbounded process to grow forever. Completed blocks apply the same limit.
-pub(crate) const MAX_SCROLLBACK: usize = 10_000;
+// There is no unlimited mode: see `scrollback::normalize_scrollback_lines`.
+pub(crate) const MAX_SCROLLBACK: usize = crate::scrollback::SCROLLBACK_DEFAULT_LINES;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public event types

@@ -63,6 +63,9 @@ impl PtySessionHandle {
     pub fn shutdown(&self) -> Result<()> {
         Ok(())
     }
+    pub fn line_limit(&self) -> Option<usize> {
+        None
+    }
     pub fn foreground_running(&self) -> bool {
         false
     }
@@ -80,6 +83,7 @@ pub fn spawn_interactive(
 pub fn spawn_interactive_with_args(
     _config: PtyConfig,
     _args: &[String],
+    _env: &[(&str, String)],
     _feed: FeedCallback,
     _sync_buffer_len: SyncBufferLenCallback,
     _on_wakeup: WakeupCallback,

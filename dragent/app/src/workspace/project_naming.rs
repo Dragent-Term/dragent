@@ -463,6 +463,16 @@ pub(crate) fn worktree_available(root: &Path) -> bool {
 }
 
 pub(crate) fn local_branch_name(root: &Path) -> Option<String> {
+    // Most callers run on the UI thread (building the workspace at launch
+    // among them), and git runs through the host service, which can be
+    // slow to answer or still starting. HEAD's file answers without either.
+    // Not for a remote machine's project: its folder here is only a stand-in,
+    // and its repository is elsewhere.
+    if crate::remote_fs::resolve(root).is_none() {
+        if let Some(known) = head_branch_from_files(root) {
+            return known;
+        }
+    }
     let output = crate::git_cmd::GitCommand::new()
         .args(["symbolic-ref", "--short", "-q", "HEAD"])
         .current_dir(root)
@@ -477,9 +487,100 @@ pub(crate) fn local_branch_name(root: &Path) -> Option<String> {
     (!branch.is_empty()).then_some(branch)
 }
 
+/// The branch checked out at `root` read from the repository's own files, as
+/// `git symbolic-ref --short -q HEAD` reports it: `Some(Some(branch))`, or
+/// `Some(None)` when HEAD is detached or `root` is in no repository. `None`
+/// when the files can't answer (unreadable, or a repository format that keeps
+/// refs elsewhere), so the caller asks git.
+pub(crate) fn head_branch_from_files(root: &Path) -> Option<Option<String>> {
+    let Some(dot_git) = root
+        .ancestors()
+        .map(|dir| dir.join(".git"))
+        .find(|p| p.exists())
+    else {
+        return Some(None);
+    };
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        // A linked worktree or submodule: `gitdir: <path>`, relative to the
+        // folder holding the `.git` file.
+        let text = std::fs::read_to_string(&dot_git).ok()?;
+        let target = text
+            .lines()
+            .find_map(|line| line.strip_prefix("gitdir:"))?
+            .trim();
+        let target = Path::new(target);
+        if target.is_absolute() {
+            target.to_path_buf()
+        } else {
+            dot_git.parent()?.join(target)
+        }
+    };
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    match head.strip_prefix("ref:") {
+        Some(reference) => {
+            let branch = reference.trim().strip_prefix("refs/heads/")?;
+            // The reftable format leaves a placeholder here.
+            (!branch.is_empty() && branch != ".invalid").then(|| Some(branch.to_string()))
+        }
+        // A commit id: detached.
+        None if head.len() >= 40 && head.bytes().all(|b| b.is_ascii_hexdigit()) => Some(None),
+        None => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn head_file_answers_like_symbolic_ref() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let git = |dir: &Path, args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .current_dir(dir)
+                .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git {args:?}");
+        };
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join("sub")).unwrap();
+        git(&repo, &["init", "-q", "-b", "feature/x"]);
+        assert_eq!(
+            head_branch_from_files(&repo),
+            Some(Some("feature/x".into()))
+        );
+        // From a folder inside the repository, like git.
+        assert_eq!(
+            head_branch_from_files(&repo.join("sub")),
+            Some(Some("feature/x".into()))
+        );
+        git(&repo, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        // A linked worktree keeps a `.git` file pointing at its own HEAD.
+        let linked = root.join("linked");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "other",
+                linked.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(head_branch_from_files(&linked), Some(Some("other".into())));
+        assert_eq!(local_branch_name(&linked), Some("other".into()));
+        // Detached.
+        git(&repo, &["checkout", "-q", "--detach"]);
+        assert_eq!(head_branch_from_files(&repo), Some(None));
+        assert_eq!(local_branch_name(&repo), None);
+    }
 
     #[test]
     fn local_branch_name_none_outside_git_repo() {
