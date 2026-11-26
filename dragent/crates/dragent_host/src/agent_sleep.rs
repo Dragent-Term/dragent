@@ -479,7 +479,9 @@ mod tests {
         let pane = Uuid::new_v4();
         let dir = std::env::temp_dir().join(format!("dragent-background-{pane}"));
         std::fs::create_dir_all(&dir).unwrap();
-        let script = "/bin/bash -c '/bin/sh -c \"sleep 3; true\"; read -r _; true'; true";
+        // The command runs until the test says so: a slow machine takes
+        // seconds over each look, which a fixed-length command could outlast.
+        let script = "/bin/bash -c '/bin/sh -c \"while [ ! -e finish ]; do sleep 0.1; done; true\"; read -r _; true'; true";
         std::fs::write(dir.join(pane.to_string()), script).unwrap();
         let mut child = std::process::Command::new("/bin/bash")
             .arg0(crate::agent_sessions::RUN_ARG)
@@ -490,7 +492,7 @@ mod tests {
             .spawn()
             .unwrap();
         let wait_for = |expected: bool| {
-            let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
             loop {
                 let found = agent_processes(&[pane])[&pane];
                 if found.found && found.background == expected {
@@ -503,6 +505,7 @@ mod tests {
             }
         };
         let busy = wait_for(true);
+        std::fs::write(dir.join("finish"), b"").unwrap();
         let quiet = wait_for(false);
         drop(child.stdin.take());
         let _ = child.wait();
