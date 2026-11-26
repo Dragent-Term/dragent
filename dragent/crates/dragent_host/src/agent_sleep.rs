@@ -170,6 +170,15 @@ struct Below<'a> {
     own: bool,
 }
 
+/// The agent program itself, or one of its own (`codex-code-mode-host` for
+/// `codex`).
+fn is_agents_program(process: &str, agent: &str) -> bool {
+    let process = process.strip_suffix(".exe").unwrap_or(process);
+    let agent = agent.strip_suffix(".exe").unwrap_or(agent);
+    !agent.is_empty()
+        && (process == agent || process.strip_prefix(agent).is_some_and(|rest| rest.starts_with('-')))
+}
+
 fn is_shell(name: &str) -> bool {
     let name = name.trim_start_matches('-').to_ascii_lowercase();
     let name = name.strip_suffix(".exe").unwrap_or(&name);
@@ -255,7 +264,7 @@ pub fn agent_processes(panes: &[Uuid]) -> HashMap<Uuid, AgentProcesses> {
                 || system.process(*pid).is_some_and(|process| {
                     process.parent() == Some(root)
                         || agent_name.as_deref().is_some_and(|name| {
-                            process.name().to_string_lossy() == name
+                            is_agents_program(&process.name().to_string_lossy(), name)
                         })
                 })
         };
@@ -299,17 +308,20 @@ pub fn agent_processes(panes: &[Uuid]) -> HashMap<Uuid, AgentProcesses> {
                 })
             })
             .collect();
-        let background = runs_in_background(&below) || left_behind(&system, root, &tree);
+        let background = runs_in_background(&below) || left_behind(&system, root, &tree, started);
         out.insert(*pane, AgentProcesses { found: true, memory, listening, background });
     }
     out
 }
 
-/// Whether something in the agent's terminal outlived the command that
-/// started it (`npm run build &`): no longer below the agent, but stopped
-/// along with its terminal.
+/// Whether something the agent started in its terminal outlived the command
+/// that started it (`npm run build &`): no longer below the agent, but
+/// stopped along with its terminal. Each terminal is its own session; what
+/// was there before the agent started (`started`, seconds) isn't its work.
+/// A process left behind is handed to process 1, or on Linux often to a
+/// helper outside the session.
 #[cfg(unix)]
-fn left_behind(system: &sysinfo::System, root: sysinfo::Pid, tree: &[sysinfo::Pid]) -> bool {
+fn left_behind(system: &sysinfo::System, root: sysinfo::Pid, tree: &[sysinfo::Pid], started: u64) -> bool {
     let session = |pid: sysinfo::Pid| system.process(pid).and_then(|process| process.session_id());
     let Some(own) = session(root) else {
         return false;
@@ -324,8 +336,12 @@ fn left_behind(system: &sysinfo::System, root: sysinfo::Pid, tree: &[sysinfo::Pi
         at = parent;
     }
     system.processes().iter().any(|(pid, process)| {
+        let orphan = process.parent().is_none_or(|parent| {
+            parent.as_u32() <= 1 || session(parent) != Some(own)
+        });
         process.thread_kind().is_none()
-            && process.parent().is_none_or(|parent| parent.as_u32() <= 1)
+            && orphan
+            && process.start_time() >= started
             && !tree.contains(pid)
             && !above.contains(pid)
             && process.session_id() == Some(own)
@@ -334,7 +350,7 @@ fn left_behind(system: &sysinfo::System, root: sysinfo::Pid, tree: &[sysinfo::Pi
 }
 
 #[cfg(not(unix))]
-fn left_behind(_: &sysinfo::System, _: sysinfo::Pid, _: &[sysinfo::Pid]) -> bool {
+fn left_behind(_: &sysinfo::System, _: sysinfo::Pid, _: &[sysinfo::Pid], _: u64) -> bool {
     false
 }
 
@@ -456,6 +472,16 @@ mod tests {
     }
 
     #[test]
+    fn an_agents_own_programs_are_recognised() {
+        assert!(is_agents_program("codex", "codex"));
+        assert!(is_agents_program("codex-code-mode-host", "codex"));
+        assert!(is_agents_program("claude.exe", "claude"));
+        assert!(!is_agents_program("codexer", "codex"), "only its own, dash-named");
+        assert!(!is_agents_program("cargo", "codex"));
+        assert!(!is_agents_program("anything", ""));
+    }
+
+    #[test]
     fn an_agents_own_helpers_are_not_background_work() {
         let all = vec![
             below(1, 0, "dragent", "", 0),
@@ -470,47 +496,98 @@ mod tests {
         assert!(!runs_in_background(&all));
     }
 
+    /// A fake agent, as Dragent runs one: in a terminal that is its own
+    /// session, the launch monitor running the agent program `script`.
+    /// Its stdin ends it.
+    #[cfg(unix)]
+    fn fake_agent(dir: &std::path::Path, pane: Uuid, script: &str) -> std::process::Child {
+        use std::os::unix::process::CommandExt;
+        std::fs::write(dir.join(pane.to_string()), script).unwrap();
+        let mut command = std::process::Command::new("/bin/bash");
+        command
+            .arg0(crate::agent_sessions::RUN_ARG)
+            .args([pane.to_string().as_str(), "--", "some-agent"])
+            .current_dir(dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null());
+        // SAFETY: only async-signal-safe setsid between fork and exec.
+        unsafe {
+            command.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        command.spawn().unwrap()
+    }
+
+    /// Waits up to a minute for the pane's background verdict.
+    #[cfg(unix)]
+    fn background_becomes(pane: Uuid, expected: bool) -> bool {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            let found = agent_processes(&[pane])[&pane];
+            if found.found && found.background == expected {
+                return true;
+            }
+            if std::time::Instant::now() > until {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
     /// The real scan, on a real process tree shaped like an agent's: the
-    /// launch monitor, the agent program, and a command it runs.
+    /// launch monitor, the agent program, and a command it runs. Something
+    /// unrelated left running elsewhere (other tests' services on a CI
+    /// machine) doesn't count.
     #[cfg(unix)]
     #[test]
     fn a_running_command_is_found_below_a_real_agent() {
-        use std::os::unix::process::CommandExt;
         let pane = Uuid::new_v4();
         let dir = std::env::temp_dir().join(format!("dragent-background-{pane}"));
         std::fs::create_dir_all(&dir).unwrap();
+        // Left running in this test run's session, not the agent's.
+        std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 90 >/dev/null 2>&1 &"])
+            .status()
+            .unwrap();
         // The command runs until the test says so: a slow machine takes
         // seconds over each look, which a fixed-length command could outlast.
-        let script = "/bin/bash -c '/bin/sh -c \"while [ ! -e finish ]; do sleep 0.1; done; true\"; read -r _; true'; true";
-        std::fs::write(dir.join(pane.to_string()), script).unwrap();
-        let mut child = std::process::Command::new("/bin/bash")
-            .arg0(crate::agent_sessions::RUN_ARG)
-            .args([pane.to_string().as_str(), "--", "some-agent"])
-            .current_dir(&dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .spawn()
-            .unwrap();
-        let wait_for = |expected: bool| {
-            let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
-            loop {
-                let found = agent_processes(&[pane])[&pane];
-                if found.found && found.background == expected {
-                    return true;
-                }
-                if std::time::Instant::now() > until {
-                    return false;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        };
-        let busy = wait_for(true);
+        let mut child = fake_agent(
+            &dir,
+            pane,
+            "/bin/bash -c '/bin/sh -c \"while [ ! -e finish ]; do sleep 0.1; done; true\"; read -r _; true'; true",
+        );
+        let busy = background_becomes(pane, true);
         std::fs::write(dir.join("finish"), b"").unwrap();
-        let quiet = wait_for(false);
+        let quiet = background_becomes(pane, false);
         drop(child.stdin.take());
         let _ = child.wait();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(busy, "the command counts while it runs");
+        assert!(quiet, "and not once it has finished");
+    }
+
+    /// `npm run build &`: the shell that started it is gone, the build runs
+    /// on in the agent's terminal.
+    #[cfg(unix)]
+    #[test]
+    fn a_command_left_running_in_the_agents_terminal_counts() {
+        let pane = Uuid::new_v4();
+        let dir = std::env::temp_dir().join(format!("dragent-left-behind-{pane}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut child = fake_agent(
+            &dir,
+            pane,
+            "/bin/bash -c '/bin/sh -c \"(while [ ! -e finish ]; do sleep 0.1; done) >/dev/null 2>&1 &\"; read -r _; true'; true",
+        );
+        let busy = background_becomes(pane, true);
+        std::fs::write(dir.join("finish"), b"").unwrap();
+        let quiet = background_becomes(pane, false);
+        drop(child.stdin.take());
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(busy, "the command left running counts");
         assert!(quiet, "and not once it has finished");
     }
 
