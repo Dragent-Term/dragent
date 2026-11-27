@@ -13,6 +13,7 @@ publish = false
 anyhow = { workspace = true }
 async-channel = { workspace = true }
 dragent_paths = { workspace = true }
+dunce = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
 

@@ -1707,7 +1707,7 @@ fn mint(
     crate::agent_accounts::configure(&mut process, account).ok()?;
     let mut child = process
         .args(command)
-        .current_dir(cwd)
+        .current_dir(dunce::simplified(cwd))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1823,6 +1823,9 @@ fn run(pane: Uuid, argv: Vec<String>) -> Result<i32, String> {
         used: resumed || prompted,
     };
     let mut command = Command::new(program(&record.executable));
+    // The canonical folder is `\\?\C:\…` on Windows, which cmd.exe (npm's
+    // `.cmd` shims) rejects for C:\Windows: the agent gets the plain form.
+    command.current_dir(dunce::simplified(&record.cwd));
     crate::agent_accounts::configure(&mut command, &account)?;
     {
         let _lock = lock(pane)?;

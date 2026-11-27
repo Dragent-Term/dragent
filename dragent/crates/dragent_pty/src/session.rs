@@ -254,7 +254,9 @@ pub fn spawn_interactive_with_args(
         cmd.env(key, value);
     }
     if let Some(cwd) = config.cwd {
-        cmd.cwd(cwd);
+        // Never a `\\?\C:\…` path: cmd.exe (npm's `.cmd` shims for codex,
+        // opencode, …) rejects it and falls back to C:\Windows.
+        cmd.cwd(dunce::simplified(&cwd));
     }
 
     let child = pair
@@ -327,7 +329,7 @@ fn execute_command_inner(command: &str, cwd: Option<PathBuf>) -> Result<CommandR
     cmd.arg(&wrapped);
     configure_shell_command(&mut cmd, &shell);
     if let Some(cwd) = cwd {
-        cmd.cwd(cwd);
+        cmd.cwd(dunce::simplified(&cwd));
     }
 
     let mut child = pair
