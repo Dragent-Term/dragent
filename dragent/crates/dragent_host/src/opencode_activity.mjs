@@ -5,9 +5,10 @@ export const DragentSession = async ({ client }) => {
   let selected = null;
   let last = null;
   let pending = Promise.resolve();
+  // Reports keep their order but are never awaited by the caller: OpenCode
+  // waits for a plugin's hooks, and launching the helper can take seconds.
   const enqueue = (fn) => {
     pending = pending.then(fn).catch(() => {});
-    return pending;
   };
   const isRoot = async (id) => {
     if (!id) return false;
@@ -59,8 +60,11 @@ export const DragentSession = async ({ client }) => {
     }),
     "chat.message": (input) => enqueue(() => report(input.sessionID, "UserPromptSubmit", input.sessionID !== selected)),
     "command.execute.before": (input) => enqueue(() => report(input.sessionID, "SessionStart", input.sessionID !== selected)),
-    "permission.ask": (input, output) => enqueue(async () => {
-      if (output.status === "ask") await report(input.sessionID || selected, "PermissionRequest");
-    }),
+    "permission.ask": (input, output) => {
+      // Read now: OpenCode settles the status after the hook returns.
+      if (output.status !== "ask") return;
+      const id = input.sessionID;
+      enqueue(() => report(id || selected, "PermissionRequest"));
+    },
   };
 };
