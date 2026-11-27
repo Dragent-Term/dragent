@@ -989,7 +989,7 @@ pub fn project_for(cwd: &Path, registry: &Registry) -> Option<PathBuf> {
     }
     let output = Command::new("git")
         .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .current_dir(cwd)
+        .current_dir(dunce::simplified(cwd))
         .stderr(std::process::Stdio::null())
         .output()
         .ok()?;

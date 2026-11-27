@@ -3494,6 +3494,7 @@ dependencies = [
  "async-channel",
  "dragent_paths",
  "dragent_shell_hooks",
+ "dunce",
  "libc",
  "log",
  "mio",

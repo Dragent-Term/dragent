@@ -26,6 +26,10 @@ pub const RUN_ARG: &str = "--dragent-agent-run";
 /// Holds a terminal's next command until memory allows its agent to start.
 pub const WAIT_ARG: &str = "--dragent-agent-wait";
 pub const HOOK_ARG: &str = "--dragent-agent-session-hook";
+/// How long an agent waits for a hook, in seconds. Generous: launching the
+/// helper can take several seconds on Windows (an unsigned binary scanned on
+/// every start), and an agent kills a hook that runs past its limit.
+pub const HOOK_TIMEOUT_SECS: u64 = 30;
 
 const STAGED_AGENT: &str = "custom-agent.json";
 /// The agent's last reply, kept for automation runs.
@@ -1383,7 +1387,7 @@ fn codex_capture_config(command: &str) -> Vec<String> {
     let matcher = "startup|resume|clear|compact|fork";
     let mut identity = serde_json::json!({
         "event_name":"session_start", "matcher":matcher,
-        "hooks":[{"type":"command", "command":command, "timeout":5, "async":false}]
+        "hooks":[{"type":"command", "command":command, "timeout":HOOK_TIMEOUT_SECS, "async":false}]
     });
     identity.sort_all_objects();
     let hash = Sha256::digest(serde_json::to_vec(&identity).unwrap());
@@ -1395,9 +1399,10 @@ fn codex_capture_config(command: &str) -> Vec<String> {
     let mut args = vec![
         "-c".into(),
         format!(
-            "hooks.SessionStart=[{{matcher={},hooks=[{{type=\"command\",command={},timeout=5}}]}}]",
+            "hooks.SessionStart=[{{matcher={},hooks=[{{type=\"command\",command={},timeout={timeout}}}]}}]",
             serde_json::to_string(matcher).unwrap(),
-            serde_json::to_string(command).unwrap()
+            serde_json::to_string(command).unwrap(),
+            timeout = HOOK_TIMEOUT_SECS
         ),
         "-c".into(),
         format!(
@@ -1417,7 +1422,7 @@ fn codex_capture_config(command: &str) -> Vec<String> {
     ] {
         let mut identity = serde_json::json!({
             "event_name":normalized, "matcher":null,
-            "hooks":[{"type":"command", "command":command, "timeout":5, "async":false}]
+            "hooks":[{"type":"command", "command":command, "timeout":HOOK_TIMEOUT_SECS, "async":false}]
         });
         identity.sort_all_objects();
         let hash = format!(
@@ -1428,8 +1433,9 @@ fn codex_capture_config(command: &str) -> Vec<String> {
         args.extend([
             "-c".into(),
             format!(
-                "hooks.{event}=[{{hooks=[{{type=\"command\",command={},timeout=5}}]}}]",
-                serde_json::to_string(command).unwrap()
+                "hooks.{event}=[{{hooks=[{{type=\"command\",command={},timeout={timeout}}}]}}]",
+                serde_json::to_string(command).unwrap(),
+                timeout = HOOK_TIMEOUT_SECS
             ),
             "-c".into(),
             format!(
@@ -1493,7 +1499,7 @@ fn install_capture(
                 r#"{"name":"dragent","version":"1.0.0"}"#,
             )
             .map_err(|e| e.to_string())?;
-            let entry = serde_json::json!([{"hooks":[{"type":"command","command":hook_command,"timeout":5}]}]);
+            let entry = serde_json::json!([{"hooks":[{"type":"command","command":hook_command,"timeout":HOOK_TIMEOUT_SECS}]}]);
             let hooks = serde_json::json!({"hooks":{"SessionStart":entry,"UserPromptSubmit":entry,"PreToolUse":entry,"PostToolUse":entry,"Stop":entry,"StopFailure":entry,"SessionEnd":entry,"PermissionRequest":entry}});
             fs::write(plugin.join("hooks/hooks.json"), hooks.to_string())
                 .map_err(|e| e.to_string())?;
@@ -1701,7 +1707,7 @@ fn mint(
     crate::agent_accounts::configure(&mut process, account).ok()?;
     let mut child = process
         .args(command)
-        .current_dir(cwd)
+        .current_dir(dunce::simplified(cwd))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1817,6 +1823,9 @@ fn run(pane: Uuid, argv: Vec<String>) -> Result<i32, String> {
         used: resumed || prompted,
     };
     let mut command = Command::new(program(&record.executable));
+    // The canonical folder is `\\?\C:\…` on Windows, which cmd.exe (npm's
+    // `.cmd` shims) rejects for C:\Windows: the agent gets the plain form.
+    command.current_dir(dunce::simplified(&record.cwd));
     crate::agent_accounts::configure(&mut command, &account)?;
     {
         let _lock = lock(pane)?;
@@ -2297,7 +2306,7 @@ mod tests {
         assert!(config[3].contains("hooks.state={"));
         assert!(config[3].contains("session_start:0:0"));
         assert!(config[3]
-            .contains("sha256:c2ea4c9baad70a65f6c7b3848b1b2f30af9b0afbfface5567b25a04e89013a25"));
+            .contains("sha256:eafbf405e333446b12621d13780049ef013f694548ffc2e98a411654935f45a9"));
         assert_ne!(config[3], codex_capture_config("changed recorder")[3]);
         assert!(!config.join(" ").contains("bypass-hook-trust"));
     }
