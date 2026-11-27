@@ -95,14 +95,24 @@ pub fn merge_hook(
             .or_insert_with(|| serde_json::json!([]))
             .as_array_mut()
             .ok_or("hook event is not a list")?;
-        let present = groups.iter().any(|group| {
-            group["hooks"]
-                .as_array()
-                .is_some_and(|hooks| hooks.iter().any(|hook| hook["command"] == command))
-        });
+        let timeout = crate::agent_sessions::HOOK_TIMEOUT_SECS;
+        let mut present = false;
+        for hook in groups
+            .iter_mut()
+            .filter_map(|group| group.get_mut("hooks")?.as_array_mut())
+            .flatten()
+            .filter(|hook| hook["command"] == command)
+        {
+            present = true;
+            // Entries written with an older, shorter limit time out on slow launches.
+            if hook["timeout"].as_u64().is_some_and(|t| t < timeout) {
+                hook["timeout"] = timeout.into();
+                changed = true;
+            }
+        }
         if !present {
             groups.push(serde_json::json!({
-                "hooks": [{"type": "command", "command": command, "timeout": 10}]
+                "hooks": [{"type": "command", "command": command, "timeout": timeout}]
             }));
             changed = true;
         }
@@ -353,6 +363,21 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_shorter_installed_timeout_is_raised_once() {
+        let old = format!(
+            r#"{{"hooks":{{"UserPromptSubmit":[{{"hooks":[{{"type":"command","command":"{COMMAND}","timeout":10}}]}}]}}}}"#
+        );
+        let merged = merge_hook(Some(&old), Some("hooks"), None, COMMAND)
+            .unwrap()
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        let prompt = value["hooks"]["UserPromptSubmit"].as_array().unwrap();
+        assert_eq!(prompt.len(), 1, "the entry is updated, not duplicated");
+        assert_eq!(prompt[0]["hooks"][0]["timeout"], crate::agent_sessions::HOOK_TIMEOUT_SECS);
+        assert!(merge_hook(Some(&merged), Some("hooks"), None, COMMAND).unwrap().is_none());
     }
 
     #[test]
