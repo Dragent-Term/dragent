@@ -397,11 +397,31 @@ try {
   if ($ReleaseProfile) { $hostArgs += "--release" }
   & cargo @hostArgs
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  $targetDir = Join-Path $DragentDir $(if ($ReleaseProfile) { "target\release" } else { "target\debug" })
-  try {
-    & (Join-Path $DragentDir "scripts\provision-conpty.ps1") -DestDir $targetDir
-  } catch {
-    Write-Warning "Could not provision the pinned ConPTY ($($_.Exception.Message)); terminals will use the in-box conhost."
+  # The ConPTY must match the app's architecture, which is the build target's
+  # (CARGO_BUILD_TARGET, else the pinned toolchain's host), not this shell's:
+  # an x64 PowerShell on Windows on ARM still builds an arm64 app.
+  $profileDir = if ($ReleaseProfile) { "release" } else { "debug" }
+  $triple = $env:CARGO_BUILD_TARGET
+  if ([string]::IsNullOrEmpty($triple)) {
+    $triple = ((& rustc -vV) | Select-String '^host:\s*(\S+)').Matches[0].Groups[1].Value
+    $targetDir = Join-Path $DragentDir "target\$profileDir"
+  } else {
+    $targetDir = Join-Path $DragentDir "target\$triple\$profileDir"
+  }
+  $conptyArch = switch -Wildcard ($triple) {
+    "aarch64-*" { "arm64" }
+    "x86_64-*" { "x64" }
+    "i686-*" { "x86" }
+    default { $null }
+  }
+  if (-not $conptyArch) {
+    Write-Warning "No pinned ConPTY for build target '$triple'; terminals will use the in-box conhost."
+  } else {
+    try {
+      & (Join-Path $DragentDir "scripts\provision-conpty.ps1") -DestDir $targetDir -Arch $conptyArch
+    } catch {
+      Write-Warning "Could not provision the pinned ConPTY ($($_.Exception.Message)); terminals will use the in-box conhost."
+    }
   }
   if ($AppArgs.Count -gt 0) {
     & cargo @cargoArgs -- @AppArgs
