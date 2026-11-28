@@ -127,6 +127,11 @@ Source: "{#ReleaseDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsour
 ; The console host conpty.dll runs terminals in. Without the pair, terminals
 ; use the in-box conhost, whose repaints make redrawn output flicker.
 Source: "{#ReleaseDir}\OpenConsole.exe"; DestDir: "{app}"; Flags: ignoreversion
+; License notices for Dragent and everything bundled with it (AGPL-3.0 and the
+; MIT/OFL/ISC/NCSA notice terms). Required: a build missing one fails here.
+Source: "{#ReleaseDir}\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleaseDir}\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleaseDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; Built-in agent skills (skill discovery reads {app}\skills), if staged.
 Source: "{#ReleaseDir}\skills\*"; DestDir: "{app}\skills"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
