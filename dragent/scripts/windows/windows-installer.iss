@@ -165,3 +165,29 @@ function IsUpdateMode: Boolean;
 begin
   Result := ExpandConstant('{param:update|0}') = '1';
 end;
+
+// Dragent's background services, agent helpers and console hosts have no
+// window, so Restart Manager can't close them and their files stay in use
+// ("Setup was unable to automatically close all applications"). The app asks
+// them to stop before an update; this stops whatever is left, and only the
+// copies running from this install folder.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  AppDir: String;
+  ResultCode: Integer;
+begin
+  Result := '';
+  AppDir := ExpandConstant('{app}');
+  if not DirExists(AppDir) then
+    exit;
+  // Inside a PowerShell single-quoted string, ' is written ''.
+  StringChangeEx(AppDir, '''', '''''', True);
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' +
+    '$d = ''' + AppDir + '\''; ' +
+    'Get-Process dragent, dragent-host, OpenConsole -ErrorAction SilentlyContinue | ' +
+    'Where-Object { $_.Path -and $_.Path.StartsWith($d, [StringComparison]::OrdinalIgnoreCase) } | ' +
+    'Stop-Process -Force -ErrorAction SilentlyContinue; ' +
+    'Start-Sleep -Milliseconds 500"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;

@@ -218,6 +218,50 @@ pub fn remove_manifest_if_daemon(org_dir: &Path, daemon_id: &str) -> bool {
     }
 }
 
+/// Before an installer replaces this edition's files on Windows: stop every
+/// organisation's host and terminal service, which run from those files and
+/// have no window for the installer to close. The host goes first and leaves
+/// the terminal service running, so nothing restarts it; the terminal
+/// service then records its running sessions as interrupted by the update
+/// (their panes resume them afterwards) and closes them. Best effort: the
+/// installer stops anything still running from its folder.
+#[cfg(windows)]
+pub fn stop_services_for_update() {
+    let home = dragent_paths::home();
+    let mut dirs = vec![home.clone()];
+    if let Ok(entries) = std::fs::read_dir(home.join("organisations")) {
+        dirs.extend(entries.flatten().map(|entry| entry.path()).filter(|path| path.is_dir()));
+    }
+    for dir in dirs {
+        let host = std::fs::read_to_string(dir.join(super::protocol::ENDPOINT_FILENAME))
+            .ok()
+            .and_then(|raw| serde_json::from_str::<super::protocol::ServiceEndpoint>(&raw).ok());
+        if let Some(host) = host {
+            match super::discovery::restart_for_update(&host) {
+                Ok(()) => {
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    while super::stale::process_may_be_alive(host.pid) && Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    if super::stale::service_may_be_alive(
+                        host.pid,
+                        host.started_at_unix_ms,
+                        super::protocol::SERVICE_ARG,
+                    ) {
+                        super::stale::terminate_outdated(host.pid, super::protocol::SERVICE_ARG);
+                    }
+                }
+                Err(error) => log::warn!("[update] host in {} didn't stop: {error}", dir.display()),
+            }
+        }
+        if let Some(pty) = read_manifest(&dir).filter(|manifest| hello(manifest).is_ok()) {
+            if !PtySupervisor::shutdown_daemon_for_update(&dir, &pty) {
+                log::warn!("[update] terminal service in {} didn't stop", dir.display());
+            }
+        }
+    }
+}
+
 /// Org dir: the endpoint file's parent (mirrors worktrees/agents).
 pub fn org_dir() -> PathBuf {
     super::discovery::endpoint_path()
@@ -684,6 +728,34 @@ impl PtySupervisor {
         if !self.exe.is_file() || self.build_id.is_empty() {
             return false;
         }
+        if !Self::shutdown_daemon_for_update(&self.org_dir, outdated) {
+            return false;
+        }
+        if let Some(mut old) = self
+            .inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .child
+            .take()
+        {
+            std::thread::spawn(move || {
+                let _ = old.wait();
+            });
+        }
+        emit(
+            log::Level::Info,
+            "daemon_restarted_for_update",
+            serde_json::json!({ "from_pid": outdated.pid }),
+        );
+        true
+    }
+
+    /// Stop `outdated`, the terminal service of `org_dir`, for an update: its
+    /// running sessions are recorded first as interrupted by the update, so
+    /// their panes resume them afterwards instead of treating them as ended.
+    /// True once the service has exited.
+    #[cfg(windows)]
+    pub fn shutdown_daemon_for_update(org_dir: &Path, outdated: &PtyDaemonManifest) -> bool {
         let conn = DaemonConn::from(outdated);
         let sessions = match conn.rpc_for_version(
             DaemonRequest::ListTerminals {
@@ -697,7 +769,7 @@ impl PtySupervisor {
                 return false;
             }
         };
-        let receipt = self.org_dir.join(UPDATE_SESSIONS_FILE);
+        let receipt = org_dir.join(UPDATE_SESSIONS_FILE);
         let previous = std::fs::read(&receipt).ok();
         let mut ids = previous
             .as_deref()
@@ -754,26 +826,7 @@ impl PtySupervisor {
             // Verify the service identity before stopping only its process.
             super::stale::terminate_outdated(outdated.pid, PTY_SERVICE_ARG);
         }
-        if super::stale::process_may_be_alive(outdated.pid) {
-            return false;
-        }
-        if let Some(mut old) = self
-            .inner
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .child
-            .take()
-        {
-            std::thread::spawn(move || {
-                let _ = old.wait();
-            });
-        }
-        emit(
-            log::Level::Info,
-            "daemon_restarted_for_update",
-            serde_json::json!({ "from_pid": outdated.pid }),
-        );
-        true
+        !super::stale::process_may_be_alive(outdated.pid)
     }
 
     /// Ask an outdated daemon to hand its sessions to a successor running

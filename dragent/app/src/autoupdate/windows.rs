@@ -85,6 +85,12 @@ pub fn apply_pending_on_startup() {
             return;
         }
     }
+    // The installer replaces files our background services run from, and it
+    // can't close them itself (they have no window): stop them first. Their
+    // terminal sessions are recorded as interrupted by the update, so panes
+    // resume their agents once the new version starts.
+    log::info!("[autoupdate] stopping background services before installing");
+    dragent_host::pty_supervisor::stop_services_for_update();
     let log_arg = format!(
         "/LOG={}",
         super::updates_dir().join("install.log").display()

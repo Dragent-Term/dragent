@@ -52,7 +52,13 @@ pub(crate) struct HostOwnedTab {
     /// An unused conversation was already replaced automatically in this
     /// app run; a second failure is shown to the user instead of looping.
     pub started_over: bool,
+    /// When a lost session was last replaced automatically. Another loss
+    /// within [`AUTO_RESTART_GAP`] is shown to the user instead of looping.
+    pub auto_restarted_at: Option<web_time::Instant>,
 }
+
+/// Shortest time between two automatic replacements of one pane's session.
+const AUTO_RESTART_GAP: Duration = Duration::from_secs(30);
 
 impl HostOwnedTab {
     pub(crate) fn persisted_session_id(&self) -> Option<&str> {
@@ -269,6 +275,7 @@ impl WorkspaceView {
                 pending_launch_command: None,
                 stream: None,
                 started_over: false,
+                auto_restarted_at: None,
             },
         );
 
@@ -737,6 +744,10 @@ impl WorkspaceView {
                 .host_owned_tabs
                 .get(&tab_id)
                 .is_some_and(|tab| tab.started_over);
+            let auto_restarted_at = self
+                .host_owned_tabs
+                .get(&tab_id)
+                .and_then(|tab| tab.auto_restarted_at);
             self.host_owned_tabs.insert(
                 tab_id,
                 HostOwnedTab {
@@ -758,6 +769,7 @@ impl WorkspaceView {
                     pending_launch_command: None,
                     stream: None,
                     started_over,
+                    auto_restarted_at,
                 },
             );
             let slot = reattach.slot.clone();
@@ -888,7 +900,7 @@ impl WorkspaceView {
                                 let notice = view.lost_session_notice(&pane, ctx);
                                 view.mark_host_unavailable(tab_id, &notice, ctx);
                                 if !view.start_over_if_unused(tab_id, ctx) {
-                                    view.start_missing_host_agent(tab_id, ctx);
+                                    view.auto_restart_lost_session(tab_id, false, ctx);
                                 }
                                 ctx.notify();
                                 return;
@@ -1183,34 +1195,57 @@ impl WorkspaceView {
         true
     }
 
-    /// An agent pane without a resumable conversation reopens the saved
-    /// agent command once. A failed exact resume keeps its recovery actions.
-    fn start_missing_host_agent(&mut self, tab_id: usize, ctx: &mut ViewContext<Self>) -> bool {
-        let Some(pane) = self
-            .host_owned_tabs
-            .get(&tab_id)
-            .filter(|owned| !owned.started_over && owned.session_id.is_none())
-            .map(|owned| owned.pane.clone())
-        else {
+    /// A pane whose session is gone never waits for the user: resume its
+    /// recorded agent conversation, else start its agent again, else open a
+    /// shell in its folder. `shell_only` after a failed resume, which would
+    /// only fail again. A plain terminal's last command is never re-run. At
+    /// most once per [`AUTO_RESTART_GAP`]: a session that keeps ending keeps
+    /// its notice and recovery actions instead of looping.
+    fn auto_restart_lost_session(
+        &mut self,
+        tab_id: usize,
+        shell_only: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(owned) = self.host_owned_tabs.get_mut(&tab_id) else {
             return false;
         };
+        if owned.session_id.is_some()
+            || owned
+                .auto_restarted_at
+                .is_some_and(|at| at.elapsed() < AUTO_RESTART_GAP)
+        {
+            return false;
+        }
+        owned.auto_restarted_at = Some(web_time::Instant::now());
+        let pane = owned.pane.clone();
+        #[cfg(not(target_family = "wasm"))]
+        let resume_failed = pane.read(ctx, |view, _| {
+            dragent_host::agent_sessions::load(view.pane_uuid).is_some_and(|r| r.resume_failed())
+        });
+        #[cfg(target_family = "wasm")]
+        let resume_failed = false;
+        let shell_only = shell_only || resume_failed;
         let plan = self.host_recovery_plan(&pane, ctx);
-        if plan.agent.is_none() || plan.resume.is_some() {
-            return false;
-        }
-        let Some(command) = plan.fresh else {
-            return false;
+        let (notice, command) = match (plan.resume, plan.fresh) {
+            (Some(resume), _) if !shell_only => (format!("Resuming {}…", plan.name), Some(resume)),
+            _ if shell_only => (
+                format!("Couldn't resume {}: started a new shell in its folder.", plan.name),
+                None,
+            ),
+            (_, Some(fresh)) if plan.agent.is_some() => {
+                (format!("Starting a new {} session…", plan.name), Some(fresh))
+            }
+            _ => (
+                "The previous terminal session ended: started a new shell.".to_string(),
+                None,
+            ),
         };
-        if let Some(owned) = self.host_owned_tabs.get_mut(&tab_id) {
-            owned.started_over = true;
-        }
-        log::info!("[host-tab] restarting agent without a saved conversation tab={tab_id}");
-        self.relaunch_in_pane(
-            tab_id,
-            Some(command),
-            format!("Starting {}…", plan.name),
-            ctx,
+        log::info!(
+            "[host-tab] session lost; replacing it automatically tab={tab_id} command={}",
+            command.is_some()
         );
+        self.relaunch_in_pane(tab_id, command, notice, ctx);
         true
     }
 
@@ -1358,7 +1393,11 @@ impl WorkspaceView {
                     "Unable to resume previous session. Check the error above, then retry or start a new session.",
                     ctx,
                 );
-                self.start_over_if_unused(tab_id, ctx);
+                if !self.start_over_if_unused(tab_id, ctx) {
+                    // Resuming again would fail the same way: a usable shell
+                    // in the pane's folder instead.
+                    self.auto_restart_lost_session(tab_id, true, ctx);
+                }
             }
             HostStreamMsg::RestoreFailed => self.mark_host_unavailable(
                 tab_id,
