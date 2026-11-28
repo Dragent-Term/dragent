@@ -185,8 +185,14 @@ pub fn supported(provider: &str) -> bool {
     matches!(provider, "claude" | "codex" | "opencode" | "mimo" | "gemini" | "qwen" | "copilot" | "cursor-agent")
 }
 
+/// `HOME`, else the account's home folder: Windows apps started from the
+/// Start menu or taskbar have no `HOME`, and without this fallback no
+/// transcript was found there.
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
 }
 
 /// The agent's own folder for this session: its account profile's, else the
@@ -215,9 +221,12 @@ pub(crate) fn data_home() -> Option<PathBuf> {
     std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| home().map(|h| h.join(".local").join("share")))
 }
 
-/// Claude Code's folder name for a working directory.
+/// Claude Code's folder name for a working directory. It names the folder
+/// after the plain path it runs in, so a canonical Windows path (`\\?\C:\…`)
+/// is read without its prefix.
 pub fn claude_project_folder(cwd: &Path) -> String {
-    cwd.to_string_lossy()
+    dunce::simplified(cwd)
+        .to_string_lossy()
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
@@ -904,7 +913,8 @@ fn latest_opencode_session(db: &Path, cwd: &Path) -> std::io::Result<Option<Stri
     let found: Vec<Session> = diesel::sql_query(
         "SELECT id FROM session WHERE directory = ? AND parent_id IS NULL ORDER BY time_updated DESC LIMIT 1",
     )
-    .bind::<Text, _>(cwd.to_string_lossy().to_string())
+    // OpenCode records the plain path it ran in, never `\\?\C:\…`.
+    .bind::<Text, _>(dunce::simplified(cwd).to_string_lossy().to_string())
     .load(&mut connection)
     .map_err(|e| unavailable(&e))?;
     Ok(found.into_iter().next().map(|s| s.id))
@@ -1266,6 +1276,34 @@ mod tests {
         let dir = claude_resume_dir(&file, Path::new(&cwd));
         eprintln!("file: {}\nrun in: {:?}", file.display(), dir);
         assert!(dir.is_some());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_canonical_windows_path_names_the_folder_claude_made() {
+        assert_eq!(
+            claude_project_folder(Path::new(r"\\?\C:\Users\me\dragent-clean\dragent")),
+            "C--Users-me-dragent-clean-dragent"
+        );
+        assert_eq!(
+            claude_project_folder(Path::new(r"C:\Users\me\dragent-clean\dragent")),
+            "C--Users-me-dragent-clean-dragent"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn transcripts_are_found_without_home() {
+        // Windows apps started from the Start menu have no HOME.
+        let saved = std::env::var_os("HOME");
+        // SAFETY: the only test in this module touching HOME on Windows.
+        unsafe { std::env::remove_var("HOME") };
+        let found = home();
+        if let Some(h) = saved {
+            unsafe { std::env::set_var("HOME", h) };
+        }
+        assert_eq!(found, dirs::home_dir());
+        assert!(found.is_some());
     }
 
     #[test]
