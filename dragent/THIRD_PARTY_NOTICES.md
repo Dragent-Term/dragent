@@ -29,7 +29,7 @@ code (licensed under the GNU Affero General Public License, version 3 only).
 | Third-party agent and application image assets (bundled artwork) | © 2026 General Action, Inc. | Apache-2.0 |
 | Lucide (UI icons) | © Lucide Contributors | ISC (portions MIT) |
 | Material icon theme (file-type SVGs) | © 2025 Material Extensions | MIT |
-| Microsoft Windows Terminal (assets/shaders) | © Microsoft Corporation | MIT |
+| Microsoft Windows Terminal (assets/shaders; ConPTY `conpty.dll` + `OpenConsole.exe`, Windows) | © Microsoft Corporation | MIT |
 | DirectX Shader Compiler / LLVM (Windows) | © LLVM contributors | NCSA |
 | Reachability (macOS network reachability, warpui) | © 2011 Tony Million | BSD-2-clause-style |
 | Rust crate dependencies | respective authors | predominantly MIT and/or Apache-2.0 |
@@ -256,7 +256,7 @@ limitations under the License.
 
 ## MIT License
 
-_Applies to: WarpUI (`warpui`, `warpui_core`), © Denver Technologies, Inc. (Warp); Antigravity Skill Vault, © 2026 Yudhi Armyndharis (ported content © 2024 Seth Hobson, see `skills/LICENSE`, `skills/ATTRIBUTION.md`, `skills/LICENSE-WSHOBSON-AGENTS`); Material icon theme file-type icons, © 2025 Material Extensions (see `app/assets/dragent/icons/LICENSE-MATERIAL-ICON-THEME`); Microsoft Windows Terminal assets, © Microsoft Corporation. Each retains its own copyright notice; the permission text is identical:_
+_Applies to: WarpUI (`warpui`, `warpui_core`), © Denver Technologies, Inc. (Warp); Antigravity Skill Vault, © 2026 Yudhi Armyndharis (ported content © 2024 Seth Hobson, see `skills/LICENSE`, `skills/ATTRIBUTION.md`, `skills/LICENSE-WSHOBSON-AGENTS`); Material icon theme file-type icons, © 2025 Material Extensions (see `app/assets/dragent/icons/LICENSE-MATERIAL-ICON-THEME`); Microsoft Windows Terminal assets and ConPTY, © Microsoft Corporation. Each retains its own copyright notice; the permission text is identical:_
 
 ```
 WarpUI (warpui, warpui_core)
