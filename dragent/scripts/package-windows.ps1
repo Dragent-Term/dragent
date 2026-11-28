@@ -92,6 +92,13 @@ foreach ($Legal in @("THIRD_PARTY_NOTICES.md", "NOTICE", "LICENSE")) {
 }
 Write-Host "Bundled legal notices (THIRD_PARTY_NOTICES.md, NOTICE, LICENSE)"
 
+# The pinned ConPTY (conpty.dll + OpenConsole.exe) beside dragent.exe, for the
+# target architecture. Without it terminals fall back to the in-box conhost,
+# whose repaints make spinners and redrawn output (e.g. `opencode console
+# login`) flicker and jump. Required: a failed download fails the package.
+& (Join-Path $PSScriptRoot "provision-conpty.ps1") -DestDir $Stage -Arch $Arch
+Remove-Item (Join-Path $Stage "conpty.version") -ErrorAction SilentlyContinue
+
 $DistDir = Join-Path $Root "dist"
 $Zip = Join-Path $DistDir "$AppName-$Version-windows-$Arch.zip"
 if (Test-Path $Zip) { Remove-Item $Zip }

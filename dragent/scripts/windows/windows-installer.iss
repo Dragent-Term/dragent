@@ -121,8 +121,12 @@ Source: "{#ReleaseDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; without the hooks that report working / review / failed, so neither status
 ; nor notifications work. Required: a build missing it fails here.
 Source: "{#ReleaseDir}\dragent-host.exe"; DestDir: "{app}"; Flags: ignoreversion
-; Any graphics-runtime DLLs shipped beside the exe (DirectX/Vulkan), if present.
+; DLLs shipped beside the exe: the pinned conpty.dll (always staged), and any
+; graphics-runtime DLLs (DirectX/Vulkan), if present.
 Source: "{#ReleaseDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; The console host conpty.dll runs terminals in. Without the pair, terminals
+; use the in-box conhost, whose repaints make redrawn output flicker.
+Source: "{#ReleaseDir}\OpenConsole.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Built-in agent skills (skill discovery reads {app}\skills), if staged.
 Source: "{#ReleaseDir}\skills\*"; DestDir: "{app}\skills"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 

@@ -390,6 +390,19 @@ if ($ReleaseProfile) {
 
 Push-Location $DragentDir
 try {
+  # What a release ships beside dragent.exe: dragent-host.exe (agents start
+  # without their hooks otherwise) and the pinned ConPTY (terminals fall back
+  # to the in-box conhost otherwise, whose repaints make output flicker).
+  $hostArgs = @("build", "-p", "dragent_host", "--bin", "dragent-host")
+  if ($ReleaseProfile) { $hostArgs += "--release" }
+  & cargo @hostArgs
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  $targetDir = Join-Path $DragentDir $(if ($ReleaseProfile) { "target\release" } else { "target\debug" })
+  try {
+    & (Join-Path $DragentDir "scripts\provision-conpty.ps1") -DestDir $targetDir
+  } catch {
+    Write-Warning "Could not provision the pinned ConPTY ($($_.Exception.Message)); terminals will use the in-box conhost."
+  }
   if ($AppArgs.Count -gt 0) {
     & cargo @cargoArgs -- @AppArgs
   } else {
