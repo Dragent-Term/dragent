@@ -338,6 +338,7 @@ impl WorkspaceView {
                 self.language_services_open = !self.language_services_open;
                 if self.language_services_open {
                     self.ports_open = false;
+                    self.watch_language_server_memory(ctx);
                 }
                 ctx.notify();
             }

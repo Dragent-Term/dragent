@@ -26,11 +26,22 @@ with command to launch a command in a new terminal beside your agent; never repl
 session or type a shell command into an agent's REPL. workspace_ and \
 agent_ tools create workspaces and follow the agents running in them. The computer_ tools read and control desktop apps through the enabled Computer use settings; snapshots include images and accessibility text.";
 
+const OUTSIDE_INSTRUCTIONS: &str = "Dragent's tools work only in agents started from Dragent. \
+Start this agent from Dragent to use them.";
+
 /// Serve until the agent closes stdin.
 pub fn serve() -> Result<(), String> {
     // Dragent's tools are for agents Dragent started: an entry someone put in
     // an agent's own settings gets nothing outside it.
     if !dragent_host::agent_skills::inside_dragent() {
+        // The entry the person allowed in an agent's own settings: started
+        // outside Dragent, that agent sees a server with no tools rather
+        // than one failing.
+        if std::env::var_os(super::agents::FROM_AGENT_SETTINGS_ENV).is_some() {
+            return dragent_host::mcp::serve_content(OUTSIDE_INSTRUCTIONS, Vec::new(), |_, _| {
+                Err(OUTSIDE_INSTRUCTIONS.into())
+            });
+        }
         return Err(
             "Dragent's tools work only in agents started from Dragent. Start the agent from Dragent to use them.".into(),
         );

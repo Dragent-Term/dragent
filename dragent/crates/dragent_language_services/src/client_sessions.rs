@@ -324,6 +324,14 @@ impl Worker {
             self.start_if_due(&key);
         }
 
+        // A server whose file is on screen is in use, typed in or not.
+        if let Some(Some((root, path))) = self.visible.clone() {
+            for (key, session) in self.sessions.iter_mut() {
+                if key.project_root == root && session.documents.contains_key(&path) {
+                    session.last_used = now;
+                }
+            }
+        }
         let idle = self
             .sessions
             .iter()
@@ -337,6 +345,33 @@ impl Worker {
             self.broker.stop(&key);
             self.sessions.remove(&key);
             self.emit(LanguageServiceEvent::Stopped(key));
+        }
+        // Files still open in tabs but none on screen: the server goes to sleep
+        // (a big project's server can hold gigabytes) and wakes when needed.
+        let watching = self.visible.is_some();
+        let unseen = self
+            .sessions
+            .iter()
+            .filter(|_| watching)
+            .filter_map(|(key, session)| {
+                // Only a started one: stopping one mid-start would lose it.
+                (matches!(session.status, SessionStatus::Ready)
+                    && now.saturating_duration_since(session.last_used) >= self.idle_timeout)
+                    .then(|| key.clone())
+            })
+            .collect::<Vec<_>>();
+        for key in unseen {
+            log::info!(
+                "[lsp-lifecycle] asleep server={} root={} (no file on screen)",
+                key.server_id,
+                key.project_root.display()
+            );
+            self.broker.stop(&key);
+            if let Some(session) = self.sessions.get_mut(&key) {
+                session.status = SessionStatus::Asleep;
+                session.documents.values_mut().for_each(|document| document.opened = false);
+            }
+            self.emit(LanguageServiceEvent::Asleep(key));
         }
     }
 

@@ -345,8 +345,9 @@ fn agent_access(model: &Model) -> Box<dyn Element> {
         Tone::Info,
         "Dragent's tools work only in agents you start from Dragent",
         Some(
-            "Each agent gets them when Dragent starts it, for that session only. Nothing is \
-             added to your agents' own settings, and the tools don't run anywhere else."
+            "Claude Code, Codex and OpenCode get them when Dragent starts them, for that session \
+             only. Cursor, Gemini and Qwen read tools only from their own settings, so they get \
+             them once you add Dragent there; started outside Dragent, they get no tools."
                 .into(),
         ),
         None,
@@ -362,21 +363,38 @@ fn agent_access(model: &Model) -> Box<dyn Element> {
     )];
     for agent in SyncAgent::ALL {
         let present = model.state.agents_present.contains(&agent);
-        // Only these take Dragent's tools at launch; the others would need
-        // their own settings changed, which Dragent doesn't do.
-        let at_launch = matches!(agent, SyncAgent::ClaudeCode | SyncAgent::Codex | SyncAgent::OpenCode);
-        let (detail, pill) = match present {
+        let at_launch = crate::integrations::agents::takes_tools_at_launch(agent);
+        let allowed = model.state.tools_allowed.contains(&agent);
+        let busy = model.state.tools_busy == Some(agent);
+        let idle = model.state.tools_busy.is_none();
+        let key = format!("agent-tools-{}", agent.key());
+        let (detail, trailing): (String, Vec<Box<dyn Element>>) = match present {
+            false => (
+                "Not found on this computer.".into(),
+                vec![mui::pill(theme, ui, "Not installed", Tone::Neutral)],
+            ),
             true if at_launch => (
-                "Gets Dragent's tools when you start it from Dragent.",
-                mui::pill(theme, ui, "In Dragent", Tone::Success),
+                "Gets Dragent's tools when you start it from Dragent.".into(),
+                vec![mui::pill(theme, ui, "In Dragent", Tone::Success)],
+            ),
+            true if allowed => (
+                format!("Dragent's entry is in {}'s settings; it has the tools when you start it from Dragent.", agent.label()),
+                vec![
+                    mui::pill(theme, ui, "In Dragent", Tone::Success),
+                    button(model, &key, None, if busy { "Removing…" } else { "Remove" }, Variant::Ghost, idle, I::RemoveAgentTools(agent)),
+                ],
             ),
             true => (
-                "Can't take Dragent's tools without changing its own settings, so it doesn't get them.",
-                mui::pill(theme, ui, "Not available", Tone::Neutral),
-            ),
-            false => (
-                "Not found on this computer.",
-                mui::pill(theme, ui, "Not installed", Tone::Neutral),
+                format!("Reads tools only from its own settings; add Dragent there to use them in {}.", agent.label()),
+                vec![button(
+                    model,
+                    &key,
+                    None,
+                    if busy { "Adding…" } else { "Add to settings" },
+                    Variant::Secondary,
+                    idle,
+                    I::AllowAgentTools(agent),
+                )],
             ),
         };
         rows.push(mui::list_row(
@@ -389,10 +407,16 @@ fn agent_access(model: &Model) -> Box<dyn Element> {
                 13.5,
                 if present { theme.main_text() } else { theme.sub_text() },
             ),
-            Some(detail.into()),
-            vec![pill],
+            Some(detail),
+            trailing,
         ));
     }
+    let problem = model.state.tools_error.clone().map(|error| {
+        mui::notice(theme, ui, Tone::Error, "An agent's settings couldn't be changed", Some(error), None)
+    });
+    let dev = dragent_paths::is_dev().then(|| {
+        mui::notice(theme, ui, Tone::Neutral, "Dev builds don't change other apps' settings.", None, None)
+    });
 
     let kept = if model.state.server {
         "Your connections stay on this computer, in its keychain, and requests go straight to the service. \
@@ -406,6 +430,8 @@ fn agent_access(model: &Model) -> Box<dyn Element> {
         .with_spacing(28.0)
         .with_child(switch)
         .with_child(group(model, "Agents", mui::list_card(theme, rows)))
+        .with_children(problem)
+        .with_children(dev)
         .with_child(mui::notice(
             theme,
             ui,

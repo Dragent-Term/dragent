@@ -333,6 +333,11 @@ impl LanguageServerBroker {
         true
     }
 
+    /// The running server's process id.
+    pub fn pid(&self, key: &LanguageServerKey) -> Option<u32> {
+        self.sessions.lock().ok()?.get(key).map(|session| session.child.id())
+    }
+
     pub fn running_count(&self) -> usize {
         self.sessions
             .lock()

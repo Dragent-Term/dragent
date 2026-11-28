@@ -139,10 +139,10 @@ impl WorkspaceView {
         }
         if self.language_services.is_none() {
             let config = LanguageServiceClientConfig {
-                // Trust is the security boundary for managed downloads. Once a
-                // workspace is trusted, acquire each applicable catalogued
-                // server automatically on every supported platform.
-                allow_managed_downloads: true,
+                // Installing a language server asks first: the panel opens
+                // with Install for one that isn't here yet (it can be large,
+                // and some hold gigabytes on a big project).
+                allow_managed_downloads: false,
                 catalog: self.language_server_catalog.clone(),
                 ..LanguageServiceClientConfig::default()
             };
@@ -174,6 +174,69 @@ impl WorkspaceView {
     }
 
     pub(crate) fn synchronize_language_document(&mut self, ctx: &mut ViewContext<Self>) {
+        self.synchronize_language_document_inner(ctx);
+        // Which file is on screen: servers for files out of sight sleep.
+        let visible = self
+            .active_language_document_metadata(ctx)
+            .map(|(project_root, relative_path, _)| (project_root, relative_path));
+        if self.language_visible_sent.as_ref() != Some(&visible) {
+            if let Some(client) = self.language_services.as_ref() {
+                if client.set_visible(visible.clone()).is_ok() {
+                    self.language_visible_sent = Some(visible);
+                }
+            }
+        }
+    }
+
+    /// While the Language Servers panel is open, what each running server
+    /// holds, every few seconds (measured off the main thread).
+    pub(crate) fn watch_language_server_memory(&mut self, ctx: &mut ViewContext<Self>) {
+        self.language_memory_epoch = self.language_memory_epoch.wrapping_add(1);
+        self.measure_language_server_memory(self.language_memory_epoch, ctx);
+    }
+
+    fn measure_language_server_memory(&mut self, epoch: u64, ctx: &mut ViewContext<Self>) {
+        if !self.language_services_open || self.language_memory_epoch != epoch {
+            return;
+        }
+        let root = self.document_owner_root.clone();
+        let servers: Vec<(String, u32)> = self
+            .language_server_pids
+            .iter()
+            .filter(|(key, _)| root.as_ref() == Some(&key.project_root))
+            .map(|(key, pid)| (key.server_id.clone(), *pid))
+            .collect();
+        let (tx, rx) = futures::channel::oneshot::channel();
+        crate::bg::detach(move || {
+            let pids: Vec<u32> = servers.iter().map(|(_, pid)| *pid).collect();
+            let bytes = dragent_host::agent_memory::trees_bytes(&pids);
+            let measured: Vec<(String, u64)> = servers
+                .into_iter()
+                .filter_map(|(server, pid)| Some((server, *bytes.get(&pid)?)))
+                .collect();
+            let _ = tx.send(measured);
+        });
+        ctx.spawn(rx, move |view, measured, ctx| {
+            if view.language_memory_epoch != epoch {
+                return;
+            }
+            let measured = measured.unwrap_or_default();
+            for snapshot in view.language_service_status.iter_mut() {
+                snapshot.memory = measured
+                    .iter()
+                    .find(|(server, _)| *server == snapshot.server_id)
+                    .map(|(_, bytes)| *bytes)
+                    .filter(|_| snapshot.state == super::language_services_tray::ServiceState::Ready);
+            }
+            ctx.notify();
+            ctx.spawn(
+                warpui::r#async::Timer::after(std::time::Duration::from_secs(3)),
+                move |view, _, ctx| view.measure_language_server_memory(epoch, ctx),
+            );
+        });
+    }
+
+    fn synchronize_language_document_inner(&mut self, ctx: &mut ViewContext<Self>) {
         let metadata = self.active_language_document_metadata(ctx);
         if let Some((_, relative_path, _)) = metadata.as_ref() {
             let language_server_allowed = self
@@ -210,6 +273,7 @@ impl WorkspaceView {
                                 detail: "Available".to_string(),
                                 state: super::language_services_tray::ServiceState::Available,
                                 installable: server.install.is_some(),
+                                memory: None,
                             },
                         );
                     }
@@ -262,6 +326,7 @@ impl WorkspaceView {
                     .to_string(),
                     state: super::language_services_tray::ServiceState::Available,
                     installable: server.install.is_some(),
+                    memory: None,
                 })
                 .collect();
             // Render the catalog immediately, even while execution is blocked
@@ -1090,7 +1155,7 @@ impl WorkspaceView {
                     install_required.push(key.clone());
                     updates.push((
                         key,
-                        "Download required".to_string(),
+                        "Not installed".to_string(),
                         super::language_services_tray::ServiceState::Unavailable,
                     ));
                 }
@@ -1154,7 +1219,27 @@ impl WorkspaceView {
                         super::language_services_tray::ServiceState::Ready,
                     ));
                 }
+                LanguageServiceEvent::Asleep(key) => {
+                    log::info!(
+                        "[lsp] asleep server={} root={} (no file on screen)",
+                        key.server_id,
+                        key.project_root.display()
+                    );
+                    self.language_server_pids.remove(&key);
+                    self.language_navigation_capabilities.remove(&key);
+                    self.language_file_rename_servers.remove(&key);
+                    self.refresh_editor_navigation_capabilities(ctx);
+                    updates.push((
+                        key,
+                        "Asleep · wakes when you open its files".to_string(),
+                        super::language_services_tray::ServiceState::Stopped,
+                    ));
+                }
+                LanguageServiceEvent::Process { key, pid } => {
+                    self.language_server_pids.insert(key, pid);
+                }
                 LanguageServiceEvent::Stopped(key) => {
+                    self.language_server_pids.remove(&key);
                     log::debug!(
                         "[lsp] stopped server={} root={}",
                         key.server_id,
@@ -1191,6 +1276,7 @@ impl WorkspaceView {
                     ));
                 }
                 LanguageServiceEvent::Failed { key, reason } => {
+                    self.language_server_pids.remove(&key);
                     log::warn!(
                         "[lsp] unavailable server={} root={} reason={}",
                         key.server_id,
@@ -1281,6 +1367,7 @@ impl WorkspaceView {
             if is_current_root && self.language_service_install_prompts.insert(key) {
                 self.language_services_open = true;
                 self.ports_open = false;
+                self.watch_language_server_memory(ctx);
             }
         }
         if !updates.is_empty() {
@@ -1304,6 +1391,9 @@ impl WorkspaceView {
                 {
                     snapshot.detail = detail;
                     snapshot.state = state;
+                    if state != super::language_services_tray::ServiceState::Ready {
+                        snapshot.memory = None;
+                    }
                 } else {
                     self.language_service_status.push(
                         super::language_services_tray::ServiceSnapshot {
@@ -1315,6 +1405,7 @@ impl WorkspaceView {
                                 .language_server_catalog
                                 .server(&key.server_id)
                                 .is_some_and(|server| server.install.is_some()),
+                            memory: None,
                         },
                     );
                 }

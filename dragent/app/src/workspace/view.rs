@@ -950,6 +950,12 @@ pub struct WorkspaceView {
     /// Missing servers whose automatic install prompt has already been shown.
     /// This avoids reopening the tray after a user deliberately dismisses it.
     pub(crate) language_service_install_prompts: HashSet<LanguageServerKey>,
+    /// Each running language server's process, for its memory in the panel.
+    pub(crate) language_server_pids: HashMap<LanguageServerKey, u32>,
+    /// The file last told to the language services as on screen.
+    pub(crate) language_visible_sent: Option<Option<(PathBuf, PathBuf)>>,
+    /// Bumped to stop an earlier memory watch when the panel closes.
+    pub(crate) language_memory_epoch: u64,
     pub(crate) language_services_enabled: bool,
     pub(crate) language_sync_epoch: u64,
     pub(crate) language_event_subscription_epoch: u64,

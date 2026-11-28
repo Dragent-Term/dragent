@@ -73,7 +73,7 @@ mod host_tabs;
 mod ide_chrome;
 mod input_editor;
 mod language_nav;
-mod language_services_tray;
+pub(crate) mod language_services_tray;
 mod left_panel;
 pub mod multi_diff_editor;
 mod org_menu;

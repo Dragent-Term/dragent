@@ -26,6 +26,8 @@ pub struct ServiceSnapshot {
     pub detail: String,
     pub state: ServiceState,
     pub installable: bool,
+    /// What its process holds now, while the panel is open.
+    pub memory: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,7 +261,7 @@ fn service_row(
             },
         )),
         ServiceState::Unavailable if service.installable => Some((
-            "Download",
+            "Install",
             WorkspaceAction::InstallLanguageServer {
                 server_id: service.server_id.clone(),
             },
@@ -310,7 +312,7 @@ fn service_row(
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_spacing(8.0)
         .with_child(dot)
-        .with_child(
+        .with_child(Expanded::new(1.0,
             Flex::column()
                 .with_spacing(2.0)
                 .with_child(
@@ -320,7 +322,10 @@ fn service_row(
                 )
                 .with_child(
                     Text::new(
-                        format!("{} · {}", service.server_id, service.detail),
+                        match service.memory {
+                            Some(bytes) => format!("{} · {} · {}", service.server_id, service.detail, memory_label(bytes)),
+                            None => format!("{} · {}", service.server_id, service.detail),
+                        },
                         mono,
                         crate::theme::text_size(9.0),
                     )
@@ -328,8 +333,7 @@ fn service_row(
                     .finish(),
                 )
                 .finish(),
-        )
-        .with_child(Expanded::new(1.0, Empty::new().finish()).finish());
+        ).finish());
     if let Some((action_label, action)) = action {
         row = row.with_child(text_action(
             &format!("language_server_restart_{server_id}"),
@@ -357,6 +361,17 @@ fn service_row(
         .with_border(Border::all(1.0).with_border_color(theme.outline()))
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(7.0)))
         .finish()
+}
+
+/// "380 MB", "9.2 GB".
+pub(crate) fn memory_label(bytes: u64) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    let mb = bytes as f64 / MB;
+    if mb >= 1024.0 {
+        format!("{:.1} GB", mb / 1024.0)
+    } else {
+        format!("{} MB", mb.round() as u64)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -436,7 +451,14 @@ mod tests {
             detail: String::new(),
             state,
             installable: false,
+            memory: None,
         }
+    }
+
+    #[test]
+    fn memory_reads_in_megabytes_then_gigabytes() {
+        assert_eq!(memory_label(380 * 1024 * 1024), "380 MB");
+        assert_eq!(memory_label(9_473 * 1024 * 1024), "9.3 GB");
     }
 
     #[test]

@@ -41,6 +41,10 @@ pub(crate) enum SessionStatus {
         retry_at: Instant,
     },
     Failed,
+    /// Stopped because none of its files was on screen for the idle timeout
+    /// (a person's Stop is `Failed`, and stays stopped). Wakes when one of
+    /// its files is shown, opened or asked about.
+    Asleep,
 }
 
 #[derive(Debug)]
@@ -80,6 +84,9 @@ pub(crate) struct Worker {
     pub(crate) allow_managed_downloads: bool,
     pub(crate) pending_requests: HashMap<(LanguageServerKey, u64), PendingRequest>,
     pub(crate) queued_requests: Vec<QueuedRequest>,
+    /// The file on screen, once the client says (`Some(None)`: none is): its
+    /// servers stay awake. Until it says, no server is put to sleep.
+    pub(crate) visible: Option<Option<(PathBuf, PathBuf)>>,
 }
 impl Worker {
     pub(crate) fn new(
@@ -104,6 +111,7 @@ impl Worker {
             allow_managed_downloads: config.allow_managed_downloads,
             pending_requests: HashMap::new(),
             queued_requests: Vec::new(),
+            visible: None,
         }
     }
 
@@ -144,6 +152,12 @@ impl Worker {
                 server_id,
             } => self.start_server(document, server_id),
             Command::StopServer(server_id) => self.stop_server(&server_id),
+            Command::Visible(document) => {
+                if let Some((project_root, relative_path)) = &document {
+                    self.wake(project_root, relative_path);
+                }
+                self.visible = Some(document);
+            }
             Command::InstallServer {
                 project_root,
                 server_id,

@@ -44,6 +44,8 @@ impl Worker {
             });
             return;
         }
+        // A server asleep for this file starts again; the request waits for it.
+        self.wake(&project_root, &relative_path);
         let mut keys = self
             .sessions
             .iter()
@@ -495,6 +497,7 @@ impl Worker {
         {
             // `ensure` is idempotent. Re-selecting an already-open editor tab
             // must not reset its version or send a second didOpen.
+            self.wake(&document.project_root, &document.relative_path);
             self.change_for_server(key.clone(), document);
             self.start_if_due(&key);
             return;
@@ -523,7 +526,7 @@ impl Worker {
         );
         if matches!(state.status, SessionStatus::Ready) {
             self.send_open(&key, &document.relative_path);
-        } else if matches!(state.status, SessionStatus::Failed) {
+        } else if matches!(state.status, SessionStatus::Failed | SessionStatus::Asleep) {
             state.restart_attempts = 0;
             state.status = SessionStatus::Backoff {
                 retry_at: Instant::now(),
@@ -533,6 +536,8 @@ impl Worker {
     }
 
     pub(crate) fn change(&mut self, document: SyncedDocument) {
+        // An edit is use: a server asleep for this file starts again.
+        self.wake(&document.project_root, &document.relative_path);
         let mut keys = self.document_keys(&document);
         for key in self.sessions.keys() {
             if key.project_root == document.project_root
@@ -668,6 +673,33 @@ impl Worker {
         }
     }
 
+    /// Start again the servers asleep for this file (see [`SessionStatus::Asleep`]),
+    /// and count it as used.
+    pub(crate) fn wake(&mut self, project_root: &std::path::Path, relative_path: &std::path::Path) {
+        let keys = self
+            .sessions
+            .iter()
+            .filter(|(key, session)| {
+                key.project_root == project_root && session.documents.contains_key(relative_path)
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for key in keys {
+            let Some(session) = self.sessions.get_mut(&key) else { continue };
+            session.last_used = Instant::now();
+            if matches!(session.status, SessionStatus::Asleep) {
+                log::info!(
+                    "[lsp-lifecycle] waking server={} root={}",
+                    key.server_id,
+                    key.project_root.display()
+                );
+                session.restart_attempts = 0;
+                session.status = SessionStatus::Backoff { retry_at: Instant::now() };
+                self.start_if_due(&key);
+            }
+        }
+    }
+
     pub(crate) fn start_if_due(&mut self, key: &LanguageServerKey) {
         let due = self
             .sessions
@@ -705,6 +737,9 @@ impl Worker {
                 .send_request(key, "initialize", protocol::initialize_params(key))
         }) {
             Ok(initialize_id) => {
+                if let Some(pid) = self.broker.pid(key) {
+                    self.emit(LanguageServiceEvent::Process { key: key.clone(), pid });
+                }
                 let started_at = Instant::now();
                 if let Some(session) = self.sessions.get_mut(key) {
                     session.status = SessionStatus::Starting {

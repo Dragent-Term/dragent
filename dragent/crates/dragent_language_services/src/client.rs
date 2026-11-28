@@ -224,6 +224,88 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_server_sleeps_while_none_of_its_files_is_on_screen_and_wakes_for_one() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!("dragent-lsp-sleep-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn value() {}\n").unwrap();
+        let server = root.join("fake-rust-analyzer.sh");
+        std::fs::write(
+            &server,
+            r#"#!/bin/sh
+IFS= read -r header || exit 1
+while IFS= read -r line; do
+  [ "$line" = "$(printf '\r')" ] && break
+done
+body='{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1}}}'
+printf 'Content-Length: %s\r\n\r\n%s' "${#body}" "$body"
+cat > /dev/null
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&server).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&server, permissions).unwrap();
+        let mut overrides = HashMap::new();
+        overrides.insert("rust-analyzer".to_string(), server);
+        let client = LanguageServiceClient::start(LanguageServiceClientConfig {
+            max_servers: 1,
+            idle_timeout: Duration::from_millis(700),
+            executable_overrides: overrides,
+            allow_managed_downloads: false,
+            catalog: Arc::new(LanguageServerCatalog::built_in()),
+            initialize_timeout: Duration::from_secs(5),
+        })
+        .unwrap();
+        let file = (root.clone(), PathBuf::from("src/lib.rs"));
+        client
+            .open(SyncedDocument {
+                project_root: root.clone(),
+                relative_path: file.1.clone(),
+                text: "pub fn value() {}\n".to_string(),
+            })
+            .unwrap();
+        client.set_visible(Some(file.clone())).unwrap();
+        // Waits for one of `wanted`, answering what came (or None).
+        let wait = |wanted: &dyn Fn(&LanguageServiceEvent) -> bool, for_: Duration| {
+            let deadline = Instant::now() + for_;
+            while Instant::now() < deadline {
+                match client.try_recv() {
+                    Some(event) if wanted(&event) => return Some(event),
+                    Some(_) => {}
+                    None => std::thread::sleep(Duration::from_millis(10)),
+                }
+            }
+            None
+        };
+        let pid = wait(&|e| matches!(e, LanguageServiceEvent::Process { .. }), Duration::from_secs(8));
+        assert!(matches!(pid, Some(LanguageServiceEvent::Process { pid, .. }) if pid > 0), "no process id");
+        assert!(wait(&|e| matches!(e, LanguageServiceEvent::Ready { .. }), Duration::from_secs(8)).is_some());
+        // On screen: stays awake well past the idle time.
+        assert!(
+            wait(&|e| matches!(e, LanguageServiceEvent::Asleep(_)), Duration::from_millis(2000)).is_none(),
+            "a server whose file is on screen went to sleep"
+        );
+        // Another file on screen (none of this server's): it sleeps.
+        client.set_visible(None).unwrap();
+        assert!(
+            wait(&|e| matches!(e, LanguageServiceEvent::Asleep(_)), Duration::from_secs(5)).is_some(),
+            "a server with no file on screen kept running"
+        );
+        // Its file is shown again: it starts by itself.
+        client.set_visible(Some(file)).unwrap();
+        assert!(
+            wait(&|e| matches!(e, LanguageServiceEvent::Ready { .. }), Duration::from_secs(8)).is_some(),
+            "a sleeping server didn't wake for its file"
+        );
+        client.shutdown();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn completes_initialize_handshake_with_a_server_process() {
         use std::os::unix::fs::PermissionsExt;
 

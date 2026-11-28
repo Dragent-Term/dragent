@@ -77,6 +77,8 @@ impl View for InputEditor {
     fn render(&self, ctx: &warpui::AppContext) -> Box<dyn Element> {
         let is_multiline = matches!(self.mode, InputMode::MultiLine { .. });
         let is_review_instructions = matches!(&self.mode,InputMode::MultiLine{key,..} if key=="review_instructions" || key=="preview_review");
+        // A chat box: Enter sends (the parent catches it), Shift+Enter is a new line.
+        let enter_sends = matches!(&self.mode, InputMode::MultiLine { key, .. } if key == "team_message");
         let is_source_editor = self.is_source_editor();
         let mut row = Flex::row()
             // A source editor is a viewport, not an intrinsically-sized input.
@@ -422,7 +424,8 @@ impl View for InputEditor {
                         return DispatchEventResult::PropagateToParent;
                     }
                     if keystroke.key == "escape" || (keystroke.key == "tab" && !is_source_editor)
-                        || (is_review_instructions && keystroke.key=="enter" && (keystroke.cmd || keystroke.ctrl)) {
+                        || (is_review_instructions && keystroke.key=="enter" && (keystroke.cmd || keystroke.ctrl))
+                        || (enter_sends && keystroke.key == "enter" && !keystroke.shift && !keystroke.alt) {
                         return DispatchEventResult::PropagateToParent;
                     }
                     // enter (with or without shift) → insert newline handled in handle_keydown

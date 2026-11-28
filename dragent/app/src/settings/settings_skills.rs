@@ -72,6 +72,7 @@ impl SettingsView {
             Some(rest) => format!("~/{}", rest.display()),
             None => path.display().to_string(),
         };
+        let mut confirm = "Install";
         let (title, intro, paths, after) = match change {
             AgentChange::InstallSkill { name, agents, writes, kept } => {
                 let names = agents.iter().map(|agent| agent.label()).collect::<Vec<_>>().join(", ");
@@ -87,6 +88,19 @@ impl SettingsView {
                             kept.iter().map(|path| shown(path)).collect::<Vec<_>>().join(", ")
                         )
                     },
+                )
+            }
+            AgentChange::AllowTools { agent, file } => {
+                confirm = "Add";
+                let name = agent.label();
+                (
+                    format!("Add Dragent's tools to {name}?"),
+                    format!("{name} reads its tools only from its own settings, so Dragent will add one entry named \u{201c}dragent\u{201d} to this file:"),
+                    vec![shown(file)],
+                    format!(
+                        "{name} then has Dragent's tools when you start it from Dragent{}. Started anywhere else, the entry offers no tools. Remove takes it out again; a server of your own named \u{201c}dragent\u{201d} is never changed.",
+                        if *agent == crate::agent::mcp_agent_sync::SyncAgent::Cursor { " (Cursor asks you to approve it the first time)" } else { "" }
+                    ),
                 )
             }
         };
@@ -123,7 +137,7 @@ impl SettingsView {
                         .with_main_axis_alignment(MainAxisAlignment::End)
                         .with_spacing(8.0)
                         .with_child(secondary_button(theme, self.ui_font, self.view_id, self.hover("agent-change-cancel"), "Cancel", SettingsAction::CancelAgentChange))
-                        .with_child(primary_button(theme, self.ui_font, self.view_id, self.hover("agent-change-confirm"), "Install", SettingsAction::ConfirmAgentChange))
+                        .with_child(primary_button(theme, self.ui_font, self.view_id, self.hover("agent-change-confirm"), confirm, SettingsAction::ConfirmAgentChange))
                         .finish(),
                 )
                 .finish(),

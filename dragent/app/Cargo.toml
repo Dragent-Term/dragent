@@ -1,6 +1,6 @@
 [package]
 name = "dragent"
-version = "0.2.9-rc.11"
+version = "0.2.9-rc.12"
 edition = "2021"
 description = "Dragent — self-healing terminal application"
 license.workspace = true

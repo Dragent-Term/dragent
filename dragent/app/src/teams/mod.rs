@@ -94,6 +94,8 @@ pub enum TeamsAction {
     ToggleModelFavorite(crate::settings::AgentModelFavorite),
     /// Start another agent as lead, the last one having stopped.
     StartNewLead,
+    /// "Carry on" on the lead's waiting card: close it, sending nothing.
+    DismissLeadWaiting,
     AskCleanUp,
     CancelCleanUp,
     ConfirmCleanUp,
@@ -247,6 +249,12 @@ pub struct TeamsView {
     pub(crate) voice_ui: crate::voice::VoiceUiState,
     voice_gen: u64,
     pub(crate) voice_spin: usize,
+    /// "Start a new lead" was pressed: when, while the new lead comes up.
+    pub(crate) starting_lead: Option<std::time::Instant>,
+    /// The lead's waiting card closed with "Carry on": the team, and when the
+    /// lead said what it showed (a newer word from the lead shows again).
+    pub(crate) dismissed_waiting: Option<(String, u64)>,
+    pub(crate) lead_spin: usize,
     voice_fold: crate::voice::fold::VoiceFold,
     voice_pending: Option<String>,
     /// What dictation has to say (heard words awaiting a confirm, a failure).
@@ -374,6 +382,9 @@ impl TeamsView {
             voice_ui: crate::voice::VoiceUiState::Idle,
             voice_gen: 0,
             voice_spin: 0,
+            starting_lead: None,
+            dismissed_waiting: None,
+            lead_spin: 0,
             voice_fold: Default::default(),
             voice_pending: None,
             voice_notice: None,
@@ -554,6 +565,22 @@ impl TeamsView {
             }
         }
         ctx.notify();
+    }
+
+    /// Turn the new lead's loader until the lead runs, or give the button
+    /// back after a while (a start that failed says so in its own notice).
+    fn tick_lead_spinner(&mut self, ctx: &mut ViewContext<Self>) {
+        ctx.spawn(Timer::after(std::time::Duration::from_millis(80)), move |view, _, ctx| {
+            let Some(started) = view.starting_lead else { return };
+            let running = view.lead.state.is_some() || view.lead.asleep.is_some();
+            if running || started.elapsed() > std::time::Duration::from_secs(30) {
+                view.starting_lead = None;
+            } else {
+                view.lead_spin = (view.lead_spin + 1) % crate::icons::SPINNER_FRAMES;
+                view.tick_lead_spinner(ctx);
+            }
+            ctx.notify();
+        });
     }
 
     fn tick_voice_spinner(&mut self, generation: u64, ctx: &mut ViewContext<Self>) {
@@ -1318,6 +1345,8 @@ impl TypedActionView for TeamsView {
                 if self.selected.as_ref() != Some(id) {
                     self.selected = Some(id.clone());
                     self.sending = false;
+                    // Another team's loader isn't this one's.
+                    self.starting_lead = None;
                     self.team = None;
                     self.workers.clear();
                     self.detail_scroll = ClippedScrollStateHandle::new();
@@ -1458,15 +1487,31 @@ impl TypedActionView for TeamsView {
                     );
                 }
             }
+            TeamsAction::DismissLeadWaiting => {
+                if let (Some(team), Some(at)) = (&self.team, self.replies.lead_at) {
+                    self.dismissed_waiting = Some((team.id.clone(), at));
+                }
+            }
             TeamsAction::StartNewLead => {
+                if self.starting_lead.is_some() {
+                    return;
+                }
                 if let Some(team) = &self.team {
                     let plan = new_lead_plan(team, self.lead.cwd.clone());
-                    ctx.emit(TeamsEvent::NewLead {
+                    let event = TeamsEvent::NewLead {
                         team: team.id.clone(),
                         agent: plan.agent,
                         model: plan.model,
                         cwd: plan.cwd,
                         prompt: plan.prompt,
+                    };
+                    // Show the loader first: starting the lead's terminal can
+                    // hold the window for a moment, so it starts a frame later.
+                    self.starting_lead = Some(std::time::Instant::now());
+                    self.lead_spin = 0;
+                    self.tick_lead_spinner(ctx);
+                    ctx.spawn(Timer::after(std::time::Duration::from_millis(40)), move |_, _, ctx| {
+                        ctx.emit(event);
                     });
                 }
             }

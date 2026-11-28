@@ -1866,4 +1866,9 @@ pub(crate) enum AgentChange {
         writes: Vec<std::path::PathBuf>,
         kept: Vec<std::path::PathBuf>,
     },
+    /// Dragent's tools entry into an agent's own MCP settings file.
+    AllowTools {
+        agent: crate::agent::mcp_agent_sync::SyncAgent,
+        file: std::path::PathBuf,
+    },
 }

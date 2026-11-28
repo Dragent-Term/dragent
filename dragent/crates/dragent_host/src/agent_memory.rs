@@ -133,6 +133,20 @@ pub fn tree_bytes(system: &System, root: Pid) -> u64 {
         .sum()
 }
 
+/// What each of `roots` and everything below it holds, by root, from one
+/// look at the processes (language servers start helpers of their own).
+pub fn trees_bytes(roots: &[u32]) -> HashMap<u32, u64> {
+    if roots.is_empty() {
+        return HashMap::new();
+    }
+    let system = processes();
+    roots
+        .iter()
+        .filter(|root| system.process(Pid::from_u32(**root)).is_some())
+        .map(|root| (*root, tree_bytes(&system, Pid::from_u32(*root))))
+        .collect()
+}
+
 /// What a process holds, including what the system compressed or swapped out
 /// (a runaway's memory is the first to go there). `resident` where that
 /// can't be read.
@@ -553,6 +567,15 @@ mod platform {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn a_running_process_and_its_children_are_measured_and_a_gone_one_is_left_out() {
+        let me = std::process::id();
+        let measured = trees_bytes(&[me, u32::MAX - 7]);
+        assert!(measured.get(&me).is_some_and(|bytes| *bytes > 1024 * 1024), "{measured:?}");
+        assert!(!measured.contains_key(&(u32::MAX - 7)));
+        assert!(trees_bytes(&[]).is_empty());
+    }
 
     /// A session record for `pane` under `sessions_dir`.
     pub(crate) fn write_session(sessions_dir: &Path, pane: Uuid, active: bool) {

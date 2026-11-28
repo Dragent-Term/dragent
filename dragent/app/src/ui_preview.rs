@@ -48,6 +48,7 @@ enum Scene {
     },
     /// The current sidebar, for the marketing site's Codex clip.
     MarketingSidebar,
+    LanguageServers,
     HoverCard {
         dark: bool,
     },
@@ -104,6 +105,7 @@ enum Scene {
     TeamsScrolled,
     TeamsNarrow,
     TeamsLeadStopped,
+    TeamsLeadStarting,
     TeamsNoPlan,
     TeamsFinished,
     TeamsDelete,
@@ -138,6 +140,7 @@ const SCENES: &[(&str, Scene)] = &[
         Scene::WorkspaceActivity { dark: false },
     ),
     ("marketing_sidebar", Scene::MarketingSidebar),
+    ("language_servers", Scene::LanguageServers),
     ("effort_slider_dark", Scene::EffortSlider { dark: true }),
     ("effort_slider_light", Scene::EffortSlider { dark: false }),
     (
@@ -336,6 +339,7 @@ const SCENES: &[(&str, Scene)] = &[
     ("teams_plan_scrolled", Scene::TeamsScrolled),
     ("teams_narrow", Scene::TeamsNarrow),
     ("teams_lead_stopped", Scene::TeamsLeadStopped),
+    ("teams_lead_starting", Scene::TeamsLeadStarting),
     ("teams_no_plan", Scene::TeamsNoPlan),
     ("teams_finished", Scene::TeamsFinished),
     ("teams_delete", Scene::TeamsDelete),
@@ -532,6 +536,10 @@ const SCENES: &[(&str, Scene)] = &[
     (
         "settings_integrations_agents",
         settings_after(SettingsSection::Integrations, "integrations_agents"),
+    ),
+    (
+        "settings_integrations_tools_confirm",
+        settings_after(SettingsSection::Integrations, "integrations_tools_confirm"),
     ),
     (
         "settings_skills_confirm",
@@ -1089,6 +1097,13 @@ impl Preview {
                                 sample_teams(page);
                                 page.lead = crate::teams::LeadState::default();
                             }
+                            Scene::TeamsLeadStarting => {
+                                page.set_theme(Theme::default(), page_ctx);
+                                sample_teams(page);
+                                page.lead = crate::teams::LeadState::default();
+                                page.starting_lead = Some(std::time::Instant::now());
+                                page.lead_spin = 3;
+                            }
                             Scene::TeamsNoPlan => {
                                 page.set_theme(Theme::default(), page_ctx);
                                 sample_teams(page);
@@ -1520,6 +1535,27 @@ impl View for Preview {
                 let theme = if dark { Theme::dark() } else { Theme::light() };
                 crate::workspace::panel_coordination_preview(self.ui, &theme, self.view_id)
             }
+            Scene::LanguageServers => {
+                use crate::workspace::language_services_tray::{render_tray, ServiceSnapshot, ServiceState};
+                let row = |id: &str, label: &str, detail: &str, state, memory: Option<u64>| ServiceSnapshot {
+                    server_id: id.into(),
+                    label: label.into(),
+                    detail: detail.into(),
+                    state,
+                    installable: true,
+                    memory,
+                };
+                let services = [
+                    row("rust-analyzer", "rust-analyzer", "Ready", ServiceState::Ready, Some(9_473 * 1024 * 1024)),
+                    row("typescript-language-server", "TypeScript", "Asleep · wakes when you open its files", ServiceState::Stopped, None),
+                    row("pyright", "Pyright", "Not installed", ServiceState::Unavailable, None),
+                    row("gopls", "gopls", "Initializing", ServiceState::Starting, None),
+                ];
+                let states = std::cell::RefCell::new(std::collections::HashMap::new());
+                Container::new(render_tray(&services, &theme, self.ui, self.ui, self.view_id, &states))
+                    .with_uniform_padding(24.0)
+                    .finish()
+            }
             Scene::MarketingSidebar => crate::workspace::panel_coordination::marketing_sidebar(
                 self.ui,
                 // The clip was recorded in Onyx.
@@ -1621,6 +1657,7 @@ impl View for Preview {
             | Scene::TeamsScrolled
             | Scene::TeamsNarrow
             | Scene::TeamsLeadStopped
+            | Scene::TeamsLeadStarting
             | Scene::TeamsNoPlan
             | Scene::TeamsFinished
             | Scene::TeamsDelete

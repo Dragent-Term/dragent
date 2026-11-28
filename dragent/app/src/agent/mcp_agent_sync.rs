@@ -15,7 +15,8 @@ pub fn prompt_agent(agent: SyncAgent) -> crate::workspace::PromptAgent {
     }
 }
 
-/// Bring every agent's config in line with `entries`, using the user's home
+/// Bring every agent's config in line with `entries` (plus Dragent's own
+/// entry for the agents the person allowed it), using the user's home
 /// for the agents' files. One sync at a time: quick successive edits must not
 /// interleave their reads and writes of the same files.
 ///
@@ -24,7 +25,7 @@ pub fn prompt_agent(agent: SyncAgent) -> crate::workspace::PromptAgent {
 #[cfg(not(target_family = "wasm"))]
 pub fn sync_agents(entries: &[McpServerEntry]) -> SyncReport {
     match dirs::home_dir() {
-        Some(home) => sync_agents_at(entries, &home),
+        Some(home) => sync_agents_at(&crate::integrations::agents::with_bridge(entries), &home),
         None => SyncReport {
             problems: vec!["Couldn't find your home folder to update other agents.".into()],
             ..Default::default()
@@ -43,8 +44,9 @@ pub(crate) fn sync_agents_at(entries: &[McpServerEntry], home: &std::path::Path)
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let record = dragent_paths::home().join("mcp-agent-sync.json");
-    // Dragent's own tools bridge is never written here: agents get it at
-    // launch. One an earlier build wrote is owned, so this takes it out.
+    // Dragent's own tools bridge is in `entries` only for agents the person
+    // allowed it (see `integrations::agents`); for any other agent, one an
+    // earlier build wrote is owned, so this takes it out.
     sync(entries, home, &record)
 }
 

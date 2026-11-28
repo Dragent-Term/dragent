@@ -763,9 +763,10 @@ fn top_bar(view: &TeamsView, theme: &Theme, team: &Team) -> Box<dyn Element> {
             theme,
             DetailTab::Overview,
             "Overview".into(),
+            lead_messages(view, team),
         ))
-        .with_child(tab_button(view, theme, DetailTab::Board, board_label(view, team)))
-        .with_child(tab_button(view, theme, DetailTab::Activity, activity));
+        .with_child(tab_button(view, theme, DetailTab::Board, board_label(view, team), 0))
+        .with_child(tab_button(view, theme, DetailTab::Activity, activity, 0));
     let mut actions = Flex::row()
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_spacing(8.0);
@@ -849,13 +850,22 @@ fn top_bar(view: &TeamsView, theme: &Theme, team: &Team) -> Box<dyn Element> {
     .finish()
 }
 
-fn tab_button(view: &TeamsView, theme: &Theme, tab: DetailTab, text: String) -> Box<dyn Element> {
+/// What the lead says to the person and they haven't answered or closed:
+/// its question, and its waiting card. The Overview shows them.
+fn lead_messages(view: &TeamsView, team: &Team) -> usize {
+    let question = view.answering().filter(|message| unanswered(team, message)).is_some();
+    usize::from(question) + usize::from(lead_waiting(view, team).is_some())
+}
+
+/// A tab; `badge` above zero shows that many things waiting there.
+fn tab_button(view: &TeamsView, theme: &Theme, tab: DetailTab, text: String, badge: usize) -> Box<dyn Element> {
     let ui = view.ui_font;
     let theme = *theme;
     let on = view.tab == tab;
     let view_id = view.view_id;
+    let badge_color = crate::workspace::worktree_status::needs_input_color(&theme);
     Hoverable::new(view.mouse(&format!("tab-{tab:?}")), move |state| {
-        Container::new(medium(
+        let label = medium(
             ui,
             &text,
             12.5,
@@ -864,7 +874,27 @@ fn tab_button(view: &TeamsView, theme: &Theme, tab: DetailTab, text: String) -> 
             } else {
                 theme.sub_text()
             },
-        ))
+        );
+        let label = if badge == 0 {
+            label
+        } else {
+            Flex::row()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_spacing(6.0)
+                .with_child(label)
+                .with_child(
+                    Container::new(medium(ui, &badge.to_string(), 10.5, ColorU::new(29, 13, 2, 255)))
+                        .with_background_color(badge_color)
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.0)))
+                        .with_padding_left(6.0)
+                        .with_padding_right(6.0)
+                        .with_padding_top(1.0)
+                        .with_padding_bottom(1.0)
+                        .finish(),
+                )
+                .finish()
+        };
+        Container::new(label)
         .with_background_color(if on {
             theme.surface_2()
         } else if state.is_hovered() {
@@ -1043,16 +1073,19 @@ fn notices(view: &TeamsView, theme: &Theme, team: &Team) -> Vec<Box<dyn Element>
             theme.ui_yellow(),
             AppIcon::TriangleAlert,
             text,
-            vec![button(
-                theme,
-                ui,
-                view.view_id,
-                view.mouse("new-lead"),
-                None,
-                "Start a new lead",
-                ButtonKind::Primary,
-                Some(TeamsAction::StartNewLead),
-            )],
+            vec![match view.starting_lead {
+                Some(_) => starting_lead(view, theme, ui),
+                None => button(
+                    theme,
+                    ui,
+                    view.view_id,
+                    view.mouse("new-lead"),
+                    None,
+                    "Start a new lead",
+                    ButtonKind::Primary,
+                    Some(TeamsAction::StartNewLead),
+                ),
+            }],
         ));
     }
     if let Some(error) = &view.error {
@@ -1066,6 +1099,23 @@ fn notices(view: &TeamsView, theme: &Theme, team: &Team) -> Vec<Box<dyn Element>
         ));
     }
     notices
+}
+
+/// The new lead's loader, in the button's place while it comes up.
+fn starting_lead(view: &TeamsView, theme: &Theme, ui: FamilyId) -> Box<dyn Element> {
+    Container::new(
+        Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(7.0)
+            .with_child(crate::icons::render_spinner(view.lead_spin, theme.accent, 14.0))
+            .with_child(medium(ui, "Starting the lead…", 12.5, theme.main_text()))
+            .finish(),
+    )
+    .with_padding_left(10.0)
+    .with_padding_right(10.0)
+    .with_padding_top(6.0)
+    .with_padding_bottom(6.0)
+    .finish()
 }
 
 fn callout(
@@ -1263,6 +1313,9 @@ pub(super) fn lead_waiting<'a>(view: &'a TeamsView, team: &Team) -> Option<&'a s
         return None;
     }
     let text = view.replies.lead.as_deref().map(str::trim).filter(|text| !text.is_empty())?;
+    if view.dismissed_waiting.as_ref().is_some_and(|(id, at)| *id == team.id && Some(*at) == view.replies.lead_at) {
+        return None;
+    }
     let at = view.replies.lead_at? as i64;
     let answered = team
         .messages
@@ -1308,7 +1361,8 @@ fn lead_waiting_card(view: &TeamsView, theme: &Theme, team: &Team, said: &str, r
             .with_child(say_button(view, theme, orange, "Start the plan", "Go ahead: start the plan.", true))
             .with_child(say_button(view, theme, orange, "Change the plan", "Not yet: I want to change the plan. Ask me what to change.", false));
     } else {
-        buttons = buttons.with_child(say_button(view, theme, orange, "Carry on", "Carry on.", true));
+        // Nothing to tell the lead: the card just closes.
+        buttons = buttons.with_child(action_button(view, theme, orange, "Carry on", TeamsAction::DismissLeadWaiting, true));
     }
     column = column.with_child(buttons.finish());
     column = if reply {
@@ -1328,11 +1382,14 @@ fn lead_waiting_card(view: &TeamsView, theme: &Theme, team: &Team, said: &str, r
 }
 
 fn say_button(view: &TeamsView, theme: &Theme, color: ColorU, text: &str, said: &str, first: bool) -> Box<dyn Element> {
+    action_button(view, theme, color, text, TeamsAction::Say(said.to_string()), first)
+}
+
+fn action_button(view: &TeamsView, theme: &Theme, color: ColorU, text: &str, action: TeamsAction, first: bool) -> Box<dyn Element> {
     let ui = view.ui_font;
     let theme = *theme;
     let view_id = view.view_id;
     let shown = text.to_string();
-    let action = TeamsAction::Say(said.to_string());
     Hoverable::new(view.mouse(&format!("say-{text}")), move |state| {
         let hovered = state.is_hovered();
         let (background, foreground) = if first {
@@ -1455,7 +1512,7 @@ fn composer(view: &TeamsView, theme: &Theme, team: &Team, reply: bool, height: f
             Flex::row()
                 .with_cross_axis_alignment(CrossAxisAlignment::Start)
                 .with_child(caret)
-                .with_child(Expanded::new(1.0, warpui::elements::ChildView::new(&view.message_editor).finish()).finish())
+                .with_child(Expanded::new(1.0, enter_sends(view, warpui::elements::ChildView::new(&view.message_editor).finish())).finish())
                 .finish(),
         )
         .with_min_height(height)
@@ -1542,6 +1599,21 @@ fn voice_button(view: &TeamsView, theme: &Theme) -> Option<Box<dyn Element>> {
     )
 }
 
+/// Enter in the message box sends, as the send button does; Shift+Enter
+/// stays a new line (the editor keeps it).
+fn enter_sends(view: &TeamsView, editor: Box<dyn Element>) -> Box<dyn Element> {
+    let view_id = view.view_id;
+    EventHandler::new(editor)
+        .on_keydown(move |ctx, _app, keystroke| {
+            if keystroke.key == "enter" && !keystroke.shift && !keystroke.alt {
+                ctx.dispatch_typed_action_for(view_id, TeamsAction::Send);
+                return DispatchEventResult::StopPropagation;
+            }
+            DispatchEventResult::PropagateToParent
+        })
+        .finish()
+}
+
 /// The send button: the accent arrow, dim until there's something to send.
 fn send_button(view: &TeamsView, theme: &Theme, can_send: bool) -> Box<dyn Element> {
     let theme = *theme;
@@ -1581,7 +1653,7 @@ fn send_button(view: &TeamsView, theme: &Theme, can_send: bool) -> Box<dyn Eleme
 fn card_reply(view: &TeamsView, theme: &Theme, accent: ColorU) -> Box<dyn Element> {
     let can_send = !view.message.trim().is_empty() && !view.sending;
     let editor_id = view.message_editor.id();
-    let editor = EventHandler::new(warpui::elements::ChildView::new(&view.message_editor).finish())
+    let editor = EventHandler::new(enter_sends(view, warpui::elements::ChildView::new(&view.message_editor).finish()))
         .on_left_mouse_down(move |ctx, _app, position| {
             ctx.dispatch_typed_action_for(editor_id, crate::workspace::InputEditorAction::ClickAt(position));
             DispatchEventResult::StopPropagation
@@ -2802,7 +2874,6 @@ fn board_label(view: &TeamsView, team: &Team) -> String {
 /// the lead below when it has asked something.
 fn board_pane(view: &TeamsView, theme: &Theme, team: &Team) -> Box<dyn Element> {
     let at_work = matches!(team.status, TeamStatus::Planning | TeamStatus::Running);
-    let question = open_question(view, team);
     let mut top = Flex::column()
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
         .with_spacing(16.0)
@@ -2815,12 +2886,7 @@ fn board_pane(view: &TeamsView, theme: &Theme, team: &Team) -> Box<dyn Element> 
         for card in approval_cards(view, theme, team) {
             top = top.with_child(card);
         }
-        if let Some(question) = question {
-            top = top.with_child(question_card(view, theme, question, true));
-        }
-        if let Some(said) = lead_waiting(view, team) {
-            top = top.with_child(lead_waiting_card(view, theme, team, said, true));
-        }
+        // The lead's messages are on the Overview (its tab shows a badge).
     }
     let page = Flex::column()
         .with_main_axis_size(MainAxisSize::Max)

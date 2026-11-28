@@ -177,7 +177,13 @@ pub const AGENT_PANE_ENV: &str = "DRAGENT_AGENT_PANE";
 pub fn inside_dragent() -> bool {
     [AGENT_PANE_ENV, "DRAGENT_HOST_TERMINAL_ID"]
         .iter()
-        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+        .any(|name| std::env::var(name).is_ok_and(|value| set(&value)))
+}
+
+/// A real value: an agent that copies variables into its servers' settings
+/// (`${env:NAME}`) leaves the text as it is when the variable isn't set.
+fn set(value: &str) -> bool {
+    !value.is_empty() && !value.starts_with("${")
 }
 
 pub fn dragent_launcher() -> Option<PathBuf> {
@@ -375,6 +381,13 @@ fn link_dir(source: &Path, link: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_variable_an_agent_left_unfilled_is_not_set() {
+        assert!(super::set("pane-1"));
+        assert!(!super::set(""));
+        assert!(!super::set("${env:DRAGENT_HOST_TERMINAL_ID}"));
+    }
+
     use super::*;
 
     #[test]

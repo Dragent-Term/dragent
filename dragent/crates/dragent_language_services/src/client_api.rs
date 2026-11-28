@@ -68,6 +68,14 @@ pub enum LanguageServiceEvent {
         capabilities: Value,
     },
     Stopped(LanguageServerKey),
+    /// Stopped because none of its files was on screen for a while; it starts
+    /// again by itself when one is shown or asked about.
+    Asleep(LanguageServerKey),
+    /// The server's process, for measuring what it holds.
+    Process {
+        key: LanguageServerKey,
+        pid: u32,
+    },
     RestartScheduled {
         key: LanguageServerKey,
         attempt: u32,
@@ -133,6 +141,8 @@ pub(crate) enum Command {
         server_id: String,
     },
     StopServer(String),
+    /// The file on screen (`None`: no file is).
+    Visible(Option<(PathBuf, PathBuf)>),
     InstallServer {
         project_root: PathBuf,
         server_id: String,
@@ -243,6 +253,16 @@ impl LanguageServiceClient {
             document,
             server_id: server_id.into(),
         })
+    }
+
+    /// Tell the worker which file is on screen: servers none of whose files
+    /// has been shown for the idle timeout are put to sleep, and wake when one
+    /// is shown again.
+    pub fn set_visible(
+        &self,
+        document: Option<(PathBuf, PathBuf)>,
+    ) -> Result<(), ClientSendError> {
+        self.send(Command::Visible(document))
     }
 
     pub fn stop_server(&self, server_id: impl Into<String>) -> Result<(), ClientSendError> {

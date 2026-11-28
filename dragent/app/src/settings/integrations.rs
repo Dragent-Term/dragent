@@ -30,6 +30,11 @@ pub enum IntegrationAction {
     /// Whether the connection being made is for the whole team.
     SetShared(bool),
     Tab(IntegrationsTab),
+    /// Show what Dragent would write into an agent's own settings so it
+    /// gets Dragent's tools (Cursor, Gemini, Qwen), waiting for a yes.
+    AllowAgentTools(crate::agent::mcp_agent_sync::SyncAgent),
+    /// Take Dragent's entry back out of that agent's settings.
+    RemoveAgentTools(crate::agent::mcp_agent_sync::SyncAgent),
 }
 
 /// The page's tabs.
@@ -64,6 +69,12 @@ pub struct IntegrationsState {
     pub tab: IntegrationsTab,
     /// The coding agents found on this computer at the last refresh.
     pub agents_present: Vec<crate::agent::mcp_agent_sync::SyncAgent>,
+    /// Agents the person allowed Dragent's entry in their own settings.
+    pub tools_allowed: std::collections::BTreeSet<crate::agent::mcp_agent_sync::SyncAgent>,
+    /// An agent whose settings are being changed now.
+    pub tools_busy: Option<crate::agent::mcp_agent_sync::SyncAgent>,
+    /// What went wrong changing an agent's settings.
+    pub tools_error: Option<String>,
     generation: u64,
 }
 
@@ -107,6 +118,9 @@ impl IntegrationsState {
             scroll: ClippedScrollStateHandle::default(),
             tab: IntegrationsTab::default(),
             agents_present: Vec::new(),
+            tools_allowed: Default::default(),
+            tools_busy: None,
+            tools_error: None,
             generation: 0,
         }
     }
@@ -134,13 +148,15 @@ impl SettingsView {
                 .into_iter()
                 .filter(|agent| agent.is_present(&home))
                 .collect();
-            let _ = tx.send((statuses, remote.available, remote.admin, agents));
+            let allowed = crate::integrations::agents::allowed();
+            let _ = tx.send((statuses, remote.available, remote.admin, agents, allowed));
         });
         ctx.spawn(rx, move |view, answer, ctx| {
             if view.integrations.generation != generation {
                 return;
             }
-            if let Ok((statuses, server, admin, agents)) = answer {
+            if let Ok((statuses, server, admin, agents, allowed)) = answer {
+                view.integrations.tools_allowed = allowed;
                 view.integrations.statuses = statuses;
                 view.integrations.server = server;
                 view.integrations.admin = admin;
@@ -273,7 +289,48 @@ impl SettingsView {
                 self.integrations.shared = *shared && self.integrations.admin;
             }
             IntegrationAction::Tab(tab) => self.integrations.tab = *tab,
+            IntegrationAction::AllowAgentTools(agent) => {
+                // Writes into another agent's settings: show exactly what first.
+                let home = dirs::home_dir().unwrap_or_default();
+                self.integrations.tools_error = None;
+                self.pending_agent_change = Some(super::settings_view::AgentChange::AllowTools {
+                    agent: *agent,
+                    file: agent.settings_file(&home),
+                });
+            }
+            IntegrationAction::RemoveAgentTools(agent) => self.change_agent_tools(*agent, false, ctx),
         }
         ctx.notify();
+    }
+
+    /// Allow or withdraw Dragent's entry in `agent`'s own settings, off the
+    /// main thread, then show where it stands.
+    pub(crate) fn change_agent_tools(
+        &mut self,
+        agent: crate::agent::mcp_agent_sync::SyncAgent,
+        on: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.integrations.tools_busy.is_some() {
+            return;
+        }
+        self.integrations.tools_busy = Some(agent);
+        self.integrations.tools_error = None;
+        let (tx, rx) = futures::channel::oneshot::channel();
+        crate::bg::detach(move || {
+            let result = crate::integrations::agents::set_allowed(agent, on);
+            let _ = tx.send((result, crate::integrations::agents::allowed()));
+        });
+        ctx.spawn(rx, move |view, answer, ctx| {
+            view.integrations.tools_busy = None;
+            match answer {
+                Ok((result, allowed)) => {
+                    view.integrations.tools_allowed = allowed;
+                    view.integrations.tools_error = result.err();
+                }
+                Err(_) => view.integrations.tools_error = Some("The change didn't finish.".into()),
+            }
+            ctx.notify();
+        });
     }
 }

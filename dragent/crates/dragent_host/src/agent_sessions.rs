@@ -1656,6 +1656,77 @@ pub(crate) fn program(executable: &str) -> PathBuf {
     PathBuf::from(executable)
 }
 
+/// The process for an agent invocation. On Windows an npm `.cmd` shim is
+/// seen through: it would run under `cmd.exe`, which caps a command line at
+/// 8191 characters, and Rust refuses to pass a batch file an argument with a
+/// line break (a first prompt often has one). The shim's script runs with
+/// `node` instead (or the program it names, when that is an `.exe`), with
+/// the same arguments. A shim it can't read is run as it is.
+pub(crate) fn agent_command(executable: &str) -> Command {
+    let program = program(executable);
+    #[cfg(windows)]
+    if let Some((runner, script)) = see_through_shim(&program) {
+        let mut command = Command::new(runner);
+        command.args(script);
+        return command;
+    }
+    Command::new(program)
+}
+
+#[cfg(windows)]
+fn see_through_shim(program: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
+    let extension = program.extension()?.to_string_lossy().to_ascii_lowercase();
+    if extension != "cmd" && extension != "bat" {
+        return None;
+    }
+    let dir = program.parent()?;
+    let text = fs::read_to_string(program).ok()?;
+    let target = npm_shim_target(&text, dir).filter(|target| target.is_file())?;
+    let target_extension = target.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+    if target_extension.as_deref() == Some("exe") {
+        return Some((target, None));
+    }
+    let beside = dir.join("node.exe");
+    let node = if beside.is_file() {
+        beside
+    } else {
+        resolve_program(
+            "node",
+            std::env::var_os("PATH").map(|path| std::env::split_paths(&path).collect()).unwrap_or_default(),
+            ".EXE",
+            |path| path.is_file(),
+        )?
+    };
+    Some((node, Some(target)))
+}
+
+/// The file an npm shim runs: its quoted `%dp0%\…` (or `%~dp0\…`) path,
+/// under `dir`. Only scripts and programs count, so a shim of another shape
+/// is left alone.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn npm_shim_target(text: &str, dir: &Path) -> Option<PathBuf> {
+    // Every quoted path under the shim's folder; the last that isn't the
+    // `node.exe` it looks for beside itself is what it runs.
+    let mut found = None;
+    for start in ["\"%dp0%\\", "\"%~dp0\\"] {
+        for (at, _) in text.match_indices(start) {
+            let rest = &text[at + start.len()..];
+            let Some(end) = rest.find('"') else { continue };
+            let relative = &rest[..end];
+            let lower = relative.to_ascii_lowercase();
+            let runnable = [".js", ".cjs", ".mjs", ".exe"].iter().any(|e| lower.ends_with(e));
+            if relative.is_empty() || relative.contains('%') || !runnable || lower == "node.exe" {
+                continue;
+            }
+            if found.as_ref().is_none_or(|(earlier, _)| at > *earlier) {
+                found = Some((at, relative));
+            }
+        }
+    }
+    let (_, relative) = found?;
+    Some(relative.split('\\').filter(|part| !part.is_empty()).fold(dir.to_path_buf(), |path, part| path.join(part)))
+}
+
 /// The first `name` + extension that exists, searching `dirs` in order (or
 /// beside `name` when it is a path). A name with an extension is left to
 /// the OS, which resolves it exactly.
@@ -1697,7 +1768,7 @@ fn mint(
     recovery: &SessionRecovery,
     account: &crate::agent_accounts::Binding,
 ) -> Option<String> {
-    let mut process = Command::new(program(executable));
+    let mut process = agent_command(executable);
     crate::agent_accounts::configure(&mut process, account).ok()?;
     let mut child = process
         .args(command)
@@ -1816,7 +1887,7 @@ fn run(pane: Uuid, argv: Vec<String>) -> Result<i32, String> {
         recovery: Some(recovery.clone()),
         used: resumed || prompted,
     };
-    let mut command = Command::new(program(&record.executable));
+    let mut command = agent_command(&record.executable);
     crate::agent_accounts::configure(&mut command, &account)?;
     {
         let _lock = lock(pane)?;
@@ -2582,6 +2653,25 @@ mod tests {
             start_over_command(&record("claude"), "zsh").unwrap(),
             "claude '--model' 'test-model'"
         );
+    }
+
+    #[test]
+    fn an_npm_shim_names_the_script_it_runs() {
+        // What npm writes for a package's bin (trimmed).
+        let shim = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n) ELSE (\r\n  SET \"_prog=node\"\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\r\n";
+        let dir = Path::new("/npm");
+        assert_eq!(
+            npm_shim_target(shim, dir),
+            Some(PathBuf::from("/npm/node_modules/@openai/codex/bin/codex.js"))
+        );
+        // A shim that runs a program directly.
+        assert_eq!(
+            npm_shim_target("@\"%~dp0\\bin\\tool.exe\" %*", dir),
+            Some(PathBuf::from("/npm/bin/tool.exe"))
+        );
+        // Anything else is left alone.
+        assert_eq!(npm_shim_target("@echo off\r\nnode %~dp0\\x.js %*", dir), None);
+        assert_eq!(npm_shim_target("IF EXIST \"%dp0%\\node.exe\" (", dir), None);
     }
 
     #[test]

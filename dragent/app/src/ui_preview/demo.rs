@@ -112,6 +112,13 @@ fn settings_state(state: &str) -> Vec<crate::settings::SettingsAction> {
         "integrations_agents" => vec![A::Integration(IntegrationAction::Tab(
             IntegrationsTab::Agents,
         ))],
+        // The preview before Dragent's entry goes into Cursor's own settings.
+        "integrations_tools_confirm" => vec![
+            A::Integration(IntegrationAction::Tab(IntegrationsTab::Agents)),
+            A::Integration(IntegrationAction::AllowAgentTools(
+                crate::agent::mcp_agent_sync::SyncAgent::Cursor,
+            )),
+        ],
         // The preview before Dragent's skills go into the shared folders.
         "skills_confirm" => vec![A::InstallAgentSkill("dragent-browser".into())],
         "voice_legacy" => Vec::new(),

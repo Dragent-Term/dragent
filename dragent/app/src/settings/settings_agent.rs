@@ -101,11 +101,15 @@ impl SettingsView {
             SettingsAction::CancelAgentChange => self.pending_agent_change = None,
             #[cfg(not(target_family = "wasm"))]
             SettingsAction::ConfirmAgentChange => {
-                if let Some(super::settings_view::AgentChange::InstallSkill { name, .. }) =
-                    self.pending_agent_change.take()
-                {
-                    let outcome = crate::cli::agent_skill::install_skill(&name);
-                    self.note_kept(&outcome);
+                match self.pending_agent_change.take() {
+                    Some(super::settings_view::AgentChange::InstallSkill { name, .. }) => {
+                        let outcome = crate::cli::agent_skill::install_skill(&name);
+                        self.note_kept(&outcome);
+                    }
+                    Some(super::settings_view::AgentChange::AllowTools { agent, .. }) => {
+                        self.change_agent_tools(agent, true, ctx);
+                    }
+                    None => {}
                 }
             }
             #[cfg(not(target_family = "wasm"))]
