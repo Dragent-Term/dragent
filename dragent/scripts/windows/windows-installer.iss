@@ -121,11 +121,12 @@ Source: "{#ReleaseDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; without the hooks that report working / review / failed, so neither status
 ; nor notifications work. Required: a build missing it fails here.
 Source: "{#ReleaseDir}\dragent-host.exe"; DestDir: "{app}"; Flags: ignoreversion
-; DLLs shipped beside the exe: the pinned conpty.dll (always staged), and any
-; graphics-runtime DLLs (DirectX/Vulkan), if present.
-Source: "{#ReleaseDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-; The console host conpty.dll runs terminals in. Without the pair, terminals
-; use the in-box conhost, whose repaints make redrawn output flicker.
+; Any graphics-runtime DLLs shipped beside the exe (DirectX/Vulkan), if present.
+Source: "{#ReleaseDir}\*.dll"; Excludes: "conpty.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; The pinned ConPTY and the console host it runs terminals in. Without the
+; pair, terminals use the in-box conhost, whose repaints make redrawn output
+; flicker. Required: a build missing either fails here.
+Source: "{#ReleaseDir}\conpty.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}\OpenConsole.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; License notices for Dragent and everything bundled with it (AGPL-3.0 and the
 ; MIT/OFL/ISC/NCSA notice terms). Required: a build missing one fails here.
